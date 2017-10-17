@@ -108,7 +108,7 @@
 #include "src/slurmctld/srun_comm.h"
 #include "src/slurmctld/state_save.h"
 #include "src/slurmctld/trigger_mgr.h"
-#include "src/unittests_lib/tools.h"
+//#include "src/unittests_lib/tools.h"
 
 #ifdef SLURM_SIMULATOR
 #include <fcntl.h>           /* For O_* constants */
@@ -813,6 +813,14 @@ extern void queue_job_scheduler(void)
 	slurm_mutex_lock(&sched_cnt_mutex);
 	job_sched_cnt++;
 	slurm_mutex_unlock(&sched_cnt_mutex);
+}
+extern int get_scheduler_cnt(void)
+{
+	return job_sched_cnt;
+}
+extern void reset_scheduler_cnt(void)
+{
+	job_sched_cnt = 0;
 }
 
 /* _slurmctld_signal_hand - Process daemon-wide signals */
@@ -1634,6 +1642,7 @@ static void *_slurmctld_background(void *no_data)
 		}
 
 		job_limit = NO_VAL;
+#ifndef SLURM_SIMULATOR
 		if (difftime(now, last_full_sched_time) >= sched_interval) {
 			slurm_mutex_lock(&sched_cnt_mutex);
 			/* job_limit = job_sched_cnt;	Ignored */
@@ -1649,7 +1658,7 @@ static void *_slurmctld_background(void *no_data)
 			job_sched_cnt = 0;
 			slurm_mutex_unlock(&sched_cnt_mutex);
 		}
-#ifndef SLURM_SIMULATOR
+//#ifndef SLURM_SIMULATOR
 		if (job_limit != NO_VAL) {
 			now = time(NULL);
 			last_sched_time = now;

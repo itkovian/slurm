@@ -81,7 +81,7 @@
 #include "src/slurmctld/slurmctld.h"
 #include "src/slurmctld/srun_comm.h"
 #include "backfill.h"
-#include "src/unittests_lib/tools.h"
+//#include "src/unittests_lib/tools.h"
 
 #ifdef SLURM_SIMULATOR
 #include <fcntl.h>           /* For O_* constants */
@@ -244,7 +244,6 @@ static bool _job_is_completing(void)
 		}
 	}
 	list_iterator_destroy(job_iterator);
-
 	return completing;
 }
 
@@ -255,10 +254,11 @@ static bool _job_is_completing(void)
  */
 static bool _many_pending_rpcs(void)
 {
+	/* Marco: Simulator: time should be not passing here so no rpc should arrive */
 	//info("thread_count = %u", slurmctld_config.server_thread_count);
-	if ((defer_rpc_cnt > 0) &&
-	    (slurmctld_config.server_thread_count >= defer_rpc_cnt))
-		return true;
+//	if ((defer_rpc_cnt > 0) &&
+//	    (slurmctld_config.server_thread_count >= defer_rpc_cnt))
+//		return true;
 	return false;
 }
 
