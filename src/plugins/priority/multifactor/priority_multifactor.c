@@ -76,7 +76,7 @@
 
 #include "src/slurmctld/locks.h"
 
-#include "src/unittests_lib/tools.h"
+//#include "src/unittests_lib/tools.h"
 
 
 #define SECS_PER_DAY	(24 * 60 * 60)
