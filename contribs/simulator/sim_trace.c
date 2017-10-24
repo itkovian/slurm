@@ -3,7 +3,8 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <string.h>
-#include "src/common/xmalloc.h"
+//#include "src/common/xmalloc.h" Including xmalloc and using malloc
+#include <stdlib.h>
 
 
 char* read_file(char *file_name) {
@@ -45,12 +46,13 @@ int read_job_trace_record(int trace_file, job_trace_t *job_trace) {
 	if (!ret_val)
 		return ret_val;
 	if (job_trace->manifest_filename[0]!='|') {
-		char *file_name_copy=xstrdup(job_trace->manifest_filename);
+		/*Marco: changed xtrsup to strdup*/
+		char *file_name_copy=strdup(job_trace->manifest_filename);
 		char *real_file_name=strtok(file_name_copy,"-");
 		if (!real_file_name)
 			real_file_name=job_trace->manifest_filename;
 		job_trace->manifest = read_file(real_file_name);
-		xfree(file_name_copy);
+		free(file_name_copy);
 		if (job_trace->manifest == NULL) {
 			printf("Missing manifest file!! %s\n",
 					real_file_name);

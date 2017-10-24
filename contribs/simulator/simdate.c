@@ -3,6 +3,7 @@
  */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <fcntl.h>
 #include <sys/mman.h>  /* Map call and definitions */
 #include <pthread.h>
@@ -10,6 +11,8 @@
 #include <time.h>      /* For ctime */
 #include <fcntl.h>     /* O_RDWR */
 #include <getopt.h>    /* getopt_long call */
+
+#include "src/common/sim_funcs.h"
 
 #define SLURM_SIM_SHM "/tester_slurm_sim.shm"
 

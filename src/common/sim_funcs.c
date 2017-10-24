@@ -98,7 +98,7 @@ static int build_shared_memory() {
  * Slurmctld and slurmd do not really build shared memory but they use that
  * one built by sim_mgr
  */
-extern int attaching_shared_memory() { 
+int attaching_shared_memory() { 
 	int fd;
 
 	fd = shm_open(SLURM_SIM_SHM, O_RDWR, S_IRUSR | S_IWUSR);

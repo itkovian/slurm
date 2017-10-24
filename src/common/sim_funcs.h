@@ -26,6 +26,6 @@
 #include <sys/syscall.h>
 
 int (*real_gettimeofday)(struct timeval *,struct timezone *);
-
+int attaching_shared_memory();
 #endif
 #endif  /*__SLURM_SIM_FUNCS_H__*/
