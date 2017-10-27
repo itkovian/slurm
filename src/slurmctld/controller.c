@@ -205,6 +205,8 @@ static pthread_t assoc_cache_thread = (pthread_t) 0;
 static pthread_mutex_t sched_cnt_mutex = PTHREAD_MUTEX_INITIALIZER;
 static int      job_sched_cnt = 0;
 
+FILE *stats = NULL;
+
 #ifdef SLURM_SIMULATOR
 char SEM_NAME[]		= "serversem";
 sem_t* mutexserver	= SEM_FAILED;
@@ -576,8 +578,16 @@ int main(int argc, char *argv[])
 		/*
 		 * process slurm background activities, could run as pthread
 		 */
+		stats = fopen("slurmctld_stats", "w");
+		if (stats == NULL)
+			error("Cannot open file for reporting statistics!");
+
 		_slurmctld_background(NULL);
 
+		/* Marco: Report some statistics  */
+		if (stats != NULL) {
+			fprintf(stats, "Total backfilled jobs: %d\n", slurmctld_diag_stats.backfilled_jobs);
+		}
 		/* termination of controller */
 		dir_name = slurm_get_state_save_location();
 		switch_g_save(dir_name);
@@ -1086,7 +1096,8 @@ void *_service_connection(void *arg)
 	slurm_msg_t *msg = xmalloc(sizeof(slurm_msg_t));
 
 	slurm_msg_t_init(msg);
-	open_global_sync_sem();
+	if (msg->msg_type == MESSAGE_SIM_HELPER_CYCLE)
+		open_global_sync_sem();
 	/*
 	 * slurm_receive_msg sets msg connection fd to accepted fd. This allows
 	 * possibility for slurmctld_req() to close accepted connection.
@@ -1112,11 +1123,11 @@ void *_service_connection(void *arg)
 		error ("close(%d): %m",  conn->newsockfd);
 
 cleanup:
-	slurm_free_msg(msg);
 	xfree(arg);
 	_free_server_thread();
-
-	perform_global_sync(); /* st on 20151020 */
+	if (msg->msg_type == MESSAGE_SIM_HELPER_CYCLE)
+		perform_global_sync(); /* st on 20151020 */
+	slurm_free_msg(msg);
 	pthread_exit(NULL);
 	return return_code;
 }
@@ -1419,7 +1430,7 @@ static void *_slurmctld_background(void *no_data)
 	int group_time, group_force;
 	uint32_t job_limit;
 	DEF_TIMERS;
-
+	int last_free_nodes_value = -1;
 	/* Locks: Read config */
 	slurmctld_lock_t config_read_lock = {
 		READ_LOCK, NO_LOCK, NO_LOCK, NO_LOCK };
@@ -1478,6 +1489,11 @@ static void *_slurmctld_background(void *no_data)
 	debug3("_slurmctld_background pid = %u", getpid());
 
 	while (1) {
+		int free_nodes = bit_set_count(idle_node_bitmap);
+		if (last_free_nodes_value != free_nodes) {
+			last_free_nodes_value = free_nodes;
+			fprintf(stats,"%ld %d\n", now, free_nodes);
+		}
 		if (slurmctld_config.shutdown_time == 0)
 			sleep(1);
 

@@ -189,6 +189,8 @@ extern diag_stats_t slurmctld_diag_stats;
 extern int prolog_complete(uint32_t job_id, bool requeue,
 		uint32_t prolog_return_code);
 
+int finished_jobs_waiting_for_epilog=0;
+
 /*
  * slurmctld_req  - Process an individual RPC request
  * IN/OUT msg - the request message, data associated with the message is freed
@@ -1524,11 +1526,11 @@ static void  _slurm_rpc_epilog_complete(slurm_msg_t * msg)
 	bool run_scheduler = false;
 
 	START_TIMER;
-
-#ifdef SLURM_SIMULATOR
-       info("SIM: Processing RPC: MESSAGE_EPILOG_COMPLETE for jobid %d", epilog_msg->job_id);
-       slurm_send_rc_msg(msg, SLURM_SUCCESS);
-#endif
+//Marco: Why here and not at the end of the function?
+//#ifdef SLURM_SIMULATOR
+//       info("SIM: Processing RPC: MESSAGE_EPILOG_COMPLETE for jobid %d", epilog_msg->job_id);
+//       slurm_send_rc_msg(msg, SLURM_SUCCESS);
+//#endif
 	debug2("Processing RPC: MESSAGE_EPILOG_COMPLETE uid=%d", uid);
 	if (!validate_slurm_user(uid)) {
 		error("Security violation, EPILOG_COMPLETE RPC from uid=%d",
@@ -1580,6 +1582,12 @@ static void  _slurm_rpc_epilog_complete(slurm_msg_t * msg)
 	}
 //#endif
 	/* NOTE: RPC has no response */
+	/* Marco: I change it to let slurmctld and slurmd synch */
+#ifdef SLURM_SIMULATOR
+        info("SIM: Processing RPC: MESSAGE_EPILOG_COMPLETE for jobid %d", epilog_msg->job_id);
+        slurm_send_rc_msg(msg, SLURM_SUCCESS);
+	finished_jobs_waiting_for_epilog--;
+#endif
 }
 
 /* _slurm_rpc_job_step_kill - process RPC to cancel an entire job or
@@ -1762,8 +1770,6 @@ static void _slurm_rpc_complete_prolog(slurm_msg_t * msg)
 
 /* _slurm_rpc_complete_batch - process RPC from slurmstepd to note the
  *	completion of a batch script */
-
-int finished_jobs_waiting_for_epilog=0;
 
 static void _slurm_rpc_complete_batch_script(slurm_msg_t * msg)
 {
@@ -4888,6 +4894,7 @@ static void _slurm_rpc_sim_helper_cycle(slurm_msg_t * msg)
 			}
 		}
 		if (finished_jobs_waiting_for_epilog > 0) {
+			debug3("Waiting epilog to finish");
 			usleep(finished_jobs_waiting_for_epilog*500000);
 			finished_jobs_waiting_for_epilog=0;
 		}
