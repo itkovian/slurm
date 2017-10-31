@@ -425,10 +425,11 @@ printf("Done waiting.\n");
 
 		/* Synchronization with daemons */
 		sem_wait(mutexserver);
+		debug3("unlocking next loop");
 		*global_sync_flag = 2;
 		sem_post(mutexserver);
 		while(*global_sync_flag > 1 && *global_sync_flag != '*') {
-			usleep(sync_loop_wait_time);
+                	usleep(sync_loop_wait_time);
 		}
 		/*
 		 * Time throttling added but currently unstable; for now, run

@@ -190,7 +190,7 @@ extern int prolog_complete(uint32_t job_id, bool requeue,
 		uint32_t prolog_return_code);
 
 int finished_jobs_waiting_for_epilog=0;
-
+int total_finished_jobs = 0;
 /*
  * slurmctld_req  - Process an individual RPC request
  * IN/OUT msg - the request message, data associated with the message is freed
@@ -1582,9 +1582,8 @@ static void  _slurm_rpc_epilog_complete(slurm_msg_t * msg)
 	}
 //#endif
 	/* NOTE: RPC has no response */
-	/* Marco: I change it to let slurmctld and slurmd synch */
 #ifdef SLURM_SIMULATOR
-        info("SIM: Processing RPC: MESSAGE_EPILOG_COMPLETE for jobid %d", epilog_msg->job_id);
+	info("SIM: Processing RPC: MESSAGE_EPILOG_COMPLETE for jobid %d", epilog_msg->job_id);
         slurm_send_rc_msg(msg, SLURM_SUCCESS);
 	finished_jobs_waiting_for_epilog--;
 #endif
@@ -1942,6 +1941,7 @@ static void _slurm_rpc_complete_batch_script(slurm_msg_t * msg)
 	if (msg->msg_type == REQUEST_COMPLETE_BATCH_JOB)
 		job_epilog_complete(comp_msg->job_id, comp_msg->node_name, 0);
 	finished_jobs_waiting_for_epilog+=1;
+	total_finished_jobs+=1;
 	i = job_complete(comp_msg->job_id, uid, job_requeue, false,
 			 comp_msg->job_rc);
 	error_code = MAX(error_code, i);
@@ -4887,20 +4887,24 @@ static void do_backfill() {
 
 static void _slurm_rpc_sim_helper_cycle(slurm_msg_t * msg)
 {
-		if (mutex_bf==NULL) {
-			if(open_BF_sync_semaphore()==-1) {
-				error("Opening backfill semaphore! this may affect backfill"
-					"operations");
-			}
+	if (mutex_bf==NULL) {
+		if(open_BF_sync_semaphore()==-1) {
+			error("Opening backfill semaphore! this may affect backfill"
+				"operations");
 		}
-		if (finished_jobs_waiting_for_epilog > 0) {
-			debug3("Waiting epilog to finish");
-			usleep(finished_jobs_waiting_for_epilog*500000);
-			finished_jobs_waiting_for_epilog=0;
-		}
-
-        sim_helper_msg_t *helper_msg =
+	}
+	sim_helper_msg_t *helper_msg =
                 (sim_helper_msg_t *) msg->data;
+
+	while (total_finished_jobs < helper_msg->total_jobs_ended) {
+		debug3("Waiting complete job to arrive");
+		usleep(finished_jobs_waiting_for_epilog*500);
+	}
+	total_finished_jobs = 0;
+	while (finished_jobs_waiting_for_epilog > 0) {
+		debug3("Waiting epilog to finish");
+		usleep(finished_jobs_waiting_for_epilog*500);
+	}
 
         debug3("Processing RPC: MESSAGE_SIM_HELPER_CYCLE for %d jobs",
         		helper_msg->total_jobs_ended);

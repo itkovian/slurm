@@ -1067,13 +1067,14 @@ open_global_sync_sem() {
 
 void
 perform_global_sync() {
-	while(*global_sync_flag < 2 || *global_sync_flag > 4) {
+	while(*global_sync_flag != 3) {
+		debug("global_sync_flag: %d", *global_sync_flag);
 		usleep(100000); /* one-tenth second */
 	}
 
 	sem_wait(mutexserver);
-	*global_sync_flag += 1;
-	if ( *global_sync_flag > 4) *global_sync_flag = 1;
+	debug3("Finished with slurmctld");
+	*global_sync_flag = 1;
 	sem_post(mutexserver);
 }
 void
@@ -1097,7 +1098,8 @@ void *_service_connection(void *arg)
 
 	slurm_msg_t_init(msg);
 	if (msg->msg_type == MESSAGE_SIM_HELPER_CYCLE)
-		open_global_sync_sem();
+		if(open_global_sync_sem() == -1)
+			debug("Error opening mutexserver");
 	/*
 	 * slurm_receive_msg sets msg connection fd to accepted fd. This allows
 	 * possibility for slurmctld_req() to close accepted connection.

@@ -680,7 +680,7 @@ extern void *backfill_agent(void *args)
 #ifdef SLURM_SIMULATOR
 	close_BF_sync_semaphore();
 #endif
-	perform_global_sync(); /* st on 20151020 */
+//	perform_global_sync(); /* st on 20151020 */
 	return NULL;
 }
 

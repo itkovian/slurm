@@ -132,6 +132,7 @@
 
 /* global, copied to STDERR_FILENO in tasks before the exec */
 int devnull = -1;
+int waiting_epilog_msgs = 0;
 slurmd_conf_t * conf;
 
 /*
@@ -598,13 +599,13 @@ open_global_sync_sem() {
 
 void
 perform_global_sync() {
-	while(*global_sync_flag < 2 || *global_sync_flag > 4 ) {
+	while(*global_sync_flag < 2) {
 		usleep(1000);
 	}
 
 	sem_wait(mutexserver);
-	*global_sync_flag += 1;
-	if(*global_sync_flag > 4) *global_sync_flag = 1;
+	debug3("Finished with slurmd");
+	*global_sync_flag = 3;
 	sem_post(mutexserver);
 }
 
@@ -650,6 +651,7 @@ _simulator_helper(void *arg)
 			pthread_mutex_unlock(&simulator_mutex);
 			_send_complete_batch_script_msg(event_jid, SLURM_SUCCESS, 0);
 			pthread_mutex_lock(&simulator_mutex);
+			waiting_epilog_msgs++;
 			info("SIM: JOB_COMPLETE_BATCH_SCRIPT for job %d SENT", event_jid);
 			jobs_ended++;
 
@@ -659,7 +661,11 @@ _simulator_helper(void *arg)
 		if(jobs_ended){
 			/* Let's give some time to EPILOG_MESSAGE process to terminate  */
 			/* TODO: It should be done better with a counter of EPILOG messages processed */
-			usleep(1000);
+			
+			while (waiting_epilog_msgs > 0) {
+				debug3("Waiting epilog to finish");
+				usleep(100);
+			}
 			_send_sim_helper_cycle_msg(jobs_ended);
 		} else {
 			_send_sim_helper_cycle_msg(0);
