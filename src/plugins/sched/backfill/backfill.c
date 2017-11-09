@@ -557,7 +557,7 @@ static void _do_diag_stats(struct timeval *tv1, struct timeval *tv2,
 
 	slurmctld_diag_stats.bf_active = 0;
 }
-
+/*
 #ifdef SLURM_SIMULATOR
 int
 open_global_sync_sem() {
@@ -591,7 +591,7 @@ close_global_sync_sem() {
 }
 #endif
 
-
+*/
 
 #ifdef SLURM_SIMULATOR
 
@@ -634,7 +634,7 @@ extern void *backfill_agent(void *args)
 	slurmctld_lock_t all_locks = {
 		READ_LOCK, WRITE_LOCK, WRITE_LOCK, READ_LOCK };
 
-	open_global_sync_sem();
+//	open_global_sync_sem();
 	_load_config();
 	last_backfill_time = time(NULL);
 #ifdef SLURM_SIMULATOR
@@ -649,6 +649,7 @@ extern void *backfill_agent(void *args)
 		_my_sleep(backfill_interval);
 #endif
 		if (stop_backfill) {
+			sem_post(mutex_bf_done_pg);
 			break;
 		}
 		if (config_flag) {

@@ -1,3 +1,4 @@
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -306,7 +307,7 @@ time_mgr(void *arg) {
 	printf("Waiting for signals, signaled: %d...\n", signaled);
 	info("Waiting for signals..\n");
 	while (signaled < 1 ){
-		sleep(1); printf("... signaled: %d\n", signaled);
+		sleep(2); printf("... signaled: %d\n", signaled);
 	}
 printf("Done waiting.\n");
 #ifdef DEBUG
@@ -428,7 +429,13 @@ printf("Done waiting.\n");
 		debug3("unlocking next loop");
 		*global_sync_flag = 2;
 		sem_post(mutexserver);
-		while(*global_sync_flag > 1 && *global_sync_flag != '*') {
+		while(1) {
+			sem_wait(mutexserver);
+			if (*global_sync_flag == 1 || *global_sync_flag == '*') {
+				sem_post(mutexserver);
+				break;
+			}
+			sem_post(mutexserver);
                 	usleep(sync_loop_wait_time);
 		}
 		/*

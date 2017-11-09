@@ -1793,6 +1793,7 @@ static void _slurm_rpc_complete_batch_script(slurm_msg_t * msg)
 #endif
 	/* init */
 	START_TIMER;
+	total_finished_jobs+=1;
 	debug2("Processing RPC: REQUEST_COMPLETE_BATCH_SCRIPT from "
 	       "uid=%u JobId=%u",
 	       uid, comp_msg->job_id);
@@ -1941,7 +1942,6 @@ static void _slurm_rpc_complete_batch_script(slurm_msg_t * msg)
 	if (msg->msg_type == REQUEST_COMPLETE_BATCH_JOB)
 		job_epilog_complete(comp_msg->job_id, comp_msg->node_name, 0);
 	finished_jobs_waiting_for_epilog+=1;
-	total_finished_jobs+=1;
 	i = job_complete(comp_msg->job_id, uid, job_requeue, false,
 			 comp_msg->job_rc);
 	error_code = MAX(error_code, i);
@@ -4898,12 +4898,12 @@ static void _slurm_rpc_sim_helper_cycle(slurm_msg_t * msg)
 
 	while (total_finished_jobs < helper_msg->total_jobs_ended) {
 		debug3("Waiting complete job to arrive");
-		usleep(finished_jobs_waiting_for_epilog*500);
+		usleep(1000);
 	}
 	total_finished_jobs = 0;
 	while (finished_jobs_waiting_for_epilog > 0) {
 		debug3("Waiting epilog to finish");
-		usleep(finished_jobs_waiting_for_epilog*500);
+		usleep(1000);
 	}
 
         debug3("Processing RPC: MESSAGE_SIM_HELPER_CYCLE for %d jobs",
