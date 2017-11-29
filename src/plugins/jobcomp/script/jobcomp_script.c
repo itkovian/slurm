@@ -196,6 +196,7 @@ struct jobcomp_info {
 	char *std_in;
 	char *std_out;
 	char *std_err;
+	uint16_t backfilled;
 #ifdef HAVE_BG
 	char *connect_type;
 	char *geometry;
@@ -261,7 +262,7 @@ static struct jobcomp_info * _jobcomp_info_create (struct job_record *job)
 		if (job->details->std_err)
 			j->std_err = xstrdup(job->details->std_err);
 	}
-
+	j->backfilled = job->backfilled;
 #ifdef HAVE_BG
 	j->connect_type = select_g_select_jobinfo_xstrdup(job->select_jobinfo,
 						   SELECT_PRINT_CONNECTION);
@@ -404,7 +405,7 @@ static char ** _create_environment (struct jobcomp_info *job)
 		_env_append (&env, "STDOUT",     job->std_out);
 	if (job->std_err)
 		_env_append (&env, "STDERR",     job->std_err);
-
+	_env_append (&env, "BACKFILLED", (job->backfilled ? "yes" : "no"));
 #ifdef HAVE_BG
 	_env_append (&env, "BLOCKID",      job->blockid);
 	_env_append (&env, "CONNECT_TYPE", job->connect_type);
