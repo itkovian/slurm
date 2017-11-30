@@ -55,6 +55,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+//#include <inttypes.h>
 
 #include "src/common/assoc_mgr.h"
 #include "src/common/env.h"
@@ -112,6 +113,10 @@ static int	_valid_node_feature(char *feature);
 static int	save_last_part_update = 0;
 
 extern diag_stats_t slurmctld_diag_stats;
+
+static long long normal_sched_total_time = 0;
+static long normal_sched_counter = 0;
+static long normal_sched_queue_len = 0;
 
 /*
  * _build_user_job_list - build list of jobs for a given user
@@ -437,9 +442,14 @@ static void _do_diag_stats(long delta_t)
 	if (delta_t > slurmctld_diag_stats.schedule_cycle_max)
 		slurmctld_diag_stats.schedule_cycle_max = delta_t;
 
+        //if(delta_t < 0) debug("stats: normal sched delat_t negative!");
 	slurmctld_diag_stats.schedule_cycle_sum += delta_t;
 	slurmctld_diag_stats.schedule_cycle_last = delta_t;
-	slurmctld_diag_stats.schedule_cycle_counter++;
+        normal_sched_total_time += delta_t;
+        normal_sched_counter++;
+        normal_sched_queue_len = slurmctld_diag_stats.schedule_queue_len;
+        debug("stats: normal sched total time %lld, counter %ld, number of jobs in queue %ld ", normal_sched_total_time, normal_sched_counter, normal_sched_queue_len);
+        slurmctld_diag_stats.schedule_cycle_counter++;
 }
 
 
@@ -3098,10 +3108,10 @@ extern void rebuild_job_part_list(struct job_record *job_ptr)
 void
 cleanup_completing(struct job_record *job_ptr)
 {
-	time_t delay;
+        time_t delay;
 
-	delay = last_job_update - job_ptr->end_time;
-	if (delay > 60) {
+        delay = last_job_update - job_ptr->end_time;
+        if (delay > 60) {
 		info("%s: job %u completion process took %ld seconds",
 		     __func__, job_ptr->job_id,(long) delay);
 	}

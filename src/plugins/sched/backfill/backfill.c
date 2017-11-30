@@ -56,6 +56,7 @@
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+#include <inttypes.h>
 
 #include "slurm/slurm.h"
 #include "slurm/slurm_errno.h"
@@ -123,6 +124,11 @@ typedef struct node_space_map {
 /* Diag statistics */
 extern diag_stats_t slurmctld_diag_stats;
 int bf_last_yields = 0;
+static long long bf_sched_total_time = 0;
+static long bf_sched_counter = 0;
+static long bf_sched_checked = 0;
+static long bf_sched_queue_len = 0;
+static long bf_sched_backfilled = 0;
 
 /*********************** local variables *********************/
 static bool stop_backfill = false;
@@ -540,10 +546,14 @@ static void _do_diag_stats(struct timeval *tv1, struct timeval *tv2,
 	delta_t  = (tv2->tv_sec  - tv1->tv_sec) * 1000000;
 	delta_t +=  tv2->tv_usec - tv1->tv_usec;
 
-	real_time = (delta_t - (bf_last_yields * yield_sleep_usecs));
+	//real_time = (delta_t - (bf_last_yields * yield_sleep_usecs));
+	real_time = delta_t;
 
+        if(real_time < 0) debug("stats: bf sched real_time negative!");
 	slurmctld_diag_stats.bf_cycle_counter++;
 	slurmctld_diag_stats.bf_cycle_sum += real_time;
+        bf_sched_total_time += real_time;
+        //debug("stats: bf sched total %" PRIu32 " usec. Backfill total time %lld", slurmctld_diag_stats.bf_cycle_sum, bf_sched_total_time);
 	slurmctld_diag_stats.bf_cycle_last = real_time;
 
 	slurmctld_diag_stats.bf_depth_sum += slurmctld_diag_stats.bf_last_depth;
@@ -556,6 +566,12 @@ static void _do_diag_stats(struct timeval *tv1, struct timeval *tv2,
 	}
 
 	slurmctld_diag_stats.bf_active = 0;
+        bf_sched_counter++;
+        bf_sched_queue_len = slurmctld_diag_stats.bf_last_depth;
+        bf_sched_checked = slurmctld_diag_stats.bf_last_depth_try;
+        bf_sched_backfilled = slurmctld_diag_stats.backfilled_jobs;
+              
+        debug("stats: bf total time %lld, counter %ld, number of jobs: tried %ld, in queue %ld, backfilled %ld", bf_sched_total_time, bf_sched_counter, bf_sched_checked, bf_sched_queue_len, bf_sched_backfilled);
 }
 /*
 #ifdef SLURM_SIMULATOR
@@ -666,9 +682,10 @@ extern void *backfill_agent(void *args)
 		}
 #endif
 #ifdef SLURM_SIMULATOR
-		if (!((wait_time < backfill_interval) ||
-		    _job_is_completing() || _many_pending_rpcs() ||
-		    !avail_front_end(NULL) || !_more_work(last_backfill_time))) {
+                debug("backfill: now %e, last_backfill_time %e, wait_time %e, backfill_interval %d, job_is_completing %d, many_pending_rpcs %d, !avail_front_end %d, !more_work %d", now, last_backfill_time, wait_time, backfill_interval, _job_is_completing(), _many_pending_rpcs(), !avail_front_end(NULL), !_more_work(last_backfill_time));
+                if (!((wait_time < backfill_interval) ||
+                    _job_is_completing() || _many_pending_rpcs() ||
+                    !avail_front_end(NULL) || !_more_work(last_backfill_time))) {
 			lock_slurmctld(all_locks);
 			(void) _attempt_backfill();
 			last_backfill_time = time(NULL);
