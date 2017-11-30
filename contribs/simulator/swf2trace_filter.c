@@ -43,8 +43,9 @@ typedef struct job_trace {
 int main(int argc, char* argv[])
 {
     int i;
-    int idx=0, errs=0;
-    int nrecs=10000; // Number of records has to be entered here each time. This should be done differently.
+    int idx=1, errs=0;
+    int nrecs=11000; // Number of records has to be entered here each time. This should be done differently.
+    int counter=0;
     job_trace_t* job_trace,* job_trace_head,* job_arr,* job_ptr;
     char const* const fileName = argv[1]; /* should check that argc > 1 */
     FILE* file = fopen(fileName, "r"); /* should check the result */
@@ -65,7 +66,7 @@ int main(int argc, char* argv[])
         p = strtok(line, " ");
         i=0;
         while(p!=NULL){
-            if(i==0) { printf("%s", p); job_arr[idx].job_id = atoi(p); }   
+            if(i==0) { printf("%s", p); job_arr[idx].job_id = idx; }   
             if(i==1) { printf("%s", p); job_arr[idx].submit = 100 + atoi(p); }  // why submit cannot start from 0? 
             if(i==3) { printf("%s", p); job_arr[idx].duration = atoi(p); }   
             if(i==7) { printf("%s", p); job_arr[idx].tasks = ceil((float) (atoi(p)/CPUS_PER_NODE)); }
@@ -83,6 +84,7 @@ int main(int argc, char* argv[])
         //if(job_arr[idx].tasks < CPUS_PER_NODE) job_arr[idx].tasks_per_node = job_arr[idx].tasks; 
         //else job_arr[idx].tasks_per_node = CPUS_PER_NODE;
 
+        if(job_arr[idx].tasks == 0) { job_arr[idx].tasks=1; }
         //assuming one task per node, and as many threads as CPUs per node
         job_arr[idx].cpus_per_task = CPUS_PER_NODE;
         job_arr[idx].tasks_per_node = 1;
@@ -92,8 +94,11 @@ int main(int argc, char* argv[])
         strcpy(job_arr[idx].partition, "normal");
         strcpy(job_arr[idx].account, "1000");
         //strcpy(job_trace->manifest_filename, "|\0");
-        //job_trace->manifest=NULL; 
-        idx++; 
+        //job_trace->manifest=NULL;
+        if(job_arr[idx].wclimit > job_arr[idx].duration ){ 
+          idx++;
+          counter++;
+        } 
     }
     /* may check feof here to make a difference between eof and io failure -- network
        timeout for instance */
@@ -112,7 +117,8 @@ int main(int argc, char* argv[])
     }
     job_ptr = job_trace_head;
     int j=0;
-    while(j<nrecs){
+    int nrecs_limit = 1000;
+    while(j<nrecs_limit){
          written = write(trace_file, &job_arr[j], sizeof(job_trace_t));
               if (written <= 0) {
                         printf("Error! Zero bytes written.\n");
