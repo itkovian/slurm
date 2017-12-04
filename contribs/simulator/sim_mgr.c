@@ -427,11 +427,11 @@ printf("Done waiting.\n");
 		/* Synchronization with daemons */
 		sem_wait(mutexserver);
 		debug3("unlocking next loop");
-		*global_sync_flag = 2;
+		*global_sync_flag = 1;
 		sem_post(mutexserver);
 		while(1) {
 			sem_wait(mutexserver);
-			if (*global_sync_flag == 1 || *global_sync_flag == '*') {
+			if (*global_sync_flag == '*' || *global_sync_flag == 3) {
 				sem_post(mutexserver);
 				break;
 			}

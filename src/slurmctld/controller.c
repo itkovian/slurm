@@ -924,11 +924,11 @@ perform_global_sync() {
 		sem_post(mutexserver);
                 debug("global_sync_flag: %d", *global_sync_flag);
                 usleep(100000);
-        }*/
-
+        }
+*/
         sem_wait(mutexserver);
         debug3("Finished with slurmctld");
-        *global_sync_flag = 1;
+        *global_sync_flag += 1;
         sem_post(mutexserver);
 }
 void
