@@ -4,7 +4,7 @@
 #include "src/common/slurm_protocol_defs.h"
 
 /* Structures, macros and other definitions */
-#define LIBC_PATH  "/lib/x86_64-linux-gnu/libc.so.6"
+//#define LIBC_PATH  "/lib/x86_64-linux-gnu/libc.so.6"
 
 #undef DEBUG
 //#define DEBUG
@@ -132,7 +132,7 @@ static void init_funcs() {
 	if (real_gettimeofday == NULL) {
 		debug("Looking for real gettimeofday function");
 
-		handle = dlopen(LIBC_PATH, RTLD_LOCAL | RTLD_LAZY);
+		handle = dlopen(NULL, RTLD_LOCAL | RTLD_LAZY);
 		if (handle == NULL) {
 			debug("Error in dlopen %s", dlerror());
 			return;
@@ -148,7 +148,7 @@ static void init_funcs() {
 	if (real_time == NULL) {
 		debug("Looking for real time function");
 
-		handle = dlopen(LIBC_PATH, RTLD_LOCAL | RTLD_LAZY);
+		handle = dlopen(NULL, RTLD_LOCAL | RTLD_LAZY);
 		if (handle == NULL) {
 			error("Error in dlopen: %s", dlerror());
 			return;
@@ -369,7 +369,7 @@ void __attribute__ ((constructor)) sim_init(void) {
 	if (real_gettimeofday == NULL) {
 		debug("Looking for real gettimeofday function");
 
-		handle = dlopen(LIBC_PATH, RTLD_LOCAL | RTLD_LAZY);
+		handle = dlopen(NULL, RTLD_LOCAL | RTLD_LAZY);
 		if (handle == NULL) {
 			error("Error in dlopen %s", dlerror());
 			return;
@@ -385,7 +385,7 @@ void __attribute__ ((constructor)) sim_init(void) {
 	if (real_time == NULL) {
 		debug("Looking for real time function");
 
-		handle = dlopen(LIBC_PATH, RTLD_LOCAL | RTLD_LAZY);
+		handle = dlopen(NULL, RTLD_LOCAL | RTLD_LAZY);
 		if (handle == NULL) {
 			error("Error in dlopen: %s", dlerror());
 			return;

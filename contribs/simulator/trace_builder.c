@@ -7,7 +7,7 @@
 #include <ctype.h>
 #include "sim_trace.h"
 #include <getopt.h>
-
+#include <sys/stat.h>
 
 #define DEFAULT_START_TIMESTAMP 1420066800
 

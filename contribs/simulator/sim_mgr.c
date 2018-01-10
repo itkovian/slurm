@@ -69,7 +69,7 @@ long int sim_end_point;   /* simulation end point is an optional parameter */
 job_trace_t *trace_head, *trace_tail;
 rsv_trace_t *rsv_trace_head, *rsv_trace_tail;
 
-char*  global_envp[100];  /* Uhmmm ... I do not like this limitted number of env values */
+char**  global_envp;  /* Uhmmm ... I do not like this limitted number of env values */
 time_t time_incr = 1;     /* Amount to increment the simulated time by on each pass */
 int sync_loop_wait_time = 1000; /* minimum uSeconds that the sync loop waits
  	 	 	 	 	 	 	 	  before advancing to add time_incr to the
@@ -427,11 +427,11 @@ printf("Done waiting.\n");
 		/* Synchronization with daemons */
 		sem_wait(mutexserver);
 		debug3("unlocking next loop");
-		*global_sync_flag = 2;
+		*global_sync_flag = 1;
 		sem_post(mutexserver);
 		while(1) {
 			sem_wait(mutexserver);
-			if (*global_sync_flag == 1 || *global_sync_flag == '*') {
+			if (*global_sync_flag == '*' || *global_sync_flag == 3) {
 				sem_post(mutexserver);
 				break;
 			}
@@ -881,7 +881,11 @@ main(int argc, char *argv[], char *envp[]) {
 
 	/* Set up global environment list for later use in forking the daemons. */
 	envs = (char**)malloc(sizeof(char*)*(envcount+1));
-	for(ix=0; ix<envcount; ix++) envs[ix] = envp[ix];
+	global_envp = (char**)malloc(sizeof(char*)*(envcount+1));
+	printf("%d env", envcount);
+	for(ix=0; ix<envcount; ix++) {
+		envs[ix] = envp[ix];
+	}
 	envs[ix]   = NULL;
 
 	i = 0;
@@ -890,12 +894,10 @@ main(int argc, char *argv[], char *envp[]) {
 	}
 	global_envp[i] = NULL;
 
-
 	if(open_global_sync_semaphore() < 0){
 		printf("Error opening the global synchronization semaphore.\n");
 		return -1;
 	};
-
 	/* Launch the slurmctld and slurmd here */
 	if (launch_daemons) {
 		if(pid[0] == -1) fork_daemons(0);
@@ -965,7 +967,7 @@ fork_daemons(int idx) {
 				args[1] = NULL;
 				execvpe(daemon2, args, envs);
 			}
-			printf("Reached here--something went wrong!\n");
+			printf("Reached here--something went wrong! Error %s", strerror(errno));
 		}
 	}
 }
