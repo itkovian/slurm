@@ -1314,7 +1314,7 @@ static int _attempt_backfill(void)
 						avail_bitmap);
 			continue;
 		}
-
+                //info("backfill: node_space_recs %d, max_backfill_job_cnt %u",node_space_recs, max_backfill_job_cnt);
 		if (node_space_recs >= max_backfill_job_cnt) {
 			if (debug_flags & DEBUG_FLAG_BACKFILL) {
 				info("backfill: table size limit of %u reached",
@@ -1518,6 +1518,7 @@ static void _add_reservation(uint32_t start_time, uint32_t end_reserve,
 				bit_copy(node_space[j].avail_bitmap);
 			node_space[i].next = node_space[j].next;
 			node_space[j].next = i;
+                        //info("backfill: at end greater start, increment node_space_recs %d", *node_space_recs);
 			(*node_space_recs)++;
 			placed = true;
 		}
@@ -1539,6 +1540,7 @@ static void _add_reservation(uint32_t start_time, uint32_t end_reserve,
 							 avail_bitmap);
 					node_space[i].next = node_space[j].next;
 					node_space[j].next = i;
+                                        //info("backfill: at placed true, increment node_space_recs %d", *node_space_recs);
 					(*node_space_recs)++;
 					break;
 				}
