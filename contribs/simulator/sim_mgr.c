@@ -66,6 +66,9 @@ char** envs;
 long int sim_start_point; /* simulation time starting point */
 long int sim_end_point;   /* simulation end point is an optional parameter */
 
+//int total_log_jobs=0; /* ANA: global variable shared between sim_mgr and controller to help end simulation when all jobs have finished */ 
+//bool terminate_simulation_from_ctr=0; /* ANA: it will be read by sim_mgr in order to terminate simulation when all jobs have finished. */
+
 job_trace_t *trace_head, *trace_tail;
 rsv_trace_t *rsv_trace_head, *rsv_trace_tail;
 
@@ -315,7 +318,6 @@ printf("Done waiting.\n");
 	printf("SIM_MGR[%u][%ld][%ld]\n", current_sim[0], t1.tv_sec, t1.tv_usec);
 #endif
 
-
 	/* Main simulation manager loop */
 	uint32_t seconds_to_finish=20;
 	time_t time_end=0;
@@ -323,7 +325,7 @@ printf("Done waiting.\n");
 	while (1) {
 		real_gettimeofday(&t_start, NULL);
 		/* Do we have to end simulation in this cycle? */
-		if (!time_end && sim_end_point && sim_end_point <= current_sim[0]) {
+		if (!time_end && (sim_end_point && sim_end_point <= current_sim[0] || *trace_recs_end_sim==-1)) { /* ANA: added condition for terminating sim using shmem var trace_recs_end_sim when all jobs have finished */
 			fprintf(stderr, "End point of trace arrived, keep simulation for %d"
 					" seconds for last jobs to be registered\n",
 					seconds_to_finish);
@@ -708,6 +710,8 @@ int init_job_trace() {
 	job_trace_t new_job;
 	int total_trace_records = 0;
 
+        trace_recs_end_sim = timemgr_data + SIM_TRACE_RECS_END_SIM_OFFSET; /*ANA: Shared memory variable that will keep value of the total number of jobs in the log; once they are all finished controller will set it to -1 */
+
 	trace_file = open(workload_trace_file, O_RDONLY);
 	if (trace_file < 0) {
 		printf("Error opening file %s\n", workload_trace_file);
@@ -735,7 +739,9 @@ int init_job_trace() {
 
 	printf("Trace initialization done. Total trace records: %d\n",
 					total_trace_records);
-
+        *trace_recs_end_sim=total_trace_records; /* ANA: update shared memory variable to total jobs in the log */ 
+        printf("Trace initialization done. Total log jobs: %d\n",
+                                        *trace_recs_end_sim);
 	close(trace_file);
 
 	return 0;
@@ -898,6 +904,13 @@ main(int argc, char *argv[], char *envp[]) {
 		printf("Error opening the global synchronization semaphore.\n");
 		return -1;
 	};
+
+        if(init_job_trace() < 0){
+                printf("An error was detected when reading trace file. "
+                       "Exiting...\n");
+                return -1;
+        }
+
 	/* Launch the slurmctld and slurmd here */
 	if (launch_daemons) {
 		if(pid[0] == -1) fork_daemons(0);
@@ -906,11 +919,11 @@ main(int argc, char *argv[], char *envp[]) {
 		waitpid(pid[1], &status_slud, 0);
 	}
 
-	if(init_job_trace() < 0){
+/*	if(init_job_trace() < 0){
 		printf("An error was detected when reading trace file. "
 		       "Exiting...\n");
 		return -1;
-	}
+	}*/
 
 	if(init_rsv_trace() < 0){
 		printf("An error was detected when reading trace file. \n"

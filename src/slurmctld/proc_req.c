@@ -191,6 +191,8 @@ extern int prolog_complete(uint32_t job_id, bool requeue,
 
 int finished_jobs_waiting_for_epilog=0;
 int total_finished_jobs = 0;
+
+int total_epilog_complete_jobs=0; /* ANA: keeps track how many jobs from total jobs in the log have finished. */
 /*
  * slurmctld_req  - Process an individual RPC request
  * IN/OUT msg - the request message, data associated with the message is freed
@@ -1586,6 +1588,9 @@ static void  _slurm_rpc_epilog_complete(slurm_msg_t * msg)
 	info("SIM: Processing RPC: MESSAGE_EPILOG_COMPLETE for jobid %d", epilog_msg->job_id);
         slurm_send_rc_msg(msg, SLURM_SUCCESS);
 	finished_jobs_waiting_for_epilog--;
+        /* ANA: keep track of the jobs that have finished in its entirety. */
+        total_epilog_complete_jobs++;
+        
 #endif
 }
 

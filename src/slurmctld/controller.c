@@ -210,6 +210,8 @@ FILE *stats = NULL;
 #ifdef SLURM_SIMULATOR
 char SEM_NAME[]		= "serversem";
 sem_t* mutexserver	= SEM_FAILED;
+int total_log_jobs=0;
+//bool terminate_simulation_from_ctr=0; /* ANA: it will be read by sim_mgr in order to terminate simulation when all jobs have finished. */
 #endif
 
 /*
@@ -289,6 +291,8 @@ int main(int argc, char *argv[])
 	update_logging();
 	_update_nice();
 	_kill_old_slurmctld();
+
+        total_log_jobs= *trace_recs_end_sim; /* ANA: shared memory variable stored in a global variable, as it will not be changed by another process, to avoid accessing shared memory every time. */
 
 	for (i = 0; i < 3; i++)
 		fd_set_close_on_exec(i);
@@ -1765,6 +1769,15 @@ static void *_slurmctld_background(void *no_data)
 			last_uid_update = now;
 			assoc_mgr_set_missing_uids();
 		}
+#ifdef SLURM_SIMULATOR
+                /* ANA: checking if all jobs from the log have finished */
+                //info("SIM: EPILOG number of jobs reached %d out of %d ", total_epilog_complete_jobs, total_log_jobs);
+                if(total_epilog_complete_jobs == total_log_jobs){
+                    *trace_recs_end_sim=-1; /* This value will instruct time_mgr to end simulation */
+                    info("SIM: EPILOG total number of jobs reached %d, trace_recs_end_sim %d", total_epilog_complete_jobs, *trace_recs_end_sim);
+                }
+                /*******************************************************/
+#endif
 
 		END_TIMER2("_slurmctld_background");
 	}

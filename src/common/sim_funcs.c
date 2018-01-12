@@ -25,6 +25,7 @@ sim_user_info_t * sim_users_list;
 int             * slurmctl_pid;     /* Shared Memory */
 int             * slurmd_pid;       /* Shared Memory */
 char            * global_sync_flag; /* Shared Memory */
+int             * trace_recs_end_sim; /* Shared Memory */
 char            * users_sim_path = NULL;
 
 extern void         * timemgr_data;  /* Shared Memory */
@@ -122,6 +123,7 @@ int attaching_shared_memory() {
 	slurmctl_pid     = timemgr_data + SIM_PTHREAD_SLURMCTL_PID;
 	slurmd_pid       = timemgr_data + SIM_PTHREAD_SLURMD_PID;
 	global_sync_flag = timemgr_data + SIM_GLOBAL_SYNC_FLAG_OFFSET;
+	trace_recs_end_sim = timemgr_data + SIM_TRACE_RECS_END_SIM_OFFSET;
 
 	return 0;
 }

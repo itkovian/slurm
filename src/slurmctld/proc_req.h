@@ -43,6 +43,8 @@
 
 #include "src/common/slurm_protocol_api.h"
 
+extern int total_epilog_complete_jobs; /* ANA: keeps track how many jobs from total jobs in the log have finished. */
+
 /* Each TCP/IP client connection has a socket
  * and address with port
  */
