@@ -6,6 +6,8 @@ use Carp;
 my %const;
 my $got = 0;
 
+no warnings 'portable';
+
 sub _get_constants {
     seek(DATA, 0, 0);
     local $/=''; # paragraph mode
@@ -18,7 +20,7 @@ sub _get_constants {
 	} else {
 	    $val = int($val);
 	}
-	$const{$name} = sub () { $val };
+	$const{$name} = sub { $val };
     }
     $got = 1;
 }
@@ -88,7 +90,11 @@ This package export constants for use with Slurm. This includes enumerations and
 
 =item * INFINITE           0xffffffff
 
+=item * INFINITE64         0xffffffffffffffff
+
 =item * NO_VAL             0xfffffffe
+
+=item * NO_VAL64           0xfffffffffffffffe
 
 =item * MAX_TASKS_PER_NODE 128
 
@@ -138,7 +144,7 @@ This package export constants for use with Slurm. This includes enumerations and
 
 =over 2
 
-=item * NICE_OFFSET             10000
+=item * NICE_OFFSET             0x80000000
 
 =back
 
@@ -238,7 +244,7 @@ This package export constants for use with Slurm. This includes enumerations and
 
 =item * CR_CORE_DEFAULT_DIST_BLOCK 0x1000
 
-=item * MEM_PER_CPU                0x80000000
+=item * MEM_PER_CPU                0x8000000000000000
 
 =item * SHARED_FORCE               0x8000
 
@@ -380,18 +386,6 @@ This package export constants for use with Slurm. This includes enumerations and
 
 =back
 
-=head3 Group cache
-
-=over 2
-
-=item * GROUP_FORCE                0x8000
-
-=item * GROUP_CACHE                0x4000
-
-=item * GROUP_TIME_MASK            0x0fff
-
-=back
-
 =head3 Preempt mode
 
 =over 2
@@ -489,7 +483,11 @@ This package export constants for use with Slurm. This includes enumerations and
 
 =item * JOB_NODE_FAIL      7        
 
-=item * JOB_END            8        
+=item * JOB_PREEMPTED      8
+
+=item * JOB_BOOT_FAIL      9
+
+=item * JOB_END           10
 
 =back
 
@@ -753,6 +751,20 @@ This package export constants for use with Slurm. This includes enumerations and
 
 =back
 
+=head3 TRES Records
+
+=over 2
+
+=item * TRES_CPU                        1
+
+=item * TRES_MEM                        2
+
+=item * TRES_ENERGY                     3
+
+=item * TRES_NODE                       4
+
+=back
+
 =head3 Task distribution
 
 =over 2
@@ -944,7 +956,7 @@ head2 SLURM ERRNO
 
 =back
 
-=head3 _info.c/communcation layer RESPONSE_SLURM_RC message codes
+=head3 _info.c/communication layer RESPONSE_SLURM_RC message codes
 
 =over 2
 

@@ -8,7 +8,7 @@
  *  Written by Danny Auble <da@llnl.gov>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -47,16 +47,19 @@ extern int as_mysql_get_modified_lfts(mysql_conn_t *mysql_conn,
 
 extern int as_mysql_add_assocs(mysql_conn_t *mysql_conn,
 			       uint32_t uid,
-			       List association_list);
+			       List assoc_list);
 
 extern List as_mysql_modify_assocs(mysql_conn_t *mysql_conn, uint32_t uid,
-				   slurmdb_association_cond_t *assoc_cond,
-				   slurmdb_association_rec_t *assoc);
+				   slurmdb_assoc_cond_t *assoc_cond,
+				   slurmdb_assoc_rec_t *assoc);
 
 extern List as_mysql_remove_assocs(mysql_conn_t *mysql_conn, uint32_t uid,
-				   slurmdb_association_cond_t *assoc_cond);
+				   slurmdb_assoc_cond_t *assoc_cond);
 
 extern List as_mysql_get_assocs(mysql_conn_t *mysql_conn, uid_t uid,
-				slurmdb_association_cond_t *assoc_cond);
+				slurmdb_assoc_cond_t *assoc_cond);
+
+extern int as_mysql_reset_lft_rgt(mysql_conn_t *mysql_conn, uid_t uid,
+				  List cluster_list);
 
 #endif

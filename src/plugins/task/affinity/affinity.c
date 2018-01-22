@@ -1,11 +1,10 @@
 /*****************************************************************************\
  *  src/plugins/task/affinity/affinity.c - task affinity plugin
- *  $Id: affinity.c,v 1.2 2005/11/04 02:46:51 palermo Exp $
  *****************************************************************************
  *  Copyright (C) 2005-2006 Hewlett-Packard Development Company, L.P.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -36,71 +35,27 @@
 
 #include "affinity.h"
 
+/* Older versions of sched.h (ie. Centos5) don't include CPU_OR. */
+#ifndef CPU_OR
+
+#ifndef CPU_OP_S
+# define __CPU_OP_S(setsize, destset, srcset1, srcset2, op) \
+  (__extension__      \
+   ({ cpu_set_t *__dest = (destset);      \
+     const __cpu_mask *__arr1 = (srcset1)->__bits;      \
+     const __cpu_mask *__arr2 = (srcset2)->__bits;      \
+     size_t __imax = (setsize) / sizeof (__cpu_mask);      \
+     size_t __i;      \
+     for (__i = 0; __i < __imax; ++__i)      \
+       ((__cpu_mask *) __dest->__bits)[__i] = __arr1[__i] op __arr2[__i];    \
+     __dest; }))
+#endif
+
+# define CPU_OR(destset, srcset1, srcset2) \
+  __CPU_OP_S (sizeof (cpu_set_t), destset, srcset1, srcset2, |)
+#endif
+
 static int is_power = -1;
-
-void slurm_chkaffinity(cpu_set_t *mask, stepd_step_rec_t *job, int statval)
-{
-	char *bind_type, *action, *status, *units;
-	char mstr[1 + CPU_SETSIZE / 4];
-	int task_gid = job->envtp->procid;
-	int task_lid = job->envtp->localid;
-	pid_t mypid = job->envtp->task_pid;
-
-	if (!(job->cpu_bind_type & CPU_BIND_VERBOSE))
-		return;
-
-	if (statval)
-		status = " FAILED";
-	else
-		status = "";
-
-	if (job->cpu_bind_type & CPU_BIND_NONE) {
-		action = "";
-		units  = "";
-		bind_type = "NONE";
-	} else {
-		action = " set";
-		if (job->cpu_bind_type & CPU_BIND_TO_THREADS)
-			units = "_threads";
-		else if (job->cpu_bind_type & CPU_BIND_TO_CORES)
-			units = "_cores";
-		else if (job->cpu_bind_type & CPU_BIND_TO_SOCKETS)
-			units = "_sockets";
-		else if (job->cpu_bind_type & CPU_BIND_TO_LDOMS)
-			units = "_ldoms";
-		else
-			units = "";
-		if (job->cpu_bind_type & CPU_BIND_RANK) {
-			bind_type = "RANK";
-		} else if (job->cpu_bind_type & CPU_BIND_MAP) {
-			bind_type = "MAP ";
-		} else if (job->cpu_bind_type & CPU_BIND_MASK) {
-			bind_type = "MASK";
-		} else if (job->cpu_bind_type & CPU_BIND_LDRANK) {
-			bind_type = "LDRANK";
-		} else if (job->cpu_bind_type & CPU_BIND_LDMAP) {
-			bind_type = "LDMAP ";
-		} else if (job->cpu_bind_type & CPU_BIND_LDMASK) {
-			bind_type = "LDMASK";
-		} else if (job->cpu_bind_type & (~CPU_BIND_VERBOSE)) {
-			bind_type = "UNK ";
-		} else {
-			action = "";
-			bind_type = "NULL";
-		}
-	}
-
-	fprintf(stderr, "cpu_bind%s=%s - "
-			"%s, task %2u %2u [%u]: mask 0x%s%s%s\n",
-			units, bind_type,
-			conf->hostname,
-			task_gid,
-			task_lid,
-			mypid,
-			cpuset_to_str(mask, mstr),
-			action,
-			status);
-}
 
 /* If HAVE_NUMA, create mask for given ldom.
  * Otherwise create mask for given socket
@@ -166,7 +121,6 @@ int get_cpuset(cpu_set_t *mask, stepd_step_rec_t *job)
 		return false;
 
 	nummasks = 1;
-	maskid = 0;
 	selstr = NULL;
 
 	/* get number of strings present in cpu_bind */
@@ -174,7 +128,6 @@ int get_cpuset(cpu_set_t *mask, stepd_step_rec_t *job)
 	while (*curstr) {
 		if (nummasks == local_id+1) {
 			selstr = curstr;
-			maskid = local_id;
 			break;
 		}
 		if (*curstr == ',')
@@ -208,8 +161,8 @@ int get_cpuset(cpu_set_t *mask, stepd_step_rec_t *job)
 
 	if (job->cpu_bind_type & CPU_BIND_MASK) {
 		/* convert mask string into cpu_set_t mask */
-		if (str_to_cpuset(mask, mstr) < 0) {
-			error("str_to_cpuset %s", mstr);
+		if (task_str_to_cpuset(mask, mstr) < 0) {
+			error("task_str_to_cpuset %s", mstr);
 			return false;
 		}
 		return true;
@@ -217,7 +170,7 @@ int get_cpuset(cpu_set_t *mask, stepd_step_rec_t *job)
 
 	if (job->cpu_bind_type & CPU_BIND_MAP) {
 		unsigned int mycpu = 0;
-		if (strncmp(mstr, "0x", 2) == 0) {
+		if (xstrncmp(mstr, "0x", 2) == 0) {
 			mycpu = strtoul (&(mstr[2]), NULL, 16);
 		} else {
 			mycpu = strtoul (mstr, NULL, 10);
@@ -262,7 +215,7 @@ int get_cpuset(cpu_set_t *mask, stepd_step_rec_t *job)
 		 * domain. Otherwise bind this task to the given
 		 * socket */
 		uint32_t myldom = 0;
-		if (strncmp(mstr, "0x", 2) == 0) {
+		if (xstrncmp(mstr, "0x", 2) == 0) {
 			myldom = strtoul (&(mstr[2]), NULL, 16);
 		} else {
 			myldom = strtoul (mstr, NULL, 10);
@@ -273,12 +226,34 @@ int get_cpuset(cpu_set_t *mask, stepd_step_rec_t *job)
 	return false;
 }
 
+/* For sysctl() functions */
+#if defined(__FreeBSD__) || defined(__NetBSD__)
+#include <sys/types.h>
+#include <sys/sysctl.h>
+#endif
+
+#define	BUFFLEN	127
+
 /* Return true if Power7 processor */
 static bool _is_power_cpu(void)
 {
 	if (is_power == -1) {
+#if defined(__FreeBSD__) || defined(__NetBSD__)
+
+		char    buffer[BUFFLEN+1];
+		size_t  len = BUFFLEN;
+
+		if ( sysctlbyname("hw.model", buffer, &len, NULL, 0) == 0 )
+		    is_power = ( strstr(buffer, "POWER7") != NULL );
+		else {
+		    error("_get_is_power: sysctl could not retrieve hw.model");
+		    return false;
+		}
+
+#elif defined(__linux__)
+
 		FILE *cpu_info_file;
-		char buffer[128];
+		char buffer[BUFFLEN+1];
 		char* _cpuinfo_path = "/proc/cpuinfo";
 		cpu_info_file = fopen(_cpuinfo_path, "r");
 		if (cpu_info_file == NULL) {
@@ -295,6 +270,14 @@ static bool _is_power_cpu(void)
 			}
 		}
 		fclose(cpu_info_file);
+
+#else
+
+/* Assuming other platforms don't support sysctlbyname() or /proc/cpuinfo */
+#warning	"Power7 check not implemented for this platform."
+	is_power = 0;
+
+#endif
 	}
 
 	if (is_power == 1)
@@ -318,7 +301,11 @@ void reset_cpuset(cpu_set_t *new_mask, cpu_set_t *cur_mask)
 	if (slurm_getaffinity(1, sizeof(full_mask), &full_mask)) {
 		/* Try to get full CPU mask from process init */
 		CPU_ZERO(&full_mask);
+#ifdef __FreeBSD__
+		CPU_OR(&full_mask, cur_mask);
+#else
 		CPU_OR(&full_mask, &full_mask, cur_mask);
+#endif
 	}
 	CPU_ZERO(&newer_mask);
 	for (cur_offset = 0; cur_offset < CPU_SETSIZE; cur_offset++) {
@@ -343,14 +330,17 @@ int slurm_setaffinity(pid_t pid, size_t size, const cpu_set_t *mask)
 	int rval;
 	char mstr[1 + CPU_SETSIZE / 4];
 
-#ifdef SCHED_GETAFFINITY_THREE_ARGS
+#ifdef __FreeBSD__
+        rval = cpuset_setaffinity(CPU_LEVEL_WHICH, CPU_WHICH_PID,
+				pid, size, mask);
+#elif defined(SCHED_GETAFFINITY_THREE_ARGS)
 	rval = sched_setaffinity(pid, size, mask);
 #else
 	rval = sched_setaffinity(pid, mask);
 #endif
 	if (rval) {
 		verbose("sched_setaffinity(%d,%zd,0x%s) failed: %m",
-			pid, size, cpuset_to_str(mask, mstr));
+			pid, size, task_cpuset_to_str(mask, mstr));
 	}
 	return (rval);
 }
@@ -361,17 +351,29 @@ int slurm_getaffinity(pid_t pid, size_t size, cpu_set_t *mask)
 	char mstr[1 + CPU_SETSIZE / 4];
 
 	CPU_ZERO(mask);
-#ifdef SCHED_GETAFFINITY_THREE_ARGS
+
+	/*
+	 * The FreeBSD cpuset API is a superset of the Linux API.
+	 * In addition to PIDs, it supports threads, interrupts,
+	 * jails, and potentially other objects.  The first two arguments
+	 * to cpuset_*etaffinity() below indicate that the third argument
+	 * is a PID.  -1 indicates the PID of the calling process.
+	 * Linux sched_*etaffinity() uses 0 for this.
+	 */
+#ifdef __FreeBSD__
+        rval = cpuset_getaffinity(CPU_LEVEL_WHICH, CPU_WHICH_PID,
+				pid, size, mask);
+#elif defined(SCHED_GETAFFINITY_THREE_ARGS)
 	rval = sched_getaffinity(pid, size, mask);
 #else
 	rval = sched_getaffinity(pid, mask);
 #endif
 	if (rval) {
 		verbose("sched_getaffinity(%d,%zd,0x%s) failed with status %d",
-				pid, size, cpuset_to_str(mask, mstr), rval);
+			pid, size, task_cpuset_to_str(mask, mstr), rval);
 	} else {
 		debug3("sched_getaffinity(%d) = 0x%s",
-		       pid, cpuset_to_str(mask, mstr));
+		       pid, task_cpuset_to_str(mask, mstr));
 	}
 	return (rval);
 }

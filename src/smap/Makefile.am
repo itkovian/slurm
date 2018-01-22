@@ -7,6 +7,7 @@
 AUTOMAKE_OPTIONS = foreign
 
 LIBS=$(NCURSES) -lrt
+
 AM_CPPFLAGS = -I$(top_srcdir) $(BG_INCLUDES)
 
 if BUILD_SMAP
@@ -18,7 +19,9 @@ smap_SOURCES = smap.c \
 	job_functions.c partition_functions.c \
 	grid_functions.c reservation_functions.c opts.c
 
-smap_LDADD = $(top_builddir)/src/api/libslurm.o $(DL_LIBS)
+smap_LDADD = $(LIB_SLURM) $(DL_LIBS) $(NCURSES)
+
+smap_DEPENDENCIES = $(LIB_SLURM_BUILD)
 
 if BLUEGENE_LOADED
 bg_dir = $(top_builddir)/src/plugins/select/bluegene
@@ -33,8 +36,7 @@ force:
 $(smap_LDADD) : force
 	@cd `dirname $@` && $(MAKE) `basename $@`
 
-smap_LDFLAGS = -export-dynamic $(CMD_LDFLAGS) \
-	$(HWLOC_LDFLAGS) $(HWLOC_LIBS)
+smap_LDFLAGS = -export-dynamic $(CMD_LDFLAGS)
 
 else
 

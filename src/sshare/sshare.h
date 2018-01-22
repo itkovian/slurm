@@ -8,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -40,26 +40,15 @@
 #ifndef __SSHARE_H__
 #define __SSHARE_H__
 
-#if HAVE_CONFIG_H
-#  include "config.h"
-#endif
-
-#if HAVE_GETOPT_H
-#  include <getopt.h>
-#else
-#  include "src/common/getopt.h"
-#endif
+#include "config.h"
 
 #include <ctype.h>
 #include <errno.h>
+#include <getopt.h>
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
-#ifdef HAVE_STRING_H
-#  include <string.h>
-#endif
-#ifdef HAVE_STRINGS_H
-#  include <strings.h>
-#endif
+#include <string.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -67,14 +56,6 @@
 #  include <readline/readline.h>
 #  include <readline/history.h>
 #endif
-
-#if HAVE_INTTYPES_H
-#  include <inttypes.h>
-#else  /* !HAVE_INTTYPES_H */
-#  if HAVE_STDINT_H
-#    include <stdint.h>
-#  endif
-#endif  /* HAVE_INTTYPES_H */
 
 #include "slurm/slurm.h"
 
@@ -87,11 +68,37 @@
 #define CKPT_WAIT	10
 #define	MAX_INPUT_FIELDS 128
 
+/* Print only the users and not the hierarchy.
+ */
+#define PRINT_USERS_ONLY 0x01
+/* If you have partition base associations
+ * print them
+ */
+#define PRINT_PARTITIONS 0x02
+
 typedef enum {
 	SSHARE_TIME_SECS,
 	SSHARE_TIME_MINS,
 	SSHARE_TIME_HOURS,
 } sshare_time_format_t;
+
+enum {
+	PRINT_ACCOUNT,
+	PRINT_CLUSTER,
+	PRINT_TRESMINS,
+	PRINT_EUSED,
+	PRINT_FSFACTOR,
+	PRINT_ID,
+	PRINT_NORMS,
+	PRINT_NORMU,
+	PRINT_PART,
+	PRINT_RAWS,
+	PRINT_RAWU,
+	PRINT_RUNMINS,
+	PRINT_USER,
+	PRINT_LEVELFS,
+	PRINT_GRPTRESRAW
+};
 
 extern int exit_code;	/* sshare's exit code, =1 on any error at any time */
 extern int quiet_flag;	/* quiet=1, verbose=-1, normal=0 */
@@ -99,7 +106,12 @@ extern uint32_t my_uid;
 extern sshare_time_format_t time_format;
 extern char *time_format_string;
 extern List clusters;
+extern print_field_t fields[];
+extern char **tres_names;
+extern uint32_t tres_cnt;
+extern int long_flag;
+extern char *opt_field_list;
 
-extern int process(shares_response_msg_t *msg);
+extern int process(shares_response_msg_t *msg, uint16_t options);
 
 #endif

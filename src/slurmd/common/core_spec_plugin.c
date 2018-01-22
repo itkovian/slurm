@@ -5,7 +5,7 @@
  *  Written by Morris Jette
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -48,8 +48,8 @@
 typedef struct core_spec_ops {
 	int	(*core_spec_p_set)	(uint64_t cont_id, uint16_t count);
 	int	(*core_spec_p_clear)	(uint64_t cont_id);
-	int	(*core_spec_p_suspend)	(uint64_t cont_id);
-	int	(*core_spec_p_resume)	(uint64_t cont_id);
+	int	(*core_spec_p_suspend)	(uint64_t cont_id, uint16_t count);
+	int	(*core_spec_p_resume)	(uint64_t cont_id, uint16_t count);
 } core_spec_ops_t;
 
 /*
@@ -103,7 +103,7 @@ extern int core_spec_g_init(void)
 			 (g_core_spec_context_num + 1));
 		xrealloc(g_core_spec_context, (sizeof(plugin_context_t *)
 					  * (g_core_spec_context_num + 1)));
-		if (strncmp(core_spec, "core_spec/", 10) == 0)
+		if (xstrncmp(core_spec, "core_spec/", 10) == 0)
 			core_spec += 10; /* backward compatibility */
 		core_spec = xstrdup_printf("core_spec/%s",
 					       core_spec);
@@ -213,7 +213,7 @@ extern int core_spec_g_clear(uint64_t cont_id)
  *
  * Return SLURM_SUCCESS on success
  */
-extern int core_spec_g_suspend(uint64_t cont_id)
+extern int core_spec_g_suspend(uint64_t cont_id, uint16_t count)
 {
 	int i, rc = SLURM_SUCCESS;
 
@@ -222,7 +222,7 @@ extern int core_spec_g_suspend(uint64_t cont_id)
 
 	for (i = 0; ((i < g_core_spec_context_num) && (rc == SLURM_SUCCESS));
 	     i++) {
-		rc = (*(ops[i].core_spec_p_suspend))(cont_id);
+		rc = (*(ops[i].core_spec_p_suspend))(cont_id, count);
 	}
 
 	return rc;
@@ -233,7 +233,7 @@ extern int core_spec_g_suspend(uint64_t cont_id)
  *
  * Return SLURM_SUCCESS on success
  */
-extern int core_spec_g_resume(uint64_t cont_id)
+extern int core_spec_g_resume(uint64_t cont_id, uint16_t count)
 {
 	int i, rc = SLURM_SUCCESS;
 
@@ -242,7 +242,7 @@ extern int core_spec_g_resume(uint64_t cont_id)
 
 	for (i = 0; ((i < g_core_spec_context_num) && (rc == SLURM_SUCCESS));
 	     i++) {
-		rc = (*(ops[i].core_spec_p_resume))(cont_id);
+		rc = (*(ops[i].core_spec_p_resume))(cont_id, count);
 	}
 
 	return rc;

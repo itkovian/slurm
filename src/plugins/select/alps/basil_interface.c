@@ -160,8 +160,8 @@ extern int basil_node_ranking(struct node_record *node_array, int node_cnt)
 		} else if ((slurmctld_conf.fast_schedule != 2)
 			   && (node->mem_size
 			       != node_ptr->config_ptr->real_memory)) {
-			fatal("slurm.conf: node %s has RealMemory=%u "
-			      "but configured as RealMemory=%u in your "
+			fatal("slurm.conf: node %s has RealMemory=%"PRIu64" "
+			      "but configured as RealMemory=%"PRIu64" in your "
 			      "slurm.conf",
 			      node_ptr->name, node->mem_size,
 			      node_ptr->config_ptr->real_memory);
@@ -229,6 +229,14 @@ extern int basil_inventory(void)
 	time_t now = time(NULL);
 	static time_t slurm_alps_mismatch_time = (time_t) 0;
 	static bool logged_sync_timeout = false;
+	static time_t last_inv_run = 0;
+
+	if ((now - last_inv_run) < inv_interval)
+		return slurm_alps_mismatch_time ?
+			ESLURM_REQUESTED_NODE_CONFIG_UNAVAILABLE :
+			SLURM_SUCCESS;
+
+	last_inv_run = now;
 
 	inv = get_full_inventory(version);
 	if (inv == NULL) {
@@ -376,7 +384,7 @@ extern int basil_inventory(void)
 		 * ids (e.g. the interactive region) (Chris North)
 		 */
 
-		if ((job_ptr == NULL) && (strcmp(rsvn->batch_id, "UNKNOWN"))) {
+		if ((job_ptr == NULL) && (xstrcmp(rsvn->batch_id, "UNKNOWN"))) {
 			error("orphaned ALPS reservation %u, trying to remove",
 			      rsvn->rsvn_id);
 			rel_rc = basil_safe_release(rsvn->rsvn_id, inv);
@@ -396,12 +404,13 @@ extern int basil_inventory(void)
 		/* If SLURM and ALPS state are not in synchronization,
 		 * do not schedule any more jobs until waiting at least
 		 * SyncTimeout seconds. */
-		if (slurm_alps_mismatch_time == 0) {
+		if (slurm_alps_mismatch_time == 0)
 			slurm_alps_mismatch_time = now;
-		} else if (cray_conf->sync_timeout == 0) {
-			/* Wait indefinitely */
-		} else if (difftime(now, slurm_alps_mismatch_time) <
-			   cray_conf->sync_timeout) {
+
+		/* cray_conf->sync_timeout == 0: Wait indefinitely */
+		if ((cray_conf->sync_timeout == 0) ||
+		    (difftime(now, slurm_alps_mismatch_time) <
+		     cray_conf->sync_timeout)) {
 			return ESLURM_REQUESTED_NODE_CONFIG_UNAVAILABLE;
 		} else if (!logged_sync_timeout) {
 			error("Could not synchronize SLURM with ALPS for %u "
@@ -530,7 +539,7 @@ extern int basil_geometry(struct node_record *node_ptr_array, int node_cnt)
 			info("proc_type:%s xyz:%u:%u:%u",
 			     proc_type, x_coord, y_coord, z_coord
 #endif
-			if (strcmp(proc_type, "compute") != 0) {
+			if (xstrcmp(proc_type, "compute") != 0) {
 				/*
 				 * Switching a compute node to be a service node
 				 * can not happen at runtime: requires a reboot.
@@ -679,13 +688,13 @@ extern int basil_geometry(struct node_record *node_ptr_array, int node_cnt)
 
 struct basil_accel_param* build_accel_param(struct job_record* job_ptr)
 {
-	int gpu_mem_req;
+	uint64_t gpu_mem_req;
 	struct basil_accel_param* head,* bap_ptr;
 
 	gpu_mem_req = gres_plugin_get_job_value_by_type(job_ptr->gres_list,
 							"gpu_mem");
 
-	if (gpu_mem_req == NO_VAL)
+	if (gpu_mem_req == NO_VAL64)
 		gpu_mem_req = 0;
 
 	if (!job_ptr) {
@@ -718,9 +727,10 @@ extern int do_basil_reserve(struct job_record *job_ptr)
 	/* mppmem must be at least 1 for gang scheduling to work so
 	 * if you are wondering why gang scheduling isn't working you
 	 * should check your slurm.conf for DefMemPerNode */
-	uint32_t mppdepth, mppnppn = INFINITE, mppwidth = 0,
-		mppmem = 0, node_min_mem = 0;
-	uint32_t resv_id, largest_cpus = 0, min_memory = INFINITE;
+	uint32_t mppdepth, mppnppn = INFINITE, mppwidth = 0;
+	uint64_t mppmem = 0, node_min_mem = 0;
+	uint32_t resv_id, largest_cpus = 0;
+	uint64_t min_memory = INFINITE64;
 	int i, first_bit, last_bit;
 	long rc;
 	char *user, batch_id[16];
@@ -746,8 +756,21 @@ extern int do_basil_reserve(struct job_record *job_ptr)
 	if (first_bit == -1 || last_bit == -1)
 		return SLURM_SUCCESS;		/* no nodes allocated */
 
-	/* always be 1 */
-	mppdepth = 1;
+	if (cray_conf->sub_alloc) {
+		mppdepth = MAX(1, job_ptr->details->cpus_per_task);
+		if (job_ptr->details->ntasks_per_node) {
+			mppnppn  = job_ptr->details->ntasks_per_node;
+		} else if (job_ptr->details->num_tasks) {
+			mppnppn = (job_ptr->details->num_tasks +
+				   job_ptr->job_resrcs->nhosts - 1) /
+				job_ptr->job_resrcs->nhosts;
+		} else {
+			mppnppn = 1;
+		}
+	} else {
+		/* always be 1 */
+		mppdepth = 1;
+	}
 
 	/* mppmem */
 	if (job_ptr->details->pn_min_memory & MEM_PER_CPU) {
@@ -774,7 +797,8 @@ extern int do_basil_reserve(struct job_record *job_ptr)
 
 	for (i = first_bit; i <= last_bit; i++) {
 		struct node_record *node_ptr = node_record_table_ptr + i;
-		uint32_t node_cpus, node_mem;
+		uint32_t node_cpus;
+		uint64_t node_mem;
 		uint16_t threads = 1;
 		uint32_t basil_node_id;
 
@@ -805,31 +829,68 @@ extern int do_basil_reserve(struct job_record *job_ptr)
 			node_mem  = node_ptr->real_memory;
 		}
 
-		node_cpus = adjust_cpus_nppcu(nppcu, threads, node_cpus);
+		if (cray_conf->sub_alloc) {
+			if (node_min_mem) {
+				int64_t tmp_mppmem;
 
-		/* On a reservation we can only run one job per node
-		   on a cray so allocate all the cpuss on each node
-		   reguardless of the request.
-		*/
-		mppwidth += node_cpus;
+				/* If the job has requested memory use it (if
+				   lesser) for calculations.
+				*/
+				tmp_mppmem = MIN(node_mem, node_min_mem);
+				/*
+				 * ALPS 'Processing Elements per Node'
+				 * value (aprun -N), which in slurm is
+				 * --ntasks-per-node and 'mppnppn' in PBS: if
+				 * --ntasks is specified, default to the
+				 * number of cores per node (also the
+				 * default for 'aprun -N').  On a
+				 * heterogeneous system the nodes
+				 * aren't always the same so keep
+				 * track of the lowest mppmem and use
+				 * it as the level for all nodes
+				 * (mppmem is 0 when coming in).
+				 */
+				tmp_mppmem /= mppnppn ? mppnppn : node_cpus;
 
-		/* We want mppnppn to be the smallest number of cpus
-		   per node and allocate that on each of the nodes
-		   reguardless of the request.
-		*/
-		mppnppn = MIN(mppnppn, node_cpus);
+				/* Minimum memory per processing
+				 * element should be 1, since 0 means
+				 * give all the memory to the job. */
+				if (tmp_mppmem <= 0)
+					tmp_mppmem = 1;
 
-		if (node_min_mem) {
-			/* Keep track of the largest cpu count and Min
-			   memory if we need to split up the memory
-			   per cpu.
+				if (mppmem)
+					mppmem = MIN(mppmem, tmp_mppmem);
+				else
+					mppmem = tmp_mppmem;
+			}
+		} else {
+			node_cpus = adjust_cpus_nppcu(
+				nppcu, threads, node_cpus);
+
+			/* On a reservation we can only run one job per node
+			   on a cray so allocate all the cpus on each node
+			   regardless of the request.
 			*/
-			largest_cpus = MAX(largest_cpus, node_cpus);
-			min_memory = MIN(min_memory, node_mem);
+			mppwidth += node_cpus;
+
+			/* We want mppnppn to be the smallest number of cpus
+			   per node and allocate that on each of the nodes
+			   reguardless of the request.
+			*/
+			mppnppn = MIN(mppnppn, node_cpus);
+
+			if (node_min_mem) {
+				/* Keep track of the largest cpu count and Min
+				   memory if we need to split up the memory
+				   per cpu.
+				*/
+				largest_cpus = MAX(largest_cpus, node_cpus);
+				min_memory = MIN(min_memory, node_mem);
+			}
 		}
 	}
 
-	if (node_min_mem) {
+	if (!cray_conf->sub_alloc && node_min_mem) {
 		/*
 		 * ALPS 'Processing Elements per Node' value (aprun -N),
 		 * which in slurm is --ntasks-per-node and 'mppnppn' in
@@ -840,13 +901,49 @@ extern int do_basil_reserve(struct job_record *job_ptr)
 		 * mppmem and use it as the level for all
 		 * nodes (mppmem is 0 when coming in).
 		 */
-		mppmem = min_memory / largest_cpus;
+		mppmem = MIN(min_memory, node_min_mem) / largest_cpus;
+
+		/* Minimum memory per processing element should be 1,
+		 * since 0 means give all the memory to the job. */
+		if (mppmem <= 0)
+			mppmem = 1;
 	}
 
-	/* Minimum memory per processing element should be 1,
-	 * since 0 means give all the memory to the job. */
-	if (mppmem <= 0)
-		mppmem = 1;
+	if (cray_conf->sub_alloc) {
+		int sock_core_inx = 0, sock_core_rep_cnt = 0;
+		mppwidth = 0;
+		/* mppwidth */
+		for (i = 0; i < job_ptr->job_resrcs->nhosts; i++) {
+			uint16_t hwthreads_per_core = 1;
+			uint32_t node_tasks =
+				job_ptr->job_resrcs->cpus[i] / mppdepth;
+
+			if ((job_ptr->job_resrcs->
+			     sockets_per_node[sock_core_inx] > 0) &&
+			    (job_ptr->job_resrcs->
+			     cores_per_socket[sock_core_inx] > 0)) {
+				hwthreads_per_core =
+					job_ptr->job_resrcs->cpus[i] /
+					job_ptr->job_resrcs->
+					sockets_per_node[sock_core_inx] /
+					job_ptr->job_resrcs->
+					cores_per_socket[sock_core_inx];
+			}
+			if ((++sock_core_rep_cnt) > job_ptr->job_resrcs->
+			    sock_core_rep_count[sock_core_inx]) {
+				/* move to the next node */
+				sock_core_inx++;
+				sock_core_rep_cnt = 0;
+			}
+			if (nppcu)
+				node_tasks =
+					node_tasks * nppcu / hwthreads_per_core;
+
+			if (mppnppn && mppnppn < node_tasks)
+				node_tasks = mppnppn;
+			mppwidth += node_tasks;
+		}
+	}
 
 	snprintf(batch_id, sizeof(batch_id), "%u", job_ptr->job_id);
 	user = uid_to_string(job_ptr->user_id);
@@ -879,8 +976,9 @@ extern int do_basil_reserve(struct job_record *job_ptr)
 	if (mppmem)
 		job_ptr->details->pn_min_memory = mppmem | MEM_PER_CPU;
 
-	info("ALPS RESERVATION #%u, JobId %u: BASIL -n %d -N %d -d %d -m %d",
-	     resv_id, job_ptr->job_id, mppwidth, mppnppn, mppdepth, mppmem);
+	info("ALPS RESERVATION #%u, JobId %u: BASIL -n %d -N %d -d %d "
+	     "-m %"PRIu64"", resv_id, job_ptr->job_id, mppwidth, mppnppn,
+	     mppdepth, mppmem);
 
 	return SLURM_SUCCESS;
 }
@@ -962,7 +1060,7 @@ extern int do_basil_confirm(struct job_record *job_ptr)
 
 /**
  * do_basil_signal  -  pass job signal on to any APIDs
- * IN job_ptr - job to be signalled
+ * IN job_ptr - job to be signaled
  * IN signal  - signal(7) number
  * Only signal job if an ALPS reservation exists (non-0 reservation ID).
  */
@@ -1001,7 +1099,7 @@ void *_sig_basil(void *args)
 
 /**
  * queue_basil_signal  -  queue job signal on to any APIDs
- * IN job_ptr - job to be signalled
+ * IN job_ptr - job to be signaled
  * IN signal  - signal(7) number
  * IN delay   - how long to delay the signal, in seconds
  * Only signal job if an ALPS reservation exists (non-0 reservation ID).
@@ -1021,7 +1119,7 @@ extern void queue_basil_signal(struct job_record *job_ptr, int signal,
 	}
 	if (resv_id == 0)
 		return;
-	if ((delay == 0) || (delay == (uint16_t) NO_VAL)) {
+	if ((delay == 0) || (delay == NO_VAL16)) {
 		/* Send the signal now */
 		int rc = basil_signal_apids(resv_id, signal, NULL);
 
@@ -1060,23 +1158,77 @@ extern void queue_basil_signal(struct job_record *job_ptr, int signal,
  */
 extern int do_basil_release(struct job_record *job_ptr)
 {
-	uint32_t resv_id;
+	uint32_t resv_id = 0;
+	int rc = SLURM_SUCCESS;
 
-	if (_get_select_jobinfo(job_ptr->select_jobinfo->data,
-			SELECT_JOBDATA_RESV_ID, &resv_id) != SLURM_SUCCESS) {
+	if ((_get_select_jobinfo(job_ptr->select_jobinfo->data,
+				 SELECT_JOBDATA_RESV_ID, &resv_id)
+	     != SLURM_SUCCESS) || !resv_id) {
 		error("can not read resId for JobId=%u", job_ptr->job_id);
-	} else if (resv_id && basil_release(resv_id) == 0) {
+		return SLURM_ERROR;
+	}
+
+	/*
+	 * Convention: like select_p_job_ready, may be called also from
+	 *             stepdmgr, where job_state == NO_VAL is used to
+	 *             distinguish the context from that of slurmctld.
+	 */
+	if (job_ptr->job_state == NO_VAL &&
+	    (get_basil_version() >= BV_4_0)) {
+		int sleeptime = 1;
+
+		/* This should be made configurable */
+		time_t endwait = time(NULL) + 500;
+
+		/*
+		 * BASIL 1.2 Improved Release Method
+		 *
+		 * Send the RELEASE message until you receive
+		 * an error ensuring the applicaiton is gone
+		 * and the nodes are available in ALPS.
+		 *
+		 * Max end time should be configurable. No
+		 * need to try longer than max(NHC) + max(ALPS
+		 * reservation lvl cleanup).
+		 */
+		while ((rc = basil_release(resv_id))) {
+			debug("do_basil_release: "
+			      "waiting %d seconds for %u resId %u "
+			      "to release %d",
+			      sleeptime, job_ptr->job_id, resv_id, rc);
+			sleep(sleeptime);
+			sleeptime *= 2;
+			rc = SLURM_SUCCESS;
+			if (time(NULL) >= endwait) {
+				error("do_basil_release: "
+				      "waited for %ld seconds for job "
+				      "%u resId %u to release, but it never "
+				      "happened", endwait,
+				      job_ptr->job_id, resv_id);
+				rc = SLURM_ERROR;
+				break;
+			}
+		}
+
+		if (rc == SLURM_SUCCESS)
+			/* The resv_id is non-zero only if the job is
+			 * or was running. */
+			debug("released ALPS resId %u for JobId %u",
+			      resv_id, job_ptr->job_id);
+
+	} else if (!basil_release(resv_id)) {
 		/* The resv_id is non-zero only if the job is or was running. */
 		debug("released ALPS resId %u for JobId %u",
 		      resv_id, job_ptr->job_id);
 	}
+
 	/*
 	 * Error handling: we only print out the errors (basil_release does this
 	 * internally), but do not signal error to select_g_job_fini(). Calling
 	 * contexts of this function (deallocate_nodes, batch_finish) only print
 	 * additional error text: no further action is taken at this stage.
 	 */
-	return SLURM_SUCCESS;
+	return rc;
 }
 
 /**

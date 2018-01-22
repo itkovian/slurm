@@ -1,4 +1,4 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Test of SLURM functionality
 #          sacctmgr verify wckey
@@ -13,7 +13,7 @@
 # CODE-OCEC-09-009. All rights reserved.
 #
 # This file is part of SLURM, a resource management program.
-# For details, see <http://slurm.schedmd.com/>.
+# For details, see <https://slurm.schedmd.com/>.
 # Please also read the included file: DISCLAIMER.
 #
 # SLURM is free software; you can redistribute it and/or modify it under
@@ -35,7 +35,7 @@ source ./globals
 set test_id     "21.23"
 set exit_code   0
 set file_in     "test.$test_id.input"
-set ta		slurm_test-account.1
+set ta		"test$test_id-account.1"
 set wk          twckey
 set timeout 60
 
@@ -54,7 +54,7 @@ if { [test_track_wckey] == 0} {
 }
 
 if { [string compare [check_accounting_admin_level] "Administrator"] } {
-	send_user "\nWARNING: This test can't be run without being an Accounting administrator.\nUse sacctmgr mod user \$USER_NAME set admin=admin.\n"
+	send_user "\nWARNING: This test can't be run without being an Accounting administrator.\nUse: sacctmgr mod user \$USER set admin=admin.\n"
 	exit 0
 }
 
@@ -66,17 +66,8 @@ set cn [get_cluster_name]
 # Identify the user and his current default account
 #
 set acct_name ""
-set user_name ""
-spawn $bin_id -u -n
-expect {
-	 -re "($alpha_numeric_under)" {
-		set user_name $expect_out(1,string)
-		exp_continue
-	}
-	eof {
-		wait
-	}
-}
+set user_name [get_my_user_name]
+
 set s_pid [spawn $sacctmgr show user $user_name]
 expect {
 	-re "$user_name *($alpha_numeric_under)" {

@@ -8,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -66,5 +66,20 @@ extern int read_slurm_conf(int recover, bool reconfig);
 
 extern int dump_config_state_lite(void);
 extern int load_config_state_lite(void);
+
+/* For a configuration where available_features == active_features,
+ * build new active and available feature lists */
+extern void build_feature_list_eq(void);
+
+/* For a configuration where available_features != active_features,
+ * build new active and available feature lists */
+extern void build_feature_list_ne(void);
+
+/* Update active_feature_list or avail_feature_list
+ * feature_list IN - List to update: active_feature_list or avail_feature_list
+ * new_features IN - New active_features
+ * node_bitmap IN - Nodes with the new active_features value */
+extern void update_feature_list(List feature_list, char *new_features,
+				bitstr_t *node_bitmap);
 
 #endif /* !_HAVE_READ_CONFIG_H */

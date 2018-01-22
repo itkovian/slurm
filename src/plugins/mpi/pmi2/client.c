@@ -6,7 +6,7 @@
  *  All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -34,10 +34,6 @@
  *  with SLURM; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
-
-#if     HAVE_CONFIG_H
-#  include "config.h"
-#endif
 
 #include <stdlib.h>
 
@@ -116,15 +112,15 @@ _parse_cmd(client_req_t *req)
 	int i = 0, len = 0;
 
 	len = strlen (MCMD_KEY"=");
-	if (! strncmp(req->buf, MCMD_KEY"=", len)) {
-			req->cmd = MCMD_KEY; /* XXX: mcmd=spawn */
-			req->sep = '\n';
-			req->term = '\n';
-			return SLURM_SUCCESS;
+	if (! xstrncmp(req->buf, MCMD_KEY"=", len)) {
+		req->cmd = MCMD_KEY; /* XXX: mcmd=spawn */
+		req->sep = '\n';
+		req->term = '\n';
+		return SLURM_SUCCESS;
 	}
 
 	len = strlen (CMD_KEY"=");
-	if (strncmp(req->buf, CMD_KEY"=", len)) {
+	if (xstrncmp(req->buf, CMD_KEY"=", len)) {
 		error("mpi/pmi2: request not begin with '" CMD_KEY "='");
 		error("mpi/pmi2: full request is: %s", req->buf);
 		return SLURM_ERROR;
@@ -175,7 +171,7 @@ client_req_init(uint32_t len, char *buf)
 	req->parse_idx = 0;
 
 	if (_parse_cmd(req) != SLURM_SUCCESS) {
-		req = NULL;
+		xfree(req);
 	}
 
 	return req;
@@ -186,6 +182,7 @@ client_req_free(client_req_t *req)
 {
 	if (req) {
 		xfree(req->buf);
+		xfree(req->pairs);
 		xfree(req);
 	}
 }
@@ -274,7 +271,7 @@ client_req_parse_spawn_req(client_req_t *req)
 	spawn_req = spawn_req_new();
 
 	/* ncmds */
-	if (strcmp(MP_KEY(req, pi), NCMDS_KEY)) {
+	if (xstrcmp(MP_KEY(req, pi), NCMDS_KEY)) {
 		error("mpi/pmi2: '" NCMDS_KEY "' expected in spawn cmd");
 		goto req_err;
 	}
@@ -283,7 +280,7 @@ client_req_parse_spawn_req(client_req_t *req)
 				     sizeof(spawn_subcmd_t *));
 	pi ++;
 	/* preputcount */
-	if (strcmp(MP_KEY(req, pi), PREPUTCOUNT_KEY)) {
+	if (xstrcmp(MP_KEY(req, pi), PREPUTCOUNT_KEY)) {
 		error("mpi/pmi2: '" PREPUTCOUNT_KEY "' expected in spawn cmd");
 		goto req_err;
 	}
@@ -300,7 +297,7 @@ client_req_parse_spawn_req(client_req_t *req)
 	/* ppkey,ppval */
 	for (i = 0; i < spawn_req->preput_cnt; i ++) {
 		/* ppkey */
-		if (strncmp(MP_KEY(req, pi), PPKEY_KEY, strlen(PPKEY_KEY)) ||
+		if (xstrncmp(MP_KEY(req, pi), PPKEY_KEY, strlen(PPKEY_KEY)) ||
 		    atoi((MP_KEY(req, pi) + strlen(PPKEY_KEY))) != i) {
 			error("mpi/pmi2: '" PPKEY_KEY
 			      "%d' expected in spawn cmd", i);
@@ -309,7 +306,7 @@ client_req_parse_spawn_req(client_req_t *req)
 		spawn_req->pp_keys[i] = xstrdup(MP_VAL(req, pi));
 		pi ++;
 		/* ppval */
-		if (strncmp(MP_KEY(req, pi), PPVAL_KEY, strlen(PPVAL_KEY)) ||
+		if (xstrncmp(MP_KEY(req, pi), PPVAL_KEY, strlen(PPVAL_KEY)) ||
 		    atoi((MP_KEY(req, pi) + strlen(PPVAL_KEY))) != i) {
 			error("mpi/pmi2: '" PPVAL_KEY
 			      "%d' expected in spawn cmd", i);
@@ -323,7 +320,7 @@ client_req_parse_spawn_req(client_req_t *req)
 		spawn_req->subcmds[i] = spawn_subcmd_new();
 		subcmd = spawn_req->subcmds[i];
 		/* subcmd */
-		if (strcmp(MP_KEY(req, pi), SUBCMD_KEY)) {
+		if (xstrcmp(MP_KEY(req, pi), SUBCMD_KEY)) {
 			error("mpi/pmi2: '" SUBCMD_KEY
 			      "' expected in spawn cmd");
 			goto req_err;
@@ -331,7 +328,7 @@ client_req_parse_spawn_req(client_req_t *req)
 		subcmd->cmd = xstrdup(MP_VAL(req, pi));
 		pi ++;
 		/* maxprocs */
-		if (strcmp(MP_KEY(req, pi), MAXPROCS_KEY)) {
+		if (xstrcmp(MP_KEY(req, pi), MAXPROCS_KEY)) {
 			error("mpi/pmi2: '" MAXPROCS_KEY
 			      "' expected in spawn cmd");
 			goto req_err;
@@ -340,7 +337,7 @@ client_req_parse_spawn_req(client_req_t *req)
 		subcmd->max_procs = atoi(MP_VAL(req, pi));
 		pi ++;
 		/* argc */
-		if (strcmp(MP_KEY(req, pi), ARGC_KEY)) {
+		if (xstrcmp(MP_KEY(req, pi), ARGC_KEY)) {
 			error("mpi/pmi2: '" ARGC_KEY
 			      "' expected in spawn cmd");
 			goto req_err;
@@ -361,8 +358,8 @@ client_req_parse_spawn_req(client_req_t *req)
 		}
 		/* argv */
 		for (j = 0; j < subcmd->argc; j ++) {
-			if (strncmp(MP_KEY(req, pi), ARGV_KEY,
-				    strlen(ARGV_KEY)) ||
+			if (xstrncmp(MP_KEY(req, pi), ARGV_KEY,
+				     strlen(ARGV_KEY)) ||
 			    atoi((MP_KEY(req, pi) + strlen(ARGV_KEY))) != j) {
 				error("mpi/pmi2: '" ARGV_KEY
 				      "%d' expected in spawn cmd", j);
@@ -380,7 +377,7 @@ client_req_parse_spawn_req(client_req_t *req)
 				goto req_err;
 			}
 			break;
-		} else if (strcmp(MP_KEY(req, pi), INFOKEYCOUNT_KEY)) {
+		} else if (xstrcmp(MP_KEY(req, pi), INFOKEYCOUNT_KEY)) {
 			subcmd->info_cnt = 0;
 			continue;
 		}
@@ -403,8 +400,8 @@ client_req_parse_spawn_req(client_req_t *req)
 		/* infokey,infoval */
 		for (j = 0; j < subcmd->info_cnt; j ++) {
 			/* infokey */
-			if (strncmp(MP_KEY(req, pi), INFOKEY_KEY,
-				    strlen(INFOKEY_KEY)) ||
+			if (xstrncmp(MP_KEY(req, pi), INFOKEY_KEY,
+				     strlen(INFOKEY_KEY)) ||
 			    atoi((MP_KEY(req, pi) +
 				  strlen(INFOKEY_KEY))) != j) {
 				error("mpi/pmi2: '" INFOKEY_KEY
@@ -414,8 +411,8 @@ client_req_parse_spawn_req(client_req_t *req)
 			subcmd->info_keys[j] = xstrdup(MP_VAL(req, pi));
 			pi ++;
 			/* infoval */
-			if (strncmp(MP_KEY(req, pi), INFOVAL_KEY,
-				    strlen(INFOVAL_KEY)) ||
+			if (xstrncmp(MP_KEY(req, pi), INFOVAL_KEY,
+				     strlen(INFOVAL_KEY)) ||
 			    atoi((MP_KEY(req, pi) +
 				  strlen(INFOVAL_KEY))) != j) {
 				error("mpi/pmi2: '" INFOVAL_KEY
@@ -473,7 +470,7 @@ _client_req_get_val(client_req_t *req, const char *key)
 	int i;
 
 	for (i = 0; i < req->pairs_cnt; i ++) {
-		if (! strcmp(key, req->pairs[KEY_INDEX(i)]))
+		if (! xstrcmp(key, req->pairs[KEY_INDEX(i)]))
 			return req->pairs[VAL_INDEX(i)];
 	}
 	return NULL;
@@ -515,7 +512,7 @@ client_req_get_bool(client_req_t *req, const char *key, bool *pval)
 	if (val == NULL)
 		return false;
 
-	if (!strcasecmp(val, TRUE_VAL))
+	if (!xstrcasecmp(val, TRUE_VAL))
 		*pval = true;
 	else
 		*pval = false;
@@ -587,7 +584,7 @@ send_kvs_fence_resp_to_clients(int rc, char *errmsg)
 	int i = 0;
 	client_resp_t *resp;
 	char *msg;
-	
+
 	resp = client_resp_new();
 	if ( is_pmi11() ) {
 		if (rc != 0 && errmsg != NULL) {

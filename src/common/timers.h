@@ -7,7 +7,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -52,6 +52,10 @@
 #define DELTA_TIMER	delta_t
 #define TIME_STR 	tv_str
 
+/* Return the number of micro-seconds between now and argument "tv",
+ * Initialize tv to NOW if zero on entry */
+extern int slurm_delta_tv(struct timeval *tv);
+
 /*
  * slurm_diff_tv_str - build a string showing the time difference between two
  *		       times
@@ -64,7 +68,7 @@
  * OUT delta_t - raw time difference in usec
  */
 extern void slurm_diff_tv_str(struct timeval *tv1,struct timeval *tv2,
-			      char *tv_str, int len_tv_str, char *from,
+			      char *tv_str, int len_tv_str, const char *from,
 			      long limit, long *delta_t);
 
 /* Block daemon indefinitely.

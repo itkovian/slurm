@@ -5,7 +5,7 @@
  *  Written by Bull- Thomas Cadeau
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -136,6 +136,7 @@ typedef struct slurm_ipmi_conf {
 	/* Options for SLURM IPMI plugin*/
 	/* sensor num (only for power) */
 	uint32_t power_sensor_num;
+	char *power_sensors;
 	/* Out-of-band Communication Configuration */
 	/* Indicate the IPMI protocol version to use
 	 * IPMI_MONITORING_PROTOCOL_VERSION_1_5 = 0x00,

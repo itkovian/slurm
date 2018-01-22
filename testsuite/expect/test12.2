@@ -1,4 +1,4 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Test of SLURM functionality
 #          Test sacct functionality and accuracy.
@@ -13,7 +13,7 @@
 # CODE-OCEC-09-009. All rights reserved.
 #
 # This file is part of SLURM, a resource management program.
-# For details, see <http://slurm.schedmd.com/>.
+# For details, see <https://slurm.schedmd.com/>.
 # Please also read the included file: DISCLAIMER.
 #
 # SLURM is free software; you can redistribute it and/or modify it under
@@ -38,14 +38,14 @@ set file_in     "test$test_id.input"
 set file_out    "test$test_id.output"
 set file_err    "test$test_id.error"
 set file_prog   "test$test_id.prog"
-set file_name   "test$test_id.filename"
+set file_name   "/tmp/test$test_id.filename"
 set job_id      0
 set matches     0
 set aix         0
 
 # job parameters
 set mem_size    1024000
-set sleep_time  21
+set sleep_time  32
 set ret_code    42
 set file_size   10485760
 print_header $test_id
@@ -53,6 +53,11 @@ print_header $test_id
 if {[test_front_end]} {
         send_user "\nWARNING: This test is incompatible with front-end systems\n"
         exit $exit_code
+}
+if {![test_accting_steps]} {
+	send_user "\nWARNING: This test can not be run with nosteps or nojobs "
+	send_user "(AccountingStorageEnforce)\n"
+	exit 0
 }
 
 if {[test_launch_poe]} {
@@ -178,8 +183,10 @@ proc _get_file_size {prog} {
 		send_user "\nFAILURE: AveDiskRead not reported\n"
 		return 1
 	}
-
-	if { $max_disk_write != $max_disk_read } {
+	# Compute error in MB
+	set diff_io [expr $max_disk_write - $max_disk_read]
+	set error_io [expr abs($diff_io)]
+	if { $error_io > 0.3 } {
 		send_user "\nFAILURE: written file size does not match read size "
 		send_user "file_size:$mb_file_size MB "
 		send_user "max_disk_write:$max_disk_write MB "
@@ -187,16 +194,18 @@ proc _get_file_size {prog} {
 		return 1
 	}
 
-	if { $ave_disk_write != $ave_disk_read } {
+	set diff_io [expr $ave_disk_write - $ave_disk_read]
+	set error_io [expr abs($diff_io)] 
+	if { $error_io > 0.3 } {
 		send_user "\nFAILURE: average written file size "
 		send_user "does not match average read size "
 		send_user "file_size:$mb_file_size MB "
-		send_user "ave_disk_write:$ave_disk_write MB"
+		send_user "ave_disk_write:$ave_disk_write MB "
 		send_user "ave_disk_read:$ave_disk_read MB\n"
 		return 1
 	}
 
-	send_user "\SUCCESS: $prog reported correct written and read file size\n"
+	send_user "\nSUCCESS: $prog reported correct written and read file size\n"
 	send_user "file_size:$mb_file_size MB max_disk_write:$max_disk_write MB "
 	send_user "max_disk_read:$max_disk_read MB\n"
 
@@ -304,7 +313,7 @@ if {[wait_for_job $job_id "RUNNING"] != 0} {
 }
 
 # Wait for data to get logged
-exec $bin_sleep 10
+exec $bin_sleep 15
 
 if {[_get_mem $sstat] != 0} {
 	set exit_code 1
@@ -323,9 +332,13 @@ if {[wait_for_job $job_id "DONE"] != 0} {
 }
 
 #
+# Wait for accounting data to be propagated to slurmdbd
+#
+sleep 10
+
+#
 # Report basic sacct info
 #
-
 spawn $sacct --noheader -P --job=$job_id.$step_id --format jobid,jobname,state,exitcode
 expect {
 	-re "$job_id\.$step_id" {
@@ -337,6 +350,11 @@ expect {
 		exp_continue
 	}
 	-re "FAILED" {
+		incr matches
+		exp_continue
+	}
+	-re "COMPLETING" {
+		send_user "\nWARNING: Step in completing state rather than FAILED\n"
 		incr matches
 		exp_continue
 	}
@@ -363,7 +381,7 @@ if {$matches < $match_target} {
 }
 
 #
-# Report the sacct accouting info
+# Report the sacct accounting info
 # Note we load each digit of seconds individually to avoid this error:
 #   expected integer but got "08" (looks like invalid octal number)
 #

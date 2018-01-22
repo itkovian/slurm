@@ -46,14 +46,6 @@
 #ifndef _LOG_H
 #define _LOG_H
 
-#ifdef HAVE_CONFIG_H
-#  include "config.h"
-#endif
-
-#ifdef HAVE_SYS_SYSLOG_H
-#  include <sys/syslog.h>
-#endif
-
 #include <syslog.h>
 #include <stdio.h>
 
@@ -198,9 +190,10 @@ int log_alter_with_fp(log_options_t opt, log_facility_t fac, FILE *fp_in);
 int sched_log_alter(log_options_t opts, log_facility_t fac, char *logfile);
 
 /* Set prefix for log file entries
- * (really only useful for slurmd at this point)
+ * (really only useful for slurmd at this point).
+ * Note: will store pfx internally, do not use after this call.
  */
-void log_set_fpfx(char *pfx);
+void log_set_fpfx(char **pfx);
 
 /*
  * (re)set argv0 string prepended to all log messages
@@ -240,21 +233,24 @@ void log_flush(void);
  */
 extern void log_set_debug_flags(void);
 
+/* Return the highest LOG_LEVEL_* used for any logging mechanism.
+ * For example, if LOG_LEVEL_INFO is returned, we know that all verbose and
+ * debug type messages will be ignored. */
+extern int get_log_level(void);
+
 /*
  * the following log a message to the log facility at the appropriate level:
  *
  * Messages do not need a newline!
  *
  * args are printf style with the following exceptions:
- *
- * fmt     expands to
- * ~~~~    ~~~~~~~~~~~
- * "%m" => strerror(errno)
- * "%t" => strftime "%x %X"  (locally preferred short date/time)
- * "%T" => strftime "%a, %d %b %Y %H:%M:%S %z" (rfc2822 date/time)
+ * %m expands to strerror(errno)
+ * %M expand to time stamp, format is configuration dependent
+ * %t expands to strftime("%x %X") [ locally preferred short date/time ]
+ * %T expands to rfc2822 date time  [ "dd, Mon yyyy hh:mm:ss GMT offset" ]
  */
 
-/* fatal() aborts program unless NDEBUG defined
+/* fatal() exits program
  * error() returns SLURM_ERROR
  */
 void	fatal(const char *, ...) __attribute__ ((format (printf, 1, 2)));
@@ -270,12 +266,5 @@ void	debug3(const char *, ...) __attribute__ ((format (printf, 1, 2)));
  */
 void	debug4(const char *, ...) __attribute__ ((format (printf, 1, 2)));
 void	debug5(const char *, ...) __attribute__ ((format (printf, 1, 2)));
-
-void	dump_cleanup_list(void);
-void	fatal_add_cleanup(void (*proc) (void *), void *context);
-void	fatal_add_cleanup_job(void (*proc) (void *), void *context);
-void	fatal_remove_cleanup(void (*proc) (void *context), void *context);
-void	fatal_remove_cleanup_job(void (*proc) (void *context), void *context);
-void	fatal_cleanup(void);
 
 #endif /* !_LOG_H */

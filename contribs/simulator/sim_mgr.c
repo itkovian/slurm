@@ -77,7 +77,7 @@ time_t time_incr = 1;     /* Amount to increment the simulated time by on each p
 int sync_loop_wait_time = 1000; /* minimum uSeconds that the sync loop waits
  	 	 	 	 	 	 	 	  before advancing to add time_incr to the
  	 	 	 	 	 	 	 	  simulated time*/
-int    signaled  = 0;     /* signal from slurmd */
+int signaled  = 0;     /* signal from slurmd */
 char*  workload_trace_file = NULL; /* Name of the file containing the workload to simulate */
 char   default_trace_file[] = "test.trace";
 char   help_msg[]= "sim_mgr [endtime]\n\t[-c | --compath <cpath>]\n\t[-f | "
@@ -241,7 +241,7 @@ char *re_write_dependencies(char *dep_string) {
 void
 handlerSignal(int signo) {
 	signaled++;
-	printf ("SIM_MGR [%d] got a %d signal--signaled: %d\n", getpid (), signo, signaled);
+	printf ("SIM_MGR [%d] got a %d signal--signaled: %d\n", getpid(), signo, signaled);
 }
 
 
@@ -309,8 +309,10 @@ time_mgr(void *arg) {
 	/*signal (SIGUSR2, handlerSignal);*/
 	printf("Waiting for signals, signaled: %d...\n", signaled);
 	info("Waiting for signals..\n");
+	sleep(5);
 	while (signaled < 1 ){
-		sleep(2); printf("... signaled: %d\n", signaled);
+		printf("... signaled: %d\n", signaled);
+		sleep(5); 
 	}
 printf("Done waiting.\n");
 #ifdef DEBUG
@@ -854,6 +856,8 @@ main(int argc, char *argv[], char *envp[]) {
 		exit(-1);
 	}
 
+	printf("SIM_MGR_PID is %d", getpid());
+
 	/* Determine location of the simulator library and Slurm daemons */
 
 	if (!sim_daemons_path) {
@@ -911,6 +915,13 @@ main(int argc, char *argv[], char *envp[]) {
                 return -1;
         }
 
+	if(init_rsv_trace() < 0){
+                printf("An error was detected when reading trace file. \n"
+                       /*"Exiting...\n"*/);
+                /*return -1;*/
+        }
+
+
 	/* Launch the slurmctld and slurmd here */
 	if (launch_daemons) {
 		if(pid[0] == -1) fork_daemons(0);
@@ -919,17 +930,6 @@ main(int argc, char *argv[], char *envp[]) {
 		waitpid(pid[1], &status_slud, 0);
 	}
 
-/*	if(init_job_trace() < 0){
-		printf("An error was detected when reading trace file. "
-		       "Exiting...\n");
-		return -1;
-	}*/
-
-	if(init_rsv_trace() < 0){
-		printf("An error was detected when reading trace file. \n"
-		       /*"Exiting...\n"*/);
-		/*return -1;*/
-	}
 
 	pthread_attr_init(&attr);
 	signal(SIGINT, terminate_simulation);

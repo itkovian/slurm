@@ -9,7 +9,7 @@
  *  Written by Danny Auble <da@llnl.gov>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -55,8 +55,7 @@ extern int good_nodes_from_inx(List local_cluster_list,
 extern int setup_job_cluster_cond_limits(mysql_conn_t *mysql_conn,
 					 slurmdb_job_cond_t *job_cond,
 					 char *cluster_name, char **extra);
-extern int setup_job_cond_limits(mysql_conn_t *mysql_conn,
-				 slurmdb_job_cond_t *job_cond,
+extern int setup_job_cond_limits(slurmdb_job_cond_t *job_cond,
 				 char **extra);
 
 extern List as_mysql_jobacct_process_get_jobs(mysql_conn_t *mysql_conn, uid_t uid,

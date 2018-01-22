@@ -1,6 +1,5 @@
 /*****************************************************************************\
  * src/common/macros.h - some standard macros for slurm
- * $Id$
  *****************************************************************************
  *  Copyright (C) 2002 The Regents of the University of California.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -8,7 +7,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -38,36 +37,18 @@
 \*****************************************************************************/
 
 #ifndef _MACROS_H
-#define _MACROS_H 	1
+#define _MACROS_H
 
-#if HAVE_CONFIG_H
-#  include "config.h"
-#endif
-
-#ifndef NULL
-#  include <stddef.h>	/* for NULL */
-#endif
-
-#if HAVE_STDBOOL_H
-#  include <stdbool.h>
-#else
-typedef enum {false, true} bool;
-#endif /* !HAVE_STDBOOL_H */
-
-#if HAVE_PTHREAD_H
-#  include <pthread.h>
-#endif
+#include "config.h"
 
 #include <errno.h>              /* for errno   */
+#include <pthread.h>
+#include <stdbool.h>		/* for bool type */
+#include <stddef.h>		/* for NULL */
+#include <stdlib.h>		/* for abort() */
+#include <string.h>		/* for strerror() */
 #include "src/common/log.h"	/* for error() */
-
-#ifndef FALSE
-#  define FALSE	false
-#endif
-
-#ifndef TRUE
-#  define TRUE	true
-#endif
+#include "src/common/strlcpy.h"
 
 #ifndef MAX
 #  define MAX(a,b) ((a) > (b) ? (a) : (b))
@@ -118,21 +99,6 @@ typedef enum {false, true} bool;
 # define NTOH_uint64(x)   UINT64_SWAP_LE_BE (x)
 #endif	/* SLURM_BIGENDIAN */
 
-
-
-/*
-** define __CURRENT_FUNC__ macro for returning current function
-*/
-#if defined (__GNUC__) && (__GNUC__ < 3)
-#  define __CURRENT_FUNC__	__PRETTY_FUNCTION__
-#else  /* !__GNUC__ */
-#  ifdef _AIX
-#    define __CURRENT_FUNC__	__func__
-#  else
-#    define __CURRENT_FUNC__    ""
-#  endif /* _AIX */
-#endif /* __GNUC__ */
-
 #ifndef __STRING
 #  define __STRING(arg)		#arg
 #endif
@@ -140,120 +106,184 @@ typedef enum {false, true} bool;
 /* define macros for GCC function attributes if we're using gcc */
 
 #if __GNUC__ > 2 || (__GNUC__ == 2 && __GNUC_MINOR__ >= 4)
-#  define __PRINTF_ATTR( form_idx, arg_idx ) 	\
-          __attribute__((__format__ (__printf__, form_idx, arg_idx)))
 #  define __NORETURN_ATTR				\
           __attribute__((__noreturn__))
 #else  /* !__GNUC__ */
-#  define __PRINTF_ATTR( format_idx, arg_idx )	((void)0)
 #  define __NORETURN_ATTR			((void)0)
 #endif /* __GNUC__ */
 
-/* the following is taken directly from glib 2.0, with minor changes */
+#define slurm_cond_init(cond, cont_attr)				\
+	do {								\
+		int err = pthread_cond_init(cond, cont_attr);		\
+		if (err) {						\
+			fatal("%s:%d %s: pthread_cond_init(): %m",	\
+				__FILE__, __LINE__, __func__);		\
+			abort();					\
+		}							\
+	} while (0)
 
-/* Provide simple macro statement wrappers (adapted from Perl):
- *  _STMT_START { statements; } _STMT_END;
- *  can be used as a single statement, as in
- *  if (x) _STMT_START { ... } _STMT_END; else ...
- *
- *  For gcc we will wrap the statements within `({' and `})' braces.
- *  For SunOS they will be wrapped within `if (1)' and `else (void) 0',
- *  and otherwise within `do' and `while (0)'.
- */
-#if !(defined (_STMT_START) && defined (_STMT_END))
-#  if defined (__GNUC__) && !defined (__STRICT_ANSI__) && !defined (__cplusplus)
-#    define _STMT_START        (void)(
-#    define _STMT_END          )
-#  else
-#    if (defined (sun) || defined (__sun__))
-#      define _STMT_START      if (1)
-#      define _STMT_END        else (void)0
-#    else
-#      define _STMT_START      do
-#      define _STMT_END        while (0)
-#    endif
-#  endif
+#define slurm_cond_signal(cond)					\
+	do {								\
+		int err = pthread_cond_signal(cond);			\
+		if (err) {						\
+			error("%s:%d %s: pthread_cond_signal(): %m",	\
+				__FILE__, __LINE__, __func__);		\
+		}							\
+	} while (0)
+
+#define slurm_cond_broadcast(cond)					\
+	do {								\
+		int err = pthread_cond_broadcast(cond);			\
+		if (err) {						\
+			error("%s:%d %s: pthread_cond_broadcast(): %m",	\
+				__FILE__, __LINE__, __func__);		\
+		}							\
+	} while (0)
+
+#define slurm_cond_wait(cond, mutex)					\
+	do {								\
+		int err = pthread_cond_wait(cond, mutex);		\
+		if (err) {						\
+			error("%s:%d %s: pthread_cond_wait(): %m",	\
+				__FILE__, __LINE__, __func__);		\
+		}							\
+	} while (0)
+
+/* ignore timeouts, you must be able to handle them if
+ * calling cond_timedwait instead of cond_wait */
+#define slurm_cond_timedwait(cond, mutex, abstime)			\
+	do {								\
+		int err = pthread_cond_timedwait(cond, mutex, abstime);	\
+		if (err && (err != ETIMEDOUT)) {			\
+			error("%s:%d %s: pthread_cond_timedwait(): %s",	\
+				__FILE__, __LINE__, __func__,		\
+				strerror(err));				\
+		}							\
+	} while (0)
+
+#define slurm_cond_destroy(cond)					\
+	do {								\
+		int err = pthread_cond_destroy(cond);			\
+		if (err) {						\
+			error("%s:%d %s: pthread_cond_destroy(): %m",	\
+				__FILE__, __LINE__, __func__);		\
+		}							\
+	} while (0)
+
+
+#define slurm_mutex_init(mutex)						\
+	do {								\
+		int err = pthread_mutex_init(mutex, NULL);		\
+		if (err) {						\
+			errno = err;					\
+			fatal("%s:%d %s: pthread_mutex_init(): %m",	\
+				__FILE__, __LINE__, __func__);		\
+			abort();					\
+		}							\
+	} while (0)
+
+#define slurm_mutex_destroy(mutex)					\
+	do {								\
+		int err = pthread_mutex_destroy(mutex);			\
+		if (err) {						\
+			errno = err;					\
+			fatal("%s:%d %s: pthread_mutex_destroy(): %m",	\
+				__FILE__, __LINE__, __func__);		\
+			abort();					\
+		}							\
+	} while (0)
+
+#define slurm_mutex_lock(mutex)					\
+	do {								\
+		int err = pthread_mutex_lock(mutex);			\
+		if (err) {						\
+			errno = err;					\
+			fatal("%s:%d %s: pthread_mutex_lock(): %m",	\
+				__FILE__, __LINE__, __func__);		\
+			abort();					\
+		}							\
+	} while (0)
+
+#define slurm_mutex_unlock(mutex)					\
+	do {								\
+		int err = pthread_mutex_unlock(mutex);			\
+		if (err) {						\
+			errno = err;					\
+			fatal("%s:%d %s: pthread_mutex_unlock(): %m",	\
+				__FILE__, __LINE__, __func__);		\
+			abort();					\
+		}							\
+	} while (0)
+
+#ifdef PTHREAD_SCOPE_SYSTEM
+#  define slurm_attr_init(attr)						\
+	do {								\
+		if (pthread_attr_init(attr))				\
+			fatal("pthread_attr_init: %m");			\
+		/* we want 1:1 threads if there is a choice */		\
+		if (pthread_attr_setscope(attr, PTHREAD_SCOPE_SYSTEM))	\
+			error("pthread_attr_setscope: %m");		\
+		if (pthread_attr_setstacksize(attr, 1024*1024))		\
+			error("pthread_attr_setstacksize: %m");		\
+	 } while (0)
+#else
+#  define slurm_attr_init(attr)						\
+	do {								\
+		if (pthread_attr_init(attr))				\
+			fatal("pthread_attr_init: %m");			\
+		if (pthread_attr_setstacksize(attr, 1024*1024))		\
+			error("pthread_attr_setstacksize: %m");		\
+	} while (0)
 #endif
 
-#ifdef WITH_PTHREADS
+#define slurm_attr_destroy(attr)					\
+	do {								\
+		if (pthread_attr_destroy(attr))				\
+			error("pthread_attr_destroy failed, "		\
+				"possible memory leak!: %m");		\
+	} while (0)
 
-#  define slurm_mutex_init(mutex)                                             \
-     _STMT_START {                                                            \
-         int err = pthread_mutex_init(mutex, NULL);                           \
-         if (err) {                                                           \
-             errno = err;                                                     \
-             error("%s:%d %s: pthread_mutex_init(): %m",                      \
-                   __FILE__, __LINE__, __CURRENT_FUNC__);                     \
-         }                                                                    \
-     } _STMT_END
+/*
+ * Note that the attr argument is intentionally omitted, as it will
+ * be setup within the macro to Slurm's default options.
+ */
+#define slurm_thread_create(id, func, arg)				\
+	do {								\
+		pthread_attr_t attr;					\
+		slurm_attr_init(&attr);					\
+		if (pthread_create(id, &attr, func, arg))		\
+			fatal("%s: pthread_create error %m", __func__);	\
+		slurm_attr_destroy(&attr);				\
+	} while (0)
 
-#  define slurm_mutex_destroy(mutex)                                          \
-     _STMT_START {                                                            \
-         int err = pthread_mutex_destroy(mutex);                              \
-         if (err) {                                                           \
-             errno = err;                                                     \
-             error("%s:%d %s: pthread_mutex_destroy(): %m",                   \
-                   __FILE__, __LINE__, __CURRENT_FUNC__);                     \
-         }                                                                    \
-     } _STMT_END
+/*
+ * If the id is NULL then the thread_id will be discarded without needing
+ * to create a local pthread_t object first.
+ *
+ * This is only made available for detached threads - if you're creating
+ * an attached thread that you don't need to keep the id of, then you
+ * should really be making it detached.
+ *
+ * The ternary operator that makes that work is intentionally overwrought
+ * to avoid compiler warnings about it always resolving to true, since
+ * this is a macro and the optimization pass will realize that a variable
+ * in the local scope will always have a non-zero memory address.
+ */
+#define slurm_thread_create_detached(id, func, arg)			\
+	do {								\
+		pthread_t *id_ptr, id_local;				\
+		pthread_attr_t attr;					\
+		id_ptr = (id != (pthread_t *) NULL) ? id : &id_local;	\
+		slurm_attr_init(&attr);					\
+		if (pthread_attr_setdetachstate(&attr,			\
+						PTHREAD_CREATE_DETACHED)) \
+			fatal("%s: pthread_attr_setdetachstate %m",	\
+			      __func__);				\
+		if (pthread_create(id_ptr, &attr, func, arg))		\
+			fatal("%s: pthread_create error %m", __func__);	\
+		slurm_attr_destroy(&attr);				\
+	} while (0)
 
-#  define slurm_mutex_lock(mutex)                                             \
-     _STMT_START {                                                            \
-         int err = pthread_mutex_lock(mutex);                                 \
-         if (err) {                                                           \
-             errno = err;                                                     \
-             error("%s:%d %s: pthread_mutex_lock(): %m",                      \
-                   __FILE__, __LINE__, __CURRENT_FUNC__);                     \
-         }                                                                    \
-     } _STMT_END
-
-#  define slurm_mutex_unlock(mutex)                                           \
-     _STMT_START {                                                            \
-         int err = pthread_mutex_unlock(mutex);                               \
-         if (err) {                                                           \
-             errno = err;                                                     \
-             error("%s:%d %s: pthread_mutex_unlock(): %m",                    \
-                   __FILE__, __LINE__, __CURRENT_FUNC__);                     \
-         }                                                                    \
-     } _STMT_END
-
-#  ifdef PTHREAD_SCOPE_SYSTEM
-#  define slurm_attr_init(attr)                                               \
-     _STMT_START {                                                            \
-	if (pthread_attr_init(attr))                                          \
-		fatal("pthread_attr_init: %m");                               \
-	/* we want 1:1 threads if there is a choice */                        \
-	if (pthread_attr_setscope(attr, PTHREAD_SCOPE_SYSTEM))                \
-		error("pthread_attr_setscope: %m");                           \
-	if (pthread_attr_setstacksize(attr, 1024*1024))                       \
-		error("pthread_attr_setstacksize: %m");                       \
-     } _STMT_END
-#  else
-#  define slurm_attr_init(attr)                                               \
-     _STMT_START {                                                            \
-        if (pthread_attr_init(attr))                                          \
-                fatal("pthread_attr_init: %m");                               \
-        if (pthread_attr_setstacksize(attr, 1024*1024))                       \
-                error("pthread_attr_setstacksize: %m");                       \
-     } _STMT_END
-#  endif
-
-#  define slurm_attr_destroy(attr)					      \
-     _STMT_START {                                                            \
-        if (pthread_attr_destroy(attr))                                       \
-             error("pthread_attr_destroy failed, possible memory leak!: %m"); \
-     } _STMT_END
-
-#else /* !WITH_PTHREADS */
-
-#  define slurm_mutex_init(mutex)
-#  define slurm_mutex_destroy(mutex)
-#  define slurm_mutex_lock(mutex)
-#  define slurm_mutex_unlock(mutex)
-#  define slurm_attr_init(attr)
-#  define slurm_attr_destroy(attr)
-
-#endif /* WITH_PTHREADS */
 
 #define slurm_atoul(str) strtoul(str, NULL, 10)
 #define slurm_atoull(str) strtoull(str, NULL, 10)
@@ -270,23 +300,18 @@ typedef enum {false, true} bool;
 #  endif
 #endif
 
-#ifndef HAVE_STRNDUP
-#  undef  strndup
-#  define strndup(src,size) strdup(src)
-#endif
-
 /* Results strftime() are undefined if buffer too small
  * This variant returns a string of "####"... instead */
 #define slurm_strftime(s, max, format, tm)				\
-_STMT_START {								\
+do {									\
 	if (max > 0) {							\
 		char tmp_string[(max<256?256:max+1)];			\
 		if (strftime(tmp_string, sizeof(tmp_string), format, tm) == 0) \
 			memset(tmp_string, '#', max);			\
 		tmp_string[max-1] = 0;					\
-		strncpy(s, tmp_string, max);				\
+		strlcpy(s, tmp_string, max);				\
 	}								\
-} _STMT_END
+} while (0)
 
 /* There are places where we put NO_VAL or INFINITE into a float or double
  * Use fuzzy_equal below to test for those values rather than an comparision

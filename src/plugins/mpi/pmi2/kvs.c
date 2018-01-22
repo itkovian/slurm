@@ -6,7 +6,7 @@
  *  All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -116,9 +116,9 @@ temp_kvs_init(void)
 		/* XXX: TBC */
 		num_children = tree_info.num_children + 1;
 
-		pack32((uint32_t)nodeid, buf); /* from_nodeid */
+		pack32(nodeid, buf); /* from_nodeid */
 		packstr(tree_info.this_node, buf); /* from_node */
-		pack32((uint32_t)num_children, buf); /* num_children */
+		pack32(num_children, buf); /* num_children */
 		pack32(kvs_seq, buf);
 	} else {
 		pack32(kvs_seq, buf);
@@ -190,36 +190,42 @@ temp_kvs_send(void)
 {
 	int rc = SLURM_ERROR, retry = 0;
 	unsigned int delay = 1;
+	char *nodelist = NULL;
+
+	if (!in_stepd())	/* srun */
+		nodelist = xstrdup(job_info.step_nodelist);
+	else if (tree_info.parent_node)
+		nodelist = xstrdup(tree_info.parent_node);
 
 	/* cmd included in temp_kvs_buf */
-	kvs_seq ++; /* expecting new kvs after now */
+	kvs_seq++; /* expecting new kvs after now */
 
 	while (1) {
-		if (retry == 1) {
+		if (retry == 1)
 			verbose("failed to send temp kvs, rc=%d, retrying", rc);
-		}
-		if (! in_stepd()) {	/* srun */
-			rc = tree_msg_to_stepds(job_info.step_nodelist,
+
+		if (nodelist)
+			/* srun or non-first-level stepds */
+			rc = slurm_forward_data(&nodelist,
+						tree_sock_addr,
 						temp_kvs_cnt,
 						temp_kvs_buf);
-		} else if (tree_info.parent_node != NULL) {
-			/* non-first-level stepds */
-			rc = tree_msg_to_stepds(tree_info.parent_node,
-						temp_kvs_cnt,
-						temp_kvs_buf);
-		} else {		/* first level stepds */
+		else		/* first level stepds */
 			rc = tree_msg_to_srun(temp_kvs_cnt, temp_kvs_buf);
-		}
+
 		if (rc == SLURM_SUCCESS)
 			break;
-		retry ++;
-		if (retry >= MAX_RETRIES)
+
+		if (++retry >= MAX_RETRIES)
 			break;
 		/* wait, in case parent stepd / srun not ready */
 		sleep(delay);
 		delay *= 2;
 	}
 	temp_kvs_init();	/* clear old temp kvs */
+
+	xfree(nodelist);
+
 	return rc;
 }
 
@@ -255,7 +261,7 @@ kvs_get(char *key)
 	bucket = &kvs_hash[HASH(key)];
 	if (bucket->count > 0) {
 		for(i = 0; i < bucket->count; i ++) {
-			if (! strcmp(key, bucket->pairs[KEY_INDEX(i)])) {
+			if (! xstrcmp(key, bucket->pairs[KEY_INDEX(i)])) {
 				val = bucket->pairs[VAL_INDEX(i)];
 				break;
 			}
@@ -279,7 +285,7 @@ kvs_put(char *key, char *val)
 
 	if (! no_dup_keys) {
 		for (i = 0; i < bucket->count; i ++) {
-			if (! strcmp(key, bucket->pairs[KEY_INDEX(i)])) {
+			if (! xstrcmp(key, bucket->pairs[KEY_INDEX(i)])) {
 				/* replace the k-v pair */
 				xfree(bucket->pairs[VAL_INDEX(i)]);
 				bucket->pairs[VAL_INDEX(i)] = xstrdup(val);

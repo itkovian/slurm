@@ -1,12 +1,10 @@
 /*****************************************************************************\
  *  slurm_rlimits_info.c - resource limits that are used by srun and the slurmd
- *  $Id: slurm.hp.rlimits.patch,v 1.5 2005/07/18 18:39:11 danielc Exp $
  *****************************************************************************
- *
  *  Copyright (C) 2005 Hewlett-Packard Development Company, L.P.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -91,7 +89,7 @@ static slurm_rlimits_info_t rlimits_info[] = {
 };
 
 
-static bool rlimits_were_parsed = FALSE;
+static bool rlimits_were_parsed = false;
 
 /*
  * Return a pointer to the private rlimits info array.
@@ -99,7 +97,7 @@ static bool rlimits_were_parsed = FALSE;
 slurm_rlimits_info_t *
 get_slurm_rlimits_info( void )
 {
-	xassert( rlimits_were_parsed == TRUE );
+	xassert( rlimits_were_parsed == true );
 
 	return rlimits_info;
 }
@@ -126,18 +124,18 @@ parse_rlimits( char *rlimits_str, int propagate_flag )
 
 	xassert( rlimits_str );
 
-	if (strcmp(rlimits_str, "NONE") == 0) {
+	if (xstrcmp(rlimits_str, "NONE") == 0) {
 		propagate_none = true;
 		propagate_flag = !propagate_flag;
 	}
 
-	if (propagate_none || strcmp( rlimits_str, "ALL" ) == 0) {
+	if (propagate_none || xstrcmp( rlimits_str, "ALL" ) == 0) {
 		/*
 		 * Propagate flag value applies to all rlimits
 		 */
 		for (rli = rlimits_info; rli->name; rli++)
 			rli->propagate_flag = propagate_flag;
-		rlimits_were_parsed = TRUE;
+		rlimits_were_parsed = true;
 		return( 0 );
 	}
 
@@ -153,20 +151,20 @@ parse_rlimits( char *rlimits_str, int propagate_flag )
 	rlimits_str_dup = xstrdup( rlimits_str );
 	if ((tp = strtok( rlimits_str_dup, RLIMIT_DELIMS )) != NULL) {
 		do {
-			found = FALSE;
+			found = false;
 			for (rli = rlimits_info; rli->name; rli++) {
 				/*
 				 * Accept either "RLIMIT_CORE" or "CORE"
 				 */
-				if (strncmp( tp, RLIMIT_, LEN_RLIMIT_ ) == 0)
+				if (xstrncmp( tp, RLIMIT_, LEN_RLIMIT_ ) == 0)
 					tp += LEN_RLIMIT_;
-				if (strcmp( tp, rli->name ))
+				if (xstrcmp( tp, rli->name ))
 					continue;
 				rli->propagate_flag = propagate_flag;
-				found = TRUE;
+				found = true;
 				break;
 			}
-			if (found == FALSE) {
+			if (found == false) {
 				error( "Bad rlimit name: %s", tp );
 				xfree( rlimits_str_dup );
 				return( -1 );
@@ -183,7 +181,7 @@ parse_rlimits( char *rlimits_str, int propagate_flag )
 		if (rli->propagate_flag == -1)
 			rli->propagate_flag = ( ! propagate_flag );
 
-	rlimits_were_parsed = TRUE;
+	rlimits_were_parsed = true;
 	return( 0 );
 }
 

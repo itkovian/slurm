@@ -8,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -37,10 +37,6 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#ifdef HAVE_CONFIG_H
-#  include "config.h"
-#endif
-
 #include "slurm/slurm.h"
 #include "slurm/slurm_errno.h"
 #include "slurm/slurmdb.h"
@@ -56,7 +52,10 @@
 extern int slurmdb_coord_add(void *db_conn, List acct_list,
 			     slurmdb_user_cond_t *user_cond)
 {
-	return acct_storage_g_add_coord(db_conn, getuid(),
+	if (db_api_uid == -1)
+		db_api_uid = getuid();
+
+	return acct_storage_g_add_coord(db_conn, db_api_uid,
 					acct_list, user_cond);
 }
 
@@ -69,7 +68,10 @@ extern int slurmdb_coord_add(void *db_conn, List acct_list,
 extern List slurmdb_coord_remove(void *db_conn, List acct_list,
 				 slurmdb_user_cond_t *user_cond)
 {
-	return acct_storage_g_remove_coord(db_conn, getuid(),
-					acct_list, user_cond);
+	if (db_api_uid == -1)
+		db_api_uid = getuid();
+
+	return acct_storage_g_remove_coord(db_conn, db_api_uid,
+					   acct_list, user_cond);
 }
 

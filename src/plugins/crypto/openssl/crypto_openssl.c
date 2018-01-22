@@ -8,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -37,19 +37,9 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#if HAVE_CONFIG_H
-#  include "config.h"
-#  if HAVE_INTTYPES_H
-#    include <inttypes.h>
-#  else /* ! HAVE_INTTYPES_H */
-#    if HAVE_STDINT_H
-#      include <stdint.h>
-#    endif
-#  endif /* HAVE_INTTYPES_H */
-#else /* ! HAVE_CONFIG_H */
-#  include <stdint.h>
-#endif /* HAVE_CONFIG_H */
+#include "config.h"
 
+#include <inttypes.h>
 #include <stdio.h>
 
 /*
@@ -58,6 +48,11 @@
 #include <openssl/evp.h>
 #include <openssl/pem.h>
 #include <openssl/err.h>
+
+#if (OPENSSL_VERSION_NUMBER < 0x10100000L)
+#define EVP_MD_CTX_new EVP_MD_CTX_create
+#define EVP_MD_CTX_free EVP_MD_CTX_destroy
+#endif
 
 #include "slurm/slurm_errno.h"
 
@@ -86,15 +81,12 @@
  * only load authentication plugins if the plugin_type string has a prefix
  * of "auth/".
  *
- * plugin_version - an unsigned 32-bit integer giving the version number
- * of the plugin.  If major and minor revisions are desired, the major
- * version number may be multiplied by a suitable magnitude constant such
- * as 100 or 1000.  Various SLURM versions will likely require a certain
- * minimum version for their plugins as the authentication API matures.
+ * plugin_version - an unsigned 32-bit integer containing the Slurm version
+ * (major.minor.micro combined into a single number).
  */
 const char plugin_name[]        = "OpenSSL cryptographic signature plugin";
 const char plugin_type[]        = "crypto/openssl";
-const uint32_t plugin_version   = 90;
+const uint32_t plugin_version   = SLURM_VERSION_NUMBER;
 
 /*
  * init() is called when the plugin is loaded, before any other functions
@@ -182,7 +174,7 @@ extern int
 crypto_sign(void * key, char *buffer, int buf_size, char **sig_pp,
 		unsigned int *sig_size_p)
 {
-	EVP_MD_CTX    ectx;
+	EVP_MD_CTX    *ectx;
 	int           rc    = SLURM_SUCCESS;
 	int           ksize = EVP_PKEY_size((EVP_PKEY *) key);
 
@@ -191,18 +183,17 @@ crypto_sign(void * key, char *buffer, int buf_size, char **sig_pp,
 	 */
 	*sig_pp = xmalloc(ksize * sizeof(unsigned char));
 
-	EVP_SignInit(&ectx, EVP_sha1());
-	EVP_SignUpdate(&ectx, buffer, buf_size);
+	ectx = EVP_MD_CTX_new();
 
-	if (!(EVP_SignFinal(&ectx, (unsigned char *)*sig_pp, sig_size_p,
+	EVP_SignInit(ectx, EVP_sha1());
+	EVP_SignUpdate(ectx, buffer, buf_size);
+
+	if (!(EVP_SignFinal(ectx, (unsigned char *)*sig_pp, sig_size_p,
 			(EVP_PKEY *) key))) {
 		rc = SLURM_ERROR;
 	}
 
-#ifdef HAVE_EVP_MD_CTX_CLEANUP
-	/* Note: Likely memory leak if this function is absent */
-	EVP_MD_CTX_cleanup(&ectx);
-#endif
+	EVP_MD_CTX_free(ectx);
 
 	return rc;
 }
@@ -211,23 +202,22 @@ extern int
 crypto_verify_sign(void * key, char *buffer, unsigned int buf_size,
 		char *signature, unsigned int sig_size)
 {
-	EVP_MD_CTX     ectx;
+	EVP_MD_CTX     *ectx;
 	int            rc;
 
-	EVP_VerifyInit(&ectx, EVP_sha1());
-	EVP_VerifyUpdate(&ectx, buffer, buf_size);
+	ectx = EVP_MD_CTX_new();
 
-	rc = EVP_VerifyFinal(&ectx, (unsigned char *) signature,
+	EVP_VerifyInit(ectx, EVP_sha1());
+	EVP_VerifyUpdate(ectx, buffer, buf_size);
+
+	rc = EVP_VerifyFinal(ectx, (unsigned char *) signature,
 		sig_size, (EVP_PKEY *) key);
 	if (rc <= 0)
 		rc = SLURM_ERROR;
 	else
 		rc = SLURM_SUCCESS;
 
-#ifdef HAVE_EVP_MD_CTX_CLEANUP
-	/* Note: Likely memory leak if this function is absent */
-	EVP_MD_CTX_cleanup(&ectx);
-#endif
+	EVP_MD_CTX_free(ectx);
 
 	return rc;
 }

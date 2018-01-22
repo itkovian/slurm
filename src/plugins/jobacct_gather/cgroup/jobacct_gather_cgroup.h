@@ -7,7 +7,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -39,10 +39,9 @@
  *  Copyright (C) 2002 The Regents of the University of California.
 \*****************************************************************************/
 
-#include "src/common/xcgroup.h"
-#include "src/common/xcpuinfo.h"
 #include "src/common/slurm_jobacct_gather.h"
 #include "src/common/xcgroup_read_config.h"
+#include "src/slurmd/common/xcgroup.h"
 
 extern xcgroup_t task_memory_cg;
 extern xcgroup_t task_cpuacct_cg;

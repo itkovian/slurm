@@ -7,7 +7,7 @@
  *  Written by Danny Auble <da@llnl.gov>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -126,10 +126,7 @@ extern void destroy_image(void *ptr)
 	image_t *n = (image_t *)ptr;
 	if (n) {
 		xfree(n->name);
-		if (n->groups) {
-			list_destroy(n->groups);
-			n->groups = NULL;
-		}
+		FREE_NULL_LIST(n->groups);
 		xfree(n);
 	}
 }
@@ -222,7 +219,7 @@ extern int parse_blockreq(void **dest, slurm_parser_enum_t type,
 			n->conn_type[0] = SELECT_SMALL;
 		}
 	} else {
-		if (n->conn_type[0] == (uint16_t)NO_VAL) {
+		if (n->conn_type[0] == NO_VAL16) {
 			n->conn_type[0] = bg_conf->default_conn_type[0];
 		} else if (n->conn_type[0] >= SELECT_SMALL) {
 			error("Block def on midplane(s) %s is given "
@@ -237,7 +234,7 @@ extern int parse_blockreq(void **dest, slurm_parser_enum_t type,
 		int i;
 
 		for (i=1; i<SYSTEM_DIMENSIONS; i++) {
-			if (n->conn_type[i] == (uint16_t)NO_VAL)
+			if (n->conn_type[i] == NO_VAL16)
 				n->conn_type[i] = bg_conf->default_conn_type[i];
 			else if (n->conn_type[i] >= SELECT_SMALL) {
 				error("Block def on midplane(s) %s dim %d "
@@ -572,7 +569,7 @@ extern int read_bg_conf(void)
 
 	if (bg_conf->mp_cnode_cnt <= 0)
 		fatal("You should have more than 0 nodes "
-		      "per base partition");
+		      "per midplane");
 	bg_conf->actual_cnodes_per_mp = bg_conf->mp_cnode_cnt;
 	bg_conf->quarter_cnode_cnt = bg_conf->mp_cnode_cnt/4;
 
@@ -590,7 +587,7 @@ extern int read_bg_conf(void)
 	bg_conf->cpu_ratio = bg_conf->cpus_per_mp/bg_conf->mp_cnode_cnt;
 	if (!bg_conf->cpu_ratio)
 		fatal("We appear to have less than 1 cpu on a cnode.  "
-		      "You specified %u for BasePartitionNodeCnt "
+		      "You specified %u for MidplaneNodeCnt "
 		      "in the blugene.conf and %u cpus "
 		      "for each node in the slurm.conf",
 		      bg_conf->mp_cnode_cnt, bg_conf->cpus_per_mp);
@@ -639,7 +636,7 @@ extern int read_bg_conf(void)
 #endif
 
 	for (i=0; i<SYSTEM_DIMENSIONS; i++)
-		bg_conf->default_conn_type[i] = (uint16_t)NO_VAL;
+		bg_conf->default_conn_type[i] = NO_VAL16;
 	s_p_get_string(&tmp_char, "DefaultConnType", tbl);
 	if (tmp_char) {
 		verify_conn_type(tmp_char, bg_conf->default_conn_type);
@@ -655,7 +652,7 @@ extern int read_bg_conf(void)
 #ifndef HAVE_BG_L_P
 	int first_conn_type = bg_conf->default_conn_type[0];
 	for (i=1; i<SYSTEM_DIMENSIONS; i++) {
-		if (bg_conf->default_conn_type[i] == (uint16_t)NO_VAL)
+		if (bg_conf->default_conn_type[i] == NO_VAL16)
 			bg_conf->default_conn_type[i] = first_conn_type;
 		else if (bg_conf->default_conn_type[i] >= SELECT_SMALL)
 			fatal("Can't have a DefaultConnType of %s "
@@ -820,7 +817,7 @@ no_calc:
 			ba_deny_pass |= PASS_DENY_Y;
 		if (strstr(tmp_char, "Z"))
 			ba_deny_pass |= PASS_DENY_Z;
-		if (!strcasecmp(tmp_char, "ALL"))
+		if (!xstrcasecmp(tmp_char, "ALL"))
 			ba_deny_pass |= PASS_DENY_ALL;
 		bg_conf->deny_pass = ba_deny_pass;
 		xfree(tmp_char);
@@ -831,11 +828,11 @@ no_calc:
 		     "defaulting to STATIC partitioning");
 		bg_conf->layout_mode = LAYOUT_STATIC;
 	} else {
-		if (!strcasecmp(tmp_char,"STATIC"))
+		if (!xstrcasecmp(tmp_char,"STATIC"))
 			bg_conf->layout_mode = LAYOUT_STATIC;
-		else if (!strcasecmp(tmp_char,"OVERLAP"))
+		else if (!xstrcasecmp(tmp_char,"OVERLAP"))
 			bg_conf->layout_mode = LAYOUT_OVERLAP;
-		else if (!strcasecmp(tmp_char,"DYNAMIC"))
+		else if (!xstrcasecmp(tmp_char,"DYNAMIC"))
 			bg_conf->layout_mode = LAYOUT_DYNAMIC;
 		else {
 			fatal("I don't understand this LayoutMode = %s",
@@ -874,12 +871,17 @@ no_calc:
 		      "STATIC LayoutMode.  Please update your bluegene.conf.");
 
 #ifdef HAVE_BGQ
-	if ((bg_recover != NOT_FROM_CONTROLLER)
+	if ((bg_recover != NOT_FROM_CONTROLLER) && assoc_mgr_qos_list
 	    && s_p_get_string(&tmp_char, "RebootQOSList", tbl)) {
 		bool valid;
 		char *token, *last = NULL;
 		slurmdb_qos_rec_t *qos = NULL;
+		assoc_mgr_lock_t locks = { NO_LOCK, NO_LOCK, NO_LOCK,
+					   READ_LOCK, NO_LOCK,
+					   NO_LOCK, NO_LOCK };
 
+		/* Lock here to avoid g_qos_count changing under us */
+		assoc_mgr_lock(&locks);
 		bg_conf->reboot_qos_bitmap = bit_alloc(g_qos_count);
 		itr = list_iterator_create(assoc_mgr_qos_list);
 
@@ -887,7 +889,7 @@ no_calc:
 		while (token) {
 			valid = false;
 			while((qos = list_next(itr))) {
-				if (!strcasecmp(token, qos->name)) {
+				if (!xstrcasecmp(token, qos->name)) {
 					bit_set(bg_conf->reboot_qos_bitmap,
 						qos->id);
 					valid = true;
@@ -901,6 +903,7 @@ no_calc:
 		}
 		list_iterator_destroy(itr);
 		xfree(tmp_char);
+		assoc_mgr_unlock(&locks);
 	}
 #endif
 

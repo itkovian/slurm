@@ -46,7 +46,6 @@ job_step_info_to_hv(job_step_info_t *step_info, HV *hv)
 	STORE_FIELD(hv, step_info, num_tasks, uint32_t);
 	if(step_info->partition)
 		STORE_FIELD(hv, step_info, partition, charp);
-	STORE_FIELD(hv, step_info, profile, uint32_t);
 	if(step_info->resv_ports)
 		STORE_FIELD(hv, step_info, resv_ports, charp);
 	STORE_FIELD(hv, step_info, run_time, time_t);
@@ -54,7 +53,7 @@ job_step_info_to_hv(job_step_info_t *step_info, HV *hv)
 	STORE_FIELD(hv, step_info, step_id, uint32_t);
 	STORE_FIELD(hv, step_info, time_limit, uint32_t);
 	STORE_FIELD(hv, step_info, user_id, uint32_t);
-	STORE_FIELD(hv, step_info, state, uint16_t);
+	STORE_FIELD(hv, step_info, state, uint32_t);
 
 	return 0;
 }
@@ -68,6 +67,8 @@ hv_to_job_step_info(HV *hv, job_step_info_t *step_info)
 	SV **svp;
 	AV *av;
 	int i, n;
+
+	memset(step_info, 0, sizeof(job_step_info_t));
 
 	FETCH_FIELD(hv, step_info, array_job_id, uint32_t, TRUE);
 	FETCH_FIELD(hv, step_info, array_task_id, uint32_t, TRUE);
@@ -96,14 +97,13 @@ hv_to_job_step_info(HV *hv, job_step_info_t *step_info)
 	FETCH_FIELD(hv, step_info, num_cpus, uint32_t, TRUE);
 	FETCH_FIELD(hv, step_info, num_tasks, uint32_t, TRUE);
 	FETCH_FIELD(hv, step_info, partition, charp, FALSE);
-	FETCH_FIELD(hv, step_info, profile, uint32_t, TRUE);
 	FETCH_FIELD(hv, step_info, resv_ports, charp, FALSE);
 	FETCH_FIELD(hv, step_info, run_time, time_t, TRUE);
 	FETCH_FIELD(hv, step_info, start_time, time_t, TRUE);
 	FETCH_FIELD(hv, step_info, step_id, uint32_t, TRUE);
 	FETCH_FIELD(hv, step_info, time_limit, uint32_t, TRUE);
 	FETCH_FIELD(hv, step_info, user_id, uint32_t, TRUE);
-	FETCH_FIELD(hv, step_info, state, uint16_t, TRUE);
+	FETCH_FIELD(hv, step_info, state, uint32_t, TRUE);
 
 	return 0;
 }
@@ -247,12 +247,13 @@ job_step_pids_response_msg_to_hv(job_step_pids_response_msg_t *pids_msg, HV *hv)
 
 	av = newAV();
 	itr = slurm_list_iterator_create(pids_msg->pid_list);
-	while((pids = (job_step_pids_t *)slurm_list_next(itr))) {
+	while ((pids = (job_step_pids_t *)slurm_list_next(itr))) {
 		hv_pids = newHV();
 		if (job_step_pids_to_hv(pids, hv_pids) < 0) {
 			Perl_warn(aTHX_ "failed to convert job_step_pids_t to hv for job_step_pids_response_msg_t");
 			SvREFCNT_dec(hv_pids);
 			SvREFCNT_dec(av);
+			slurm_list_iterator_destroy(itr);
 			return -1;
 		}
 		av_store(av, i++, newRV_noinc((SV*)hv_pids));
@@ -302,12 +303,13 @@ job_step_stat_response_msg_to_hv(job_step_stat_response_msg_t *stat_msg, HV *hv)
 
 	av = newAV();
 	itr = slurm_list_iterator_create(stat_msg->stats_list);
-	while((stat = (job_step_stat_t *)slurm_list_next(itr))) {
+	while ((stat = (job_step_stat_t *)slurm_list_next(itr))) {
 		hv_stat = newHV();
 		if(job_step_stat_to_hv(stat, hv_stat) < 0) {
 			Perl_warn(aTHX_ "failed to convert job_step_stat_t to hv for job_step_stat_response_msg_t");
 			SvREFCNT_dec(hv_stat);
 			SvREFCNT_dec(av);
+			slurm_list_iterator_destroy(itr);
 			return -1;
 		}
 		av_store(av, i++, newRV_noinc((SV*)hv_stat));

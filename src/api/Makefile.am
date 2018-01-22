@@ -10,6 +10,10 @@ VERSION_SCRIPT = \
 	version.map
 OTHER_FLAGS = \
 	-Wl,--version-script=$(VERSION_SCRIPT)
+FULL_VERSION_SCRIPT = \
+	full_version.map
+FULL_OTHER_FLAGS = \
+	-Wl,--version-script=$(FULL_VERSION_SCRIPT)
 PMI_VERSION_SCRIPT = \
 	pmi_version.map
 PMI_OTHER_FLAGS = \
@@ -59,11 +63,16 @@ libpmi_rev     = 0
 
 lib_LTLIBRARIES = libslurm.la libpmi.la
 
+# The ABI of libslurmfull can easily change from 1 micro version to another.
+# To avoid issue we will install this lib alongside the plugins to protect
+# from version issues.
+pkglib_LTLIBRARIES = libslurmfull.la
+
 # BUILT_SOURCES tells automake that when "make" is called, these targets
 # need to be built before anything else.  For instance, this takes care
 # of libpmi.la's dependency on libslurm.la, as long as you use "make"
 # and NOT "make libpmi.la".
-BUILT_SOURCES = $(VERSION_SCRIPT) $(PMI_VERSION_SCRIPT) libslurm.la
+BUILT_SOURCES = $(VERSION_SCRIPT) $(FULL_VERSION_SCRIPT) $(PMI_VERSION_SCRIPT) libslurm.la
 
 # Note that libslurmhelper is mostly the same as libslurm, except that
 # it exports ALL symbols used by the process, libcommon, libeio, etc.
@@ -82,32 +91,42 @@ slurmapi_src =           \
 	allocate.c       \
 	allocate_msg.c   \
 	block_info.c     \
+	burst_buffer_info.c \
+	assoc_mgr_info.c    \
 	cancel.c         \
 	checkpoint.c     \
 	complete.c       \
 	config_info.c    \
+	federation_info.c \
 	front_end_info.c \
 	init_msg.c       \
 	job_info.c       \
 	job_step_info.c  \
+	layout_info.c    \
+	license_info.c   \
 	node_info.c      \
 	partition_info.c \
+	pmi_server.c     \
+	pmi_server.h     \
+	powercap_info.c  \
 	reservation_info.c \
 	signal.c         \
 	slurm_get_statistics.c \
 	slurm_hostlist.c \
-	slurm_pmi.c slurm_pmi.h	\
-	step_ctx.c step_ctx.h \
-	step_io.c step_io.h \
-	step_launch.c step_launch.h \
-	pmi_server.c pmi_server.h \
+	slurm_pmi.c      \
+	slurm_pmi.h	 \
+	step_ctx.c       \
+	step_ctx.h       \
+	step_io.c        \
+	step_io.h        \
+	step_launch.c    \
+	step_launch.h    \
 	submit.c         \
 	suspend.c        \
 	topo_info.c      \
 	triggers.c       \
 	reconfigure.c    \
-	update_config.c  \
-	license_info.c
+	update_config.c
 
 common_dir = $(top_builddir)/src/common
 
@@ -119,7 +138,7 @@ slurmapi_add = 			 \
 
 libslurmhelper_la_SOURCES = $(slurmapi_src)
 libslurmhelper_la_LIBADD = $(slurmapi_add)
-libslurmhelper_la_LDFLAGs = \
+libslurmhelper_la_LDFLAGS = \
 	$(LIB_LDFLAGS) \
 	-version-info $(current):$(rev):$(age)
 
@@ -131,7 +150,14 @@ libslurm_la_LIBADD = $(convenience_libs)
 libslurm_la_LDFLAGS        = \
         $(LIB_LDFLAGS) \
         -version-info $(current):$(rev):$(age) \
-        $(OTHER_FLAGS) $(HWLOC_LDFLAGS) $(HWLOC_LIBS)
+        $(OTHER_FLAGS)
+
+libslurmfull_la_SOURCES =
+libslurmfull_la_LIBADD = $(convenience_libs)
+libslurmfull_la_LDFLAGS        = \
+        $(LIB_LDFLAGS) \
+	-avoid-version \
+        $(FULL_OTHER_FLAGS)
 #
 # The libpmi_la_LIBADD specification below causes libpmi.la to relink
 # when running "make install", but removing it prevents essential slurm
@@ -168,6 +194,11 @@ $(VERSION_SCRIPT) :
 	 echo "  local: *;"; \
 	 echo "};") > $(VERSION_SCRIPT)
 
+$(FULL_VERSION_SCRIPT) :
+	(echo "{ global: *;";   \
+	 echo "  local: *;"; \
+	 echo "};") > $(FULL_VERSION_SCRIPT)
+
 $(PMI_VERSION_SCRIPT) :
 	(echo "{ global:"; \
 	 echo "   PMI_*;"; \
@@ -175,7 +206,7 @@ $(PMI_VERSION_SCRIPT) :
 	 echo "};") > $(PMI_VERSION_SCRIPT)
 
 CLEANFILES = \
-	$(VERSION_SCRIPT) $(PMI_VERSION_SCRIPT)
+	$(VERSION_SCRIPT) $(FULL_VERSION_SCRIPT) $(PMI_VERSION_SCRIPT)
 
 DISTCLEANFILES = \
-	$(VERSION_SCRIPT) $(PMI_VERSION_SCRIPT)
+	$(VERSION_SCRIPT) $(FULL_VERSION_SCRIPT) $(PMI_VERSION_SCRIPT)

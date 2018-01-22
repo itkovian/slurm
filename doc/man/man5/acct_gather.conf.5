@@ -1,4 +1,4 @@
-.TH "acct_gather.conf" "5" "May 2013" "acct_gather.conf 1.0" "Slurm acct_gather.configuration file"
+.TH "acct_gather.conf" "5" "Slurm Configuration File" "April 2015" "Slurm Configuration File"
 
 .SH "NAME"
 acct_gather.conf \- Slurm configuration file for the acct_gather plugins
@@ -17,12 +17,12 @@ Any text following a "#" in the configuration file is treated
 as a comment through the end of that line.
 The size of each line in the file is limited to 1024 characters.
 Changes to the configuration file take effect upon restart of
-SLURM daemons, daemon receipt of the SIGHUP signal, or execution
+Slurm daemons, daemon receipt of the SIGHUP signal, or execution
 of the command "scontrol reconfigure" unless otherwise noted.
 
 .LP
 The following acct_gather.conf parameters are defined to control the general
-behavior of various plugins in SLURM.
+behavior of various plugins in Slurm.
 
 .LP
 The acct_gather.conf file is different than other Slurm .conf files.  Each
@@ -50,12 +50,28 @@ accumulated, only the first and last adjustments are used to calculated the
 consumption. The default is "no".
 
 .TP
-\fBEnergyIPMIPowerSensor\fR=<number>
-This parameter is optional.  If the parameter is included, the plugin searches
-the node for a "watt" sensor with the number specified by <number>. If a
-matching sensor is found, that sensor is used for power data. If no matching
-sensor is found, a value of zero is returned for power data. If the parameter
-is omitted, the plugin will use the first "watt" sensor it finds.
+\fBEnergyIPMIPowerSensors\fR=<key=values>\fR
+Optionally specify the ids of the sensors to used.
+Multiple <key=values> can be set with ";" separators.
+The key "Node" is mandatory and is used to know the consumed energy for nodes
+(scontrol show node) and jobs (sacct).
+Other keys are optional and are named by administrator.
+These keys are useful only when profile is activated for energy to store power
+(in watt) of each key.
+<values> are integers, multiple values can be set with "," separators.
+The sum of the listed sensors is used for each key.
+EnergyIPMIPowerSensors is optional, default value is "Node=number" where
+"number" is the id of the first power sensor returned by ipmi-sensors.
+.br
+i.e.
+.br
+.na
+EnergyIPMIPowerSensors=Node=16,19,23,26;Socket0=16,23;Socket1=19,26;SSUP=23,26;KNC=16,19
+.ad
+.br
+EnergyIPMIPowerSensors=Node=29,32;SSUP0=29;SSUP1=32
+.br
+EnergyIPMIPowerSensors=Node=1280
 
 .LP
 The following acct_gather.conf parameters are defined to control the
@@ -102,9 +118,8 @@ No data types are collected. This is the default.
 Energy data is collected.
 
 .TP
-\fBLustre\fR
-Lustre file system data is collected.
-Currently only the Lustre filesystem is supported.
+\fBFilesystem\fR
+File system (Lustre) data is collected.
 
 .TP
 \fBNetwork\fR
@@ -159,15 +174,15 @@ InfinibandOFEDPort=1
 Copyright (C) 2012-2013 Bull.
 Produced at Bull (cf, DISCLAIMER).
 .LP
-This file is part of SLURM, a resource management program.
-For details, see <http://slurm.schedmd.com/>.
+This file is part of Slurm, a resource management program.
+For details, see <https://slurm.schedmd.com/>.
 .LP
-SLURM is free software; you can redistribute it and/or modify it under
+Slurm is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free
 Software Foundation; either version 2 of the License, or (at your option)
 any later version.
 .LP
-SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
 WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
 FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
 details.

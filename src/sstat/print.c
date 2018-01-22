@@ -1,7 +1,5 @@
 /*****************************************************************************\
  *  print.c - print functions for sstat
- *
- *  $Id: print.c 7541 2006-03-18 01:44:58Z da $
  *****************************************************************************
  *  Copyright (C) 2006 The Regents of the University of California.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -9,7 +7,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -39,6 +37,7 @@
 \*****************************************************************************/
 
 #include "sstat.h"
+#include "src/common/cpu_frequency.h"
 #include "src/common/parse_time.h"
 #include "slurm.h"
 #define FORMAT_STRING_SIZE 34
@@ -87,7 +86,8 @@ static void _print_small_double(
 		return;
 
 	if (dub > 1)
-		convert_num_unit((double)dub, outbuf, buf_size, units);
+		convert_num_unit((double)dub, outbuf, buf_size, units, NO_VAL,
+				 params.convert_flags);
 	else if (dub > 0)
 		snprintf(outbuf, buf_size, "%.2fM", dub);
 	else
@@ -118,19 +118,23 @@ void print_fields(slurmdb_step_rec_t *step)
 		case PRINT_ACT_CPUFREQ:
 
 			convert_num_unit2((double)step->stats.act_cpufreq,
-					  outbuf, sizeof(outbuf),
-					  UNIT_KILO, 1000, false);
+					  outbuf, sizeof(outbuf), UNIT_KILO,
+					  NO_VAL, 1000, params.convert_flags &
+					  (~CONVERT_NUM_UNIT_EXACT));
 
 			field->print_routine(field,
 					     outbuf,
 					     (curr_inx == field_count));
 			break;
 		case PRINT_CONSUMED_ENERGY:
-			if (!fuzzy_equal(step->stats.consumed_energy, NO_VAL)) {
+			if (!fuzzy_equal(step->stats.consumed_energy,
+					 NO_VAL64)) {
 				convert_num_unit2((double)
 						  step->stats.consumed_energy,
 						  outbuf, sizeof(outbuf),
-						  UNIT_NONE, 1000, false);
+						  UNIT_NONE, NO_VAL, 1000,
+						  params.convert_flags &
+						  (~CONVERT_NUM_UNIT_EXACT));
 			}
 			field->print_routine(field,
 					     outbuf,
@@ -160,35 +164,38 @@ void print_fields(slurmdb_step_rec_t *step)
 					     (curr_inx == field_count));
 			break;
 		case PRINT_AVEPAGES:
-			convert_num_unit((double)step->stats.pages_ave,
-					 outbuf, sizeof(outbuf),
-					 UNIT_KILO);
+			convert_num_unit((double)step->stats.pages_ave, outbuf,
+					 sizeof(outbuf), UNIT_KILO, NO_VAL,
+					 params.convert_flags);
 
 			field->print_routine(field,
 					     outbuf,
 					     (curr_inx == field_count));
 			break;
 		case PRINT_AVERSS:
-			convert_num_unit((double)step->stats.rss_ave,
-					 outbuf, sizeof(outbuf),
-					 UNIT_KILO);
+			convert_num_unit((double)step->stats.rss_ave, outbuf,
+					 sizeof(outbuf), UNIT_KILO, NO_VAL,
+					 params.convert_flags);
 
 			field->print_routine(field,
 					     outbuf,
 					     (curr_inx == field_count));
 			break;
 		case PRINT_AVEVSIZE:
-			convert_num_unit((double)step->stats.vsize_ave,
-					 outbuf, sizeof(outbuf),
-					 UNIT_KILO);
+			convert_num_unit((double)step->stats.vsize_ave, outbuf,
+					 sizeof(outbuf), UNIT_KILO, NO_VAL,
+					 params.convert_flags);
 
 			field->print_routine(field,
 					     outbuf,
 					     (curr_inx == field_count));
 			break;
 		case PRINT_JOBID:
-			if (step->stepid == NO_VAL)
+			if (step->stepid == SLURM_BATCH_SCRIPT)
 				snprintf(outbuf, sizeof(outbuf), "%u.batch",
+					 step->job_ptr->jobid);
+			else if (step->stepid == SLURM_EXTERN_CONT)
+				snprintf(outbuf, sizeof(outbuf), "%u.extern",
 					 step->job_ptr->jobid);
 			else
 				snprintf(outbuf, sizeof(outbuf), "%u.%u",
@@ -246,9 +253,9 @@ void print_fields(slurmdb_step_rec_t *step)
 					     (curr_inx == field_count));
 			break;
 		case PRINT_MAXPAGES:
-			convert_num_unit((double)step->stats.pages_max,
-					 outbuf, sizeof(outbuf),
-					 UNIT_KILO);
+			convert_num_unit((double)step->stats.pages_max, outbuf,
+					 sizeof(outbuf), UNIT_KILO, NO_VAL,
+					 params.convert_flags);
 
 			field->print_routine(field,
 					     outbuf,
@@ -269,9 +276,9 @@ void print_fields(slurmdb_step_rec_t *step)
 					     (curr_inx == field_count));
 			break;
 		case PRINT_MAXRSS:
-			convert_num_unit((double)step->stats.rss_max,
-					 outbuf, sizeof(outbuf),
-					 UNIT_KILO);
+			convert_num_unit((double)step->stats.rss_max, outbuf,
+					 sizeof(outbuf), UNIT_KILO, NO_VAL,
+					 params.convert_flags);
 
 			field->print_routine(field,
 					     outbuf,
@@ -292,9 +299,9 @@ void print_fields(slurmdb_step_rec_t *step)
 					     (curr_inx == field_count));
 			break;
 		case PRINT_MAXVSIZE:
-			convert_num_unit((double)step->stats.vsize_max,
-					 outbuf, sizeof(outbuf),
-					 UNIT_KILO);
+			convert_num_unit((double)step->stats.vsize_max, outbuf,
+					 sizeof(outbuf), UNIT_KILO, NO_VAL,
+					 params.convert_flags);
 
 			field->print_routine(field,
 					     outbuf,
@@ -351,19 +358,23 @@ void print_fields(slurmdb_step_rec_t *step)
                                              step->pid_str,
                                              (curr_inx == field_count));
                         break;
-		case PRINT_REQ_CPUFREQ:
-			if (step->req_cpufreq == CPU_FREQ_LOW)
-				snprintf(outbuf, sizeof(outbuf), "Low");
-			else if (step->req_cpufreq == CPU_FREQ_MEDIUM)
-				snprintf(outbuf, sizeof(outbuf), "Medium");
-			else if (step->req_cpufreq == CPU_FREQ_HIGH)
-				snprintf(outbuf, sizeof(outbuf), "High");
-			else if (step->req_cpufreq == CPU_FREQ_HIGHM1)
-				snprintf(outbuf, sizeof(outbuf), "Highm1");
-			else if (!fuzzy_equal(step->req_cpufreq, NO_VAL))
-				convert_num_unit2((double)step->req_cpufreq,
-						  outbuf, sizeof(outbuf),
-						  UNIT_KILO, 1000, false);
+		case PRINT_REQ_CPUFREQ_MIN:
+			cpu_freq_to_string(outbuf, sizeof(outbuf),
+					   step->req_cpufreq_min);
+			field->print_routine(field,
+					     outbuf,
+					     (curr_inx == field_count));
+			break;
+		case PRINT_REQ_CPUFREQ_MAX:
+			cpu_freq_to_string(outbuf, sizeof(outbuf),
+					   step->req_cpufreq_max);
+			field->print_routine(field,
+					     outbuf,
+					     (curr_inx == field_count));
+			break;
+		case PRINT_REQ_CPUFREQ_GOV:
+			cpu_freq_to_string(outbuf, sizeof(outbuf),
+					   step->req_cpufreq_gov);
 			field->print_routine(field,
 					     outbuf,
 					     (curr_inx == field_count));

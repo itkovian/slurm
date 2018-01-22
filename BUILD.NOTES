@@ -1,6 +1,6 @@
 This information is meant primarily for the Slurm developers. 
 System administrators should read the instructions at
-http://www.llnl.gov/linux/slurm/quickstart_admin.html
+https://slurm.schedmd.com/quickstart_admin.html
 (also found in the file doc/html/quickstart_admin.shtml).
 The "INSTALL" file contains generic Linux build instructions.
 
@@ -21,9 +21,9 @@ and libtool installed):
  ./autogen.sh
 then check-in the new Makefile.am and Makefile.in files
 
-Here is a step-by-step HOWTO for creating a new release of SLURM on a
+Here is a step-by-step HOWTO for creating a new release of Slurm on a
 Linux cluster (See BlueGene and AIX specific notes below for some differences).
-0. Get current copies of SLURM and buildfarm
+0. Get current copies of Slurm and buildfarm
    > git clone https://<user_name>@github.com/chaos/slurm.git
    > svn co https://eris.llnl.gov/svn/chaos/private/buildfarm/trunk buildfarm
    place the buildfarm directory in your search path
@@ -49,7 +49,6 @@ Linux cluster (See BlueGene and AIX specific notes below for some differences).
 	%_slurm_sysconfdir      /etc/slurm
 	%_with_debug            1
 	%_with_sgijob		1
-	%_with_elan		1   (ONLY ON SYSTEMS WITH ELAN SWITCH)
    NOTE: build will make a tar-ball based upon ALL of the files in your current
    local directory. If that includes scratch files, everyone will get those
    files in the tar-ball. For that reason, it is a good idea to clone a clean
@@ -86,7 +85,7 @@ BlueGene build notes:
    /usr/src/packages/RPMS/ppc64
 
 To build and run on AIX:
-0. Get current copies of SLURM and buildfarm
+0. Get current copies of Slurm and buildfarm
    > git clone https://<user_name>@github.com/chaos/slurm.git
    > svn co https://eris.llnl.gov/svn/chaos/private/buildfarm/trunk buildfarm
    put the buildfarm directory in your search path
@@ -116,7 +115,7 @@ To build and run on AIX:
 3. To build RPMs (NOTE: GNU tools early in PATH as described above in #0):
    Create a .rpmmacros file specifying system specific files:
 	#
-	# RPM Macros for use with SLURM on AIX
+	# RPM Macros for use with Slurm on AIX
 	# The system-wide macros for RPM are in /usr/lib/rpm/macros
 	# and this overrides a few of them
 	#
@@ -142,7 +141,7 @@ To build and run on AIX:
    --nosnapshot will name the tar-ball and RPMs based upon the META file
    --snapshot will name the tar-ball and RPMs based upon the META file plus a
    timestamp. Do this to make a tar-ball for a non-tagged release.
-4. Test POE after telling POE where to find SLURM's LoadLeveler wrapper.
+4. Test POE after telling POE where to find Slurm's LoadLeveler wrapper.
    > export MP_RMLIB=./slurm_ll_api.so
    > export CHECKPOINT=yes
 5. > poe hostname -rmpool debug
@@ -182,8 +181,8 @@ BlueGene bglblock boot problem diagnosis
   - Execute /admin/bglscripts/fatalras
     This will produce a list of failures including Rack and Midplane number
     <date> R<rack> M<midplane> <failure details>
-  - Translate the Rack and Midplane to SLURM node id: smap -R r<rack><midplane>
-  - Drain only the bad SLURM node, return others to service using scontrol
+  - Translate the Rack and Midplane to Slurm node id: smap -R r<rack><midplane>
+  - Drain only the bad Slurm node, return others to service using scontrol
 
 Configuration file update procedures:
   - cd /usr/bgl/dist/slurm (on bgli)
@@ -199,7 +198,7 @@ Some RPM commands:
   rpm -e slurm-1.1.8-1                  (erase an rpm)
   rpm --upgrade slurm-1.1.9-1.rpm       (replace existing rpm with new version)
   rpm -i --ignoresize slurm-1.1.9-1.rpm (install a new rpm)
-For main SLURM plugin installation on BGL service node:
+For main Slurm plugin installation on BGL service node:
   rpm -i --force --nodeps --ignoresize slurm-1.1.9-1.rpm
   rpm -U --force --nodeps --ignoresize slurm-1.1.9-1.rpm  (upgrade option)
 
@@ -233,6 +232,8 @@ For memory leaks (for AIX use zerofault, zf; for linux use valgrind)
    ./slurmctld -Dc >valg.ctld.out 2>&1
  - valgrind --tool=memcheck --leak-check=yes --num-callers=8 --leak-resolution=med \
    ./slurmd -Dc >valg.slurmd.out 2>&1    (Probably only one one node of cluster)
+ - valgrind --tool=memcheck --leak-check=yes --num-callers=8 --leak-resolution=med \
+   ./slurmdbd -D >valg.dbd.out 2>&1
  - Run the regression test. In the globals.local file include:
    "set enable_memory_leak_debug 1"
  - Shutdown the daemons using "scontrol shutdown"
@@ -243,7 +244,11 @@ For memory leaks (for AIX use zerofault, zf; for linux use valgrind)
    valgrind backtrace after shutdown. Rebuilding the daemons without the
    configure option of "--enable-memory-leak-debug" typically prevents the
    plugin from being unloaded so the symbols will be properly reported. However
-   many memory leaks will be reported due to not unloading plugins.
+   many memory leaks will be reported due to not unloading plugins. You will
+   need to match the call sequence from the first log (with
+   "--enable-memory-leak-debug") to the second log (without
+   "--enable-memory-leak-debug" and ignore memory leaks reported that are not
+   real leaks in the second log) to identify the full code path through plugins.
 
 Job profiling:
  - "export CFLAGS=-pg", then run "configure" and "make install" as usual.
@@ -251,16 +256,17 @@ Job profiling:
  - Run "gprof [executable-file] >outfile"
 
 Before new major release:
- - Test on ia64, i386, x86_64, BGL, AIX, OSX, XCPU
+ - Test on ia64, i386, x86_64, BGQ, NRT/POE, Cray
  - Test on Elan and IB switches
  - Test fail-over of slurmctld
+ - Test pam_slurm and pam_slurm_adopt.
  - Test for memory leaks in slurmctld, slurmd and slurmdbd with various plugins
  - Change API version number
- - Review and release web pages
- - Review and release code
- - Run "make check"
+ - Run "make check" (requires "dejagnu" package)
  - Test that the prolog and epilog run
  - Run the test suite with SlurmUser NOT being self
  - Test for errors reported by CLANG tool:
+   NOTE: Run "configure" with "--enable-developer" option so assert functions
+   take effect.
    scan-build -k -v make >m.sb.out 2>&1 
    # and look for output in /tmp/scan-build-<DATE>

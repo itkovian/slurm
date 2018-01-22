@@ -5,7 +5,7 @@
  *  Written by Bull- Yiannis Georgiou
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://www.schedmd.com/slurmdocs/>.
+ *  For details, see <https://slurm.schedmd.com>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -88,18 +88,13 @@
  * only load job completion logging plugins if the plugin_type string has a
  * prefix of "jobacct/".
  *
- * plugin_version - an unsigned 32-bit integer giving the version number
- * of the plugin.  If major and minor revisions are desired, the major
- * version number may be multiplied by a suitable magnitude constant such
- * as 100 or 1000.  Various SLURM versions will likely require a certain
- * minimum version for their plugins as the job accounting API
- * matures.
+ * plugin_version - an unsigned 32-bit integer containing the Slurm version
+ * (major.minor.micro combined into a single number).
  */
 
 const char plugin_name[] = "AcctGatherFilesystem LUSTRE plugin";
 const char plugin_type[] = "acct_gather_filesystem/lustre";
-const uint32_t plugin_version = 100;
-
+const uint32_t plugin_version = SLURM_VERSION_NUMBER;
 
 typedef struct {
 	time_t last_update_time;
@@ -116,7 +111,7 @@ typedef struct {
 
 static lustre_sens_t lustre_se = {0,0,0,0,0,0,0,0};
 
-static uint32_t debug_flags = 0;
+static uint64_t debug_flags = 0;
 static pthread_mutex_t lustre_lock = PTHREAD_MUTEX_INITIALIZER;
 
 /* Default path to lustre stats */
@@ -139,7 +134,8 @@ static int _check_lustre_fs(void)
 		acct_gather_profile_g_get(ACCT_GATHER_PROFILE_RUNNING,
 					  &profile);
 		if ((profile & ACCT_GATHER_PROFILE_LUSTRE)) {
-			sprintf(lustre_directory, "%s/llite", proc_base_path);
+			snprintf(lustre_directory, BUFSIZ,
+				 "%s/llite", proc_base_path);
 			proc_dir = opendir(proc_base_path);
 			if (!proc_dir) {
 				error("%s: not able to read %s %m",
@@ -177,7 +173,7 @@ static int _read_lustre_counters(void)
 	char buffer[BUFSIZ];
 
 
-	sprintf(lustre_dir, "%s/llite", proc_base_path);
+	snprintf(lustre_dir, PATH_MAX, "%s/llite", proc_base_path);
 
 	proc_dir = opendir(lustre_dir);
 	if (proc_dir == NULL) {
@@ -189,11 +185,11 @@ static int _read_lustre_counters(void)
 		bool bread;
 		bool bwrote;
 
-		if (strcmp(entry->d_name, ".") == 0
-		    || strcmp(entry->d_name, "..") == 0)
+		if (xstrcmp(entry->d_name, ".") == 0
+		    || xstrcmp(entry->d_name, "..") == 0)
 			continue;
 
-		snprintf(path_stats, PATH_MAX - 1, "%s/%s/stats", lustre_dir,
+		snprintf(path_stats, PATH_MAX, "%s/%s/stats", lustre_dir,
 			 entry->d_name);
 		debug3("%s: Found file %s", __func__, path_stats);
 
@@ -275,67 +271,90 @@ static int _read_lustre_counters(void)
  */
 static int _update_node_filesystem(void)
 {
-	static acct_filesystem_data_t fls;
-	static acct_filesystem_data_t current;
 	static acct_filesystem_data_t previous;
+	static int dataset_id = -1;
 	static bool first = true;
-	int cc;
+	acct_filesystem_data_t current;
+
+	enum {
+		FIELD_READ,
+		FIELD_READMB,
+		FIELD_WRITE,
+		FIELD_WRITEMB,
+		FIELD_CNT
+	};
+
+	acct_gather_profile_dataset_t dataset[] = {
+		{ "Reads", PROFILE_FIELD_UINT64 },
+		{ "ReadMB", PROFILE_FIELD_DOUBLE },
+		{ "Writes", PROFILE_FIELD_UINT64 },
+		{ "WriteMB", PROFILE_FIELD_DOUBLE },
+		{ NULL, PROFILE_FIELD_NOT_SET }
+	};
+
+	union {
+		double d;
+		uint64_t u64;
+	} data[FIELD_CNT];
 
 	slurm_mutex_lock(&lustre_lock);
 
-	cc = _read_lustre_counters();
-	if (cc != SLURM_SUCCESS) {
+	if (_read_lustre_counters() != SLURM_SUCCESS) {
 		error("%s: Cannot read lustre counters", __func__);
 		slurm_mutex_unlock(&lustre_lock);
 		return SLURM_FAILURE;
 	}
 
 	if (first) {
-		/* First time initialize the counters and return.
-		 */
+		dataset_id = acct_gather_profile_g_create_dataset(
+			"Filesystem", NO_PARENT, dataset);
+		if (dataset_id == SLURM_ERROR) {
+			error("FileSystem: Failed to create the dataset "
+			      "for Lustre");
+			slurm_mutex_unlock(&lustre_lock);
+			return SLURM_ERROR;
+		}
+
 		previous.reads = lustre_se.all_lustre_nb_reads;
 		previous.writes = lustre_se.all_lustre_nb_writes;
-		previous.read_size
-			= (double)lustre_se.all_lustre_read_bytes/1048576.0;
-		previous.write_size
-			= (double)lustre_se.all_lustre_write_bytes/1048576.0;
+		previous.read_size = (double)lustre_se.all_lustre_read_bytes;
+		previous.write_size = (double)lustre_se.all_lustre_write_bytes;
 
 		first = false;
-		memset(&lustre_se, 0, sizeof(lustre_sens_t));
-		slurm_mutex_unlock(&lustre_lock);
-
-		return SLURM_SUCCESS;
 	}
 
-	/* Compute the current values read from all lustre-xxxx
-	 * directories
-	 */
+	if (dataset_id < 0) {
+		slurm_mutex_unlock(&lustre_lock);
+		return SLURM_ERROR;
+	}
+
+	/* Compute the current values read from all lustre-xxxx directories */
 	current.reads = lustre_se.all_lustre_nb_reads;
 	current.writes = lustre_se.all_lustre_nb_writes;
-	current.read_size = (double)lustre_se.all_lustre_read_bytes/1048576.0;
-	current.write_size = (double)lustre_se.all_lustre_write_bytes/1048576.0;
+	current.read_size = (double)lustre_se.all_lustre_read_bytes;
+	current.write_size = (double)lustre_se.all_lustre_write_bytes;
 
-	/* Now compute the difference between the two snapshots
-	 * and send it to hdf5 log.
-	 */
-	fls.reads = fls.reads + (current.reads - previous.reads);
-	fls.writes = fls.writes + (current.writes - previous.writes);
-	fls.read_size = fls.read_size
-		+ (current.read_size - previous.read_size);
-	fls.write_size = fls.write_size
-		+ (current.write_size - previous.write_size);
+	/* record sample */
+	data[FIELD_READ].u64 = current.reads - previous.reads;
+	data[FIELD_READMB].d = (current.read_size - previous.read_size) /
+		(1 << 20);
+	data[FIELD_WRITE].u64 = current.writes - previous.writes;
+	data[FIELD_WRITEMB].d = (current.write_size - previous.write_size) /
+		(1 << 20);
 
-	acct_gather_profile_g_add_sample_data(ACCT_GATHER_PROFILE_LUSTRE, &fls);
+	if (debug_flags & DEBUG_FLAG_PROFILE) {
+		char str[256];
+		info("PROFILE-Lustre: %s", acct_gather_profile_dataset_str(
+			     dataset, data, str, sizeof(str)));
+	}
+	acct_gather_profile_g_add_sample_data(dataset_id, (void *)data,
+					      lustre_se.update_time);
 
 	/* Save current as previous and clean up the working
 	 * data structure.
 	 */
 	memcpy(&previous, &current, sizeof(acct_filesystem_data_t));
 	memset(&lustre_se, 0, sizeof(lustre_sens_t));
-
-	info("%s: num reads %"PRIu64" nums write %"PRIu64" "
-	     "read %f MB wrote %f MB",
-	     __func__, fls.reads, fls.writes, fls.read_size, fls.write_size);
 
 	slurm_mutex_unlock(&lustre_lock);
 
@@ -392,7 +411,7 @@ extern void acct_gather_filesystem_p_conf_set(s_p_hashtbl_t *tbl)
 	if (!_run_in_daemon())
 		return;
 
-	verbose("%s loaded", plugin_name);
+	debug("%s loaded", plugin_name);
 }
 
 extern void acct_gather_filesystem_p_conf_options(s_p_options_t **full_options,

@@ -8,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -48,12 +48,14 @@
 
 /* If you want "linux12" to sort before "linux2", then set PURE_ALPHA_SORT */
 #define PURE_ALPHA_SORT 0
+#define CLUSTER_NAME_LEN 7
 
 static bool reverse_order;
 
 static void _get_job_info_from_void(job_info_t **j1, job_info_t **j2, void *v1, void *v2);
 static void _get_step_info_from_void(job_step_info_t **j1, job_step_info_t **j2, void *v1, void *v2);
 static int _sort_job_by_batch_host(void *void1, void *void2);
+static int _sort_job_by_cluster_name(void *void1, void *void2);
 static int _sort_job_by_gres(void *void1, void *void2);
 static int _sort_job_by_group_id(void *void1, void *void2);
 static int _sort_job_by_group_name(void *void1, void *void2);
@@ -64,6 +66,7 @@ static int _sort_job_by_state_compact(void *void1, void *void2);
 static int _sort_job_by_time_end(void *void1, void *void2);
 static int _sort_job_by_time_left(void *void1, void *void2);
 static int _sort_job_by_time_limit(void *void1, void *void2);
+static int _sort_job_by_time_submit(void *void1, void *void2);
 static int _sort_job_by_time_start(void *void1, void *void2);
 static int _sort_job_by_time_used(void *void1, void *void2);
 static int _sort_job_by_node_list(void *void1, void *void2);
@@ -81,6 +84,7 @@ static int _sort_job_by_user_id(void *void1, void *void2);
 static int _sort_job_by_user_name(void *void1, void *void2);
 static int _sort_job_by_reservation(void *void1, void *void2);
 
+static int _sort_step_by_cluster_name(void *void1, void *void2);
 static int _sort_step_by_gres(void *void1, void *void2);
 static int _sort_step_by_id(void *void1, void *void2);
 static int _sort_step_by_node_list(void *void1, void *void2);
@@ -113,7 +117,17 @@ void sort_job_list(List job_list)
 		if ((i > 0) && (params.sort[i-1] == '-'))
 			reverse_order = true;
 
-		if (params.sort[i] == 'B')
+		if ((CLUSTER_NAME_LEN <= (i + 1)) &&
+		    !xstrncasecmp(params.sort + (i - CLUSTER_NAME_LEN + 1),
+				  "cluster", CLUSTER_NAME_LEN))
+		{
+			if ((CLUSTER_NAME_LEN <= i) &&
+			    (params.sort[i - CLUSTER_NAME_LEN] == '-'))
+				reverse_order = true;
+
+			list_sort(job_list, _sort_job_by_cluster_name);
+			i -= CLUSTER_NAME_LEN - 1;
+		} else if (params.sort[i] == 'B')
 			list_sort(job_list, _sort_job_by_batch_host);
 		else if (params.sort[i] == 'b')
 			list_sort(job_list, _sort_job_by_gres);
@@ -134,7 +148,7 @@ void sort_job_list(List job_list)
 		else if (params.sort[i] == 'G')
 			list_sort(job_list, _sort_job_by_group_id);
 		else if (params.sort[i] == 'h')
-			;	/* sort_job_by_shared */
+			;	/* sort_job_by_over_subscribe, not supported */
 		else if (params.sort[i] == 'H')
 			list_sort(job_list, _sort_job_by_sockets);
 		else if (params.sort[i] == 'i')
@@ -177,6 +191,8 @@ void sort_job_list(List job_list)
 			list_sort(job_list, _sort_job_by_user_id);
 		else if (params.sort[i] == 'v')
 			list_sort(job_list, _sort_job_by_reservation);
+		else if (params.sort[i] == 'V')
+			list_sort(job_list, _sort_job_by_time_submit);
 		else if (params.sort[i] == 'z')
 			list_sort(job_list, _sort_job_by_num_sct);
 		else {
@@ -209,7 +225,16 @@ void sort_step_list(List step_list)
 		if ((i > 0) && (params.sort[i-1] == '-'))
 			reverse_order = true;
 
-		if      (params.sort[i] == 'b')
+		if ((CLUSTER_NAME_LEN <= (i + 1)) &&
+		    !xstrncasecmp(params.sort + (i - CLUSTER_NAME_LEN + 1),
+				  "cluster", CLUSTER_NAME_LEN)) {
+			if ((CLUSTER_NAME_LEN <= i) &&
+			    (params.sort[i - CLUSTER_NAME_LEN] == '-'))
+				reverse_order = true;
+
+			list_sort(step_list, _sort_step_by_cluster_name);
+			i -= CLUSTER_NAME_LEN - 1;
+		} else if (params.sort[i] == 'b')
 			list_sort(step_list, _sort_step_by_gres);
 		else if (params.sort[i] == 'i')
 			list_sort(step_list, _sort_step_by_id);
@@ -257,12 +282,34 @@ static inline int _diff_uint32(uint32_t value_1, uint32_t value_2)
 		return -1;
 	return 0;
 }
-static void _get_job_info_from_void(job_info_t **j1, job_info_t **j2, void *v1, void *v2)
+static inline int _diff_uint64(uint64_t value_1, uint64_t value_2)
 {
-	*j1 = *(job_info_t **)v1;
-	*j2 = *(job_info_t **)v2;
+	if (value_1 > value_2)
+		return 1;
+	if (value_1 < value_2)
+		return -1;
+	return 0;
 }
-static void _get_step_info_from_void(job_step_info_t **s1, job_step_info_t **s2, void *v1, void *v2)
+static void _get_job_info_from_void(job_info_t **j1, job_info_t **j2,
+				    void *void1, void *void2)
+{
+	*j1 = (*(squeue_job_rec_t **)void1)->job_ptr;
+	*j2 = (*(squeue_job_rec_t **)void2)->job_ptr;
+}
+static void _get_part_prio_info_from_void(uint32_t *prio1, uint32_t *prio2,
+					  void *void1, void *void2)
+{
+	*prio1 = (*(squeue_job_rec_t **)void1)->part_prio;
+	*prio2 = (*(squeue_job_rec_t **)void2)->part_prio;
+}
+static void _get_part_name_info_from_void(char **name1, char **name2,
+					  void *void1, void *void2)
+{
+	*name1 = (*(squeue_job_rec_t **)void1)->part_name;
+	*name2 = (*(squeue_job_rec_t **)void2)->part_name;
+}
+static void _get_step_info_from_void(job_step_info_t **s1, job_step_info_t **s2,
+				     void *v1, void *v2)
 {
 	*s1 = *(job_step_info_t **)v1;
 	*s2 = *(job_step_info_t **)v2;
@@ -280,7 +327,22 @@ static int _sort_job_by_batch_host(void *void1, void *void2)
 		val1 = job1->batch_host;
 	if (job2->batch_host)
 		val2 = job2->batch_host;
-	diff = strcmp(val1, val2);
+	diff = xstrcmp(val1, val2);
+
+	if (reverse_order)
+		diff = -diff;
+	return diff;
+}
+
+static int _sort_job_by_cluster_name(void *void1, void *void2)
+{
+	int diff;
+	job_info_t *job1;
+	job_info_t *job2;
+
+	_get_job_info_from_void(&job1, &job2, void1, void2);
+
+	diff = xstrcmp(job1->cluster, job2->cluster);
 
 	if (reverse_order)
 		diff = -diff;
@@ -300,7 +362,7 @@ static int _sort_job_by_gres(void *void1, void *void2)
 		val1 = job1->gres;
 	if (job2->gres)
 		val2 = job2->gres;
-	diff = strcmp(val1, val2);
+	diff = xstrcmp(val1, val2);
 
 	if (reverse_order)
 		diff = -diff;
@@ -336,7 +398,7 @@ static int _sort_job_by_group_name(void *void1, void *void2)
 		name1 = group_info->gr_name;
 	if ((group_info = getgrgid((gid_t) job2->group_id)))
 		name2 = group_info->gr_name;
-	diff = strcmp(name1, name2);
+	diff = xstrcmp(name1, name2);
 
 	if (reverse_order)
 		diff = -diff;
@@ -348,10 +410,36 @@ static int _sort_job_by_id(void *void1, void *void2)
 	int diff;
 	job_info_t *job1;
 	job_info_t *job2;
+	uint32_t job_id1, job_id2;
 
 	_get_job_info_from_void(&job1, &job2, void1, void2);
 
-	diff = _diff_uint32(job1->job_id , job2->job_id);
+	if (job1->pack_job_id)
+		job_id1 = job1->pack_job_id;
+	else if (job1->array_task_id == NO_VAL)
+		job_id1 = job1->job_id;
+	else
+		job_id1 = job1->array_job_id;
+
+	if (job2->pack_job_id)
+		job_id2 = job2->pack_job_id;
+	else if (job2->array_task_id == NO_VAL)
+		job_id2 = job2->job_id;
+	else
+		job_id2 = job2->array_job_id;
+
+	if (job_id1 == job_id2) {
+		if (job1->pack_job_id)
+			job_id1 = job1->pack_job_offset;
+		else
+			job_id1 = job1->array_task_id;
+		if (job2->pack_job_id)
+			job_id2 = job2->pack_job_offset;
+		else
+			job_id2 = job2->array_task_id;
+	}
+
+	diff = _diff_uint32(job_id1, job_id2);
 
 	if (reverse_order)
 		diff = -diff;
@@ -371,7 +459,7 @@ static int _sort_job_by_name(void *void1, void *void2)
 		val1 = job1->name;
 	if (job2->name)
 		val2 = job2->name;
-	diff = strcmp(val1, val2);
+	diff = xstrcmp(val1, val2);
 
 	if (reverse_order)
 		diff = -diff;
@@ -385,6 +473,7 @@ static int _sort_job_by_node_list(void *void1, void *void2)
 	job_info_t *job2;
 	hostlist_t hostlist1, hostlist2;
 	char *val1, *val2;
+	char *ptr1, *ptr2;
 #if	PURE_ALPHA_SORT == 0
 	int inx;
 #endif
@@ -394,40 +483,44 @@ static int _sort_job_by_node_list(void *void1, void *void2)
 	hostlist1 = hostlist_create(job1->nodes);
 	hostlist_sort(hostlist1);
 	val1 = hostlist_shift(hostlist1);
-	if (val1 == NULL)
-		val1 = "";
+	if (val1)
+		ptr1 = val1;
+	else
+		ptr1 = "";
 	hostlist_destroy(hostlist1);
 
 	hostlist2 = hostlist_create(job2->nodes);
 	hostlist_sort(hostlist2);
 	val2 = hostlist_shift(hostlist2);
-	if (val2 == NULL)
-		val2 = "";
+	if (val2)
+		ptr2 = val2;
+	else
+		ptr2 = "";
 	hostlist_destroy(hostlist2);
 
 #if	PURE_ALPHA_SORT
-	diff = strcmp(val1, val2);
+	diff = xstrcmp(ptr1, ptr2);
 #else
-	for (inx=0; ; inx++) {
-		if (val1[inx] == val2[inx]) {
-			if (val1[inx] == '\0')
+	for (inx = 0; ; inx++) {
+		if (ptr1[inx] == ptr2[inx]) {
+			if (ptr1[inx] == '\0')
 				break;
 			continue;
 		}
-		if ((isdigit((int)val1[inx])) &&
-		    (isdigit((int)val2[inx]))) {
+		if ((isdigit((int)ptr1[inx])) &&
+		    (isdigit((int)ptr2[inx]))) {
 			int num1, num2;
-			num1 = atoi(val1+inx);
-			num2 = atoi(val2+inx);
+			num1 = atoi(ptr1 + inx);
+			num2 = atoi(ptr2 + inx);
 			diff = num1 - num2;
 		} else
-			diff = strcmp(val1, val2);
+			diff = xstrcmp(ptr1, ptr2);
 		break;
 	}
 #endif
-	if (strlen(val1))
+	if (val1)
 		free(val1);
-	if (strlen(val2))
+	if (val2)
 		free(val2);
 
 	if (reverse_order)
@@ -545,7 +638,7 @@ static int _sort_job_by_min_memory(void *void1, void *void2)
 
 	job1->pn_min_memory &= (~MEM_PER_CPU);
 	job2->pn_min_memory &= (~MEM_PER_CPU);
-	diff = _diff_uint32(job1->pn_min_memory, job2->pn_min_memory);
+	diff = _diff_uint64(job1->pn_min_memory, job2->pn_min_memory);
 
 	if (reverse_order)
 		diff = -diff;
@@ -575,8 +668,8 @@ static int _sort_job_by_state(void *void1, void *void2)
 
 	_get_job_info_from_void(&job1, &job2, void1, void2);
 
-	diff = strcmp(job_state_string(job1->job_state),
-			 job_state_string(job2->job_state));
+	diff = xstrcmp(job_state_string(job1->job_state),
+		       job_state_string(job2->job_state));
 
 	if (reverse_order)
 		diff = -diff;
@@ -591,8 +684,8 @@ static int _sort_job_by_state_compact(void *void1, void *void2)
 
 	_get_job_info_from_void(&job1, &job2, void1, void2);
 
-	diff = strcmp(job_state_string_compact(job1->job_state),
-	              job_state_string_compact(job2->job_state));
+	diff = xstrcmp(job_state_string_compact(job1->job_state),
+		       job_state_string_compact(job2->job_state));
 
 	if (reverse_order)
 		diff = -diff;
@@ -626,11 +719,11 @@ static int _sort_job_by_time_left(void *void1, void *void2)
 	if ((job1->time_limit == INFINITE) || (job1->time_limit == NO_VAL))
 		time1 = INFINITE;
 	else
-		time1 = job1->time_limit - job_time_used(job1);
+		time1 = job1->time_limit * 60 - job_time_used(job1);
 	if ((job2->time_limit == INFINITE) || (job2->time_limit == NO_VAL))
 		time2 = INFINITE;
 	else
-		time2 = job2->time_limit - job_time_used(job2);
+		time2 = job2->time_limit * 60 - job_time_used(job2);
 	diff = _diff_time(time1, time2);
 
 	if (reverse_order)
@@ -647,6 +740,21 @@ static int _sort_job_by_time_limit(void *void1, void *void2)
 	_get_job_info_from_void(&job1, &job2, void1, void2);
 
 	diff = _diff_uint32(job1->time_limit, job2->time_limit);
+
+	if (reverse_order)
+		diff = -diff;
+	return diff;
+}
+
+static int _sort_job_by_time_submit(void *void1, void *void2)
+{
+	int diff;
+	job_info_t *job1;
+	job_info_t *job2;
+
+	_get_job_info_from_void(&job1, &job2, void1, void2);
+
+	diff = _diff_time(job1->submit_time, job2->submit_time);
 
 	if (reverse_order)
 		diff = -diff;
@@ -702,17 +810,11 @@ static int _sort_job_by_time_used(void *void1, void *void2)
 static int _sort_job_by_partition(void *void1, void *void2)
 {
 	int diff;
-	job_info_t *job1;
-	job_info_t *job2;
-	char *val1 = "", *val2 = "";
+	char *val1 = NULL, *val2 = NULL;
 
-	_get_job_info_from_void(&job1, &job2, void1, void2);
+	_get_part_name_info_from_void(&val1, &val1, void1, void2);
 
-	if (job1->partition)
-		val1 = job1->partition;
-	if (job2->partition)
-		val2 = job2->partition;
-	diff = strcmp(val1, val2);
+	diff = xstrcmp(val1, val2);
 
 	if (reverse_order)
 		diff = -diff;
@@ -722,12 +824,16 @@ static int _sort_job_by_partition(void *void1, void *void2)
 static int _sort_job_by_priority(void *void1, void *void2)
 {
 	int diff;
-	job_info_t *job1;
-	job_info_t *job2;
+	job_info_t *job1, *job2;
+	uint32_t prio1 = 0, prio2 = 0;
 
-	_get_job_info_from_void(&job1, &job2, void1, void2);
+	_get_part_prio_info_from_void(&prio1, &prio2, void1, void2);
+	diff = _diff_uint32(prio1, prio2);
 
-	diff = _diff_uint32(job1->priority, job2->priority);
+	if (diff == 0) {  /* Same partition priority, test job priority */
+		_get_job_info_from_void(&job1, &job2, void1, void2);
+		diff = _diff_uint32(job1->priority, job2->priority);
+	}
 
 	if (reverse_order)
 		diff = -diff;
@@ -758,11 +864,9 @@ static int _sort_job_by_user_name(void *void1, void *void2)
 
 	_get_job_info_from_void(&job1, &job2, void1, void2);
 
-	name1 = uid_to_string((uid_t) job1->user_id);
-	name2 = uid_to_string((uid_t) job2->user_id);
-	diff = strcmp(name1, name2);
-	xfree(name1);
-	xfree(name2);
+	name1 = uid_to_string_cached((uid_t) job1->user_id);
+	name2 = uid_to_string_cached((uid_t) job2->user_id);
+	diff = xstrcmp(name1, name2);
 
 	if (reverse_order)
 		diff = -diff;
@@ -782,7 +886,7 @@ static int _sort_job_by_reservation(void *void1, void *void2)
 		val1 = job1->resv_name;
 	if (job2->resv_name)
 		val2 = job2->resv_name;
-	diff = strcmp(val1, val2);
+	diff = xstrcmp(val1, val2);
 
 	if (reverse_order)
 		diff = -diff;
@@ -792,6 +896,21 @@ static int _sort_job_by_reservation(void *void1, void *void2)
 /*****************************************************************************
  * Local Step Sort Functions
  *****************************************************************************/
+static int _sort_step_by_cluster_name(void *void1, void *void2)
+{
+	int diff;
+	job_step_info_t *step1;
+	job_step_info_t *step2;
+
+	_get_step_info_from_void(&step1, &step2, void1, void2);
+
+	diff = xstrcmp(step1->cluster, step2->cluster);
+
+	if (reverse_order)
+		diff = -diff;
+	return diff;
+}
+
 static int _sort_step_by_gres(void *void1, void *void2)
 {
 	int diff;
@@ -805,7 +924,7 @@ static int _sort_step_by_gres(void *void1, void *void2)
 		val1 = step1->gres;
 	if (step2->gres)
 		val2 = step2->gres;
-	diff = strcmp(val1, val2);
+	diff = xstrcmp(val1, val2);
 
 	if (reverse_order)
 		diff = -diff;
@@ -837,6 +956,7 @@ static int _sort_step_by_node_list(void *void1, void *void2)
 
 	hostlist_t hostlist1, hostlist2;
 	char *val1, *val2;
+	char *ptr1, *ptr2;
 #if	PURE_ALPHA_SORT == 0
 	int inx;
 #endif
@@ -846,40 +966,44 @@ static int _sort_step_by_node_list(void *void1, void *void2)
 	hostlist1 = hostlist_create(step1->nodes);
 	hostlist_sort(hostlist1);
 	val1 = hostlist_shift(hostlist1);
-	if (val1 == NULL)
-		val1 = "";
+	if (val1)
+		ptr1 = val1;
+	else
+		ptr1 = "";
 	hostlist_destroy(hostlist1);
 
 	hostlist2 = hostlist_create(step2->nodes);
 	hostlist_sort(hostlist2);
 	val2 = hostlist_shift(hostlist2);
-	if (val2 == NULL)
-		val2 = "";
+	if (val2)
+		ptr2 = val2;
+	else
+		ptr2 = "";
 	hostlist_destroy(hostlist2);
 
 #if	PURE_ALPHA_SORT
-	diff = strcmp(val1, val2);
+	diff = xstrcmp(ptr1, ptr2);
 #else
-	for (inx=0; ; inx++) {
-		if (val1[inx] == val2[inx]) {
-			if (val1[inx] == '\0')
+	for (inx = 0; ; inx++) {
+		if (ptr1[inx] == ptr2[inx]) {
+			if (ptr1[inx] == '\0')
 				break;
 			continue;
 		}
-		if ((isdigit((int)val1[inx])) &&
-		    (isdigit((int)val2[inx]))) {
+		if ((isdigit((int)ptr1[inx])) &&
+		    (isdigit((int)ptr2[inx]))) {
 			int num1, num2;
-			num1 = atoi(val1+inx);
-			num2 = atoi(val2+inx);
+			num1 = atoi(ptr1 + inx);
+			num2 = atoi(ptr2 + inx);
 			diff = num1 - num2;
 		} else
-			diff = strcmp(val1, val2);
+			diff = xstrcmp(ptr1, ptr2);
 		break;
 	}
 #endif
-	if (strlen(val1))
+	if (val1)
 		free(val1);
-	if (strlen(val2))
+	if (val2)
 		free(val2);
 
 	if (reverse_order)
@@ -900,7 +1024,7 @@ static int _sort_step_by_partition(void *void1, void *void2)
 		val1 = step1->partition;
 	if (step2->partition)
 		val2 = step2->partition;
-	diff = strcmp(val1, val2);
+	diff = xstrcmp(val1, val2);
 
 	if (reverse_order)
 		diff = -diff;
@@ -979,11 +1103,9 @@ static int _sort_step_by_user_name(void *void1, void *void2)
 
 	_get_step_info_from_void(&step1, &step2, void1, void2);
 
-	name1 = uid_to_string((uid_t) step1->user_id);
-	name2 = uid_to_string((uid_t) step2->user_id);
-	diff = strcmp(name1, name2);
-	xfree(name1);
-	xfree(name2);
+	name1 = uid_to_string_cached((uid_t) step1->user_id);
+	name2 = uid_to_string_cached((uid_t) step2->user_id);
+	diff = xstrcmp(name1, name2);
 
 	if (reverse_order)
 		diff = -diff;

@@ -1,13 +1,12 @@
 /*****************************************************************************\
  *  bridge_linker.cc
- *
  *****************************************************************************
  *  Copyright (C) 2011 Lawrence Livermore National Security.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Danny Auble <da@llnl.gov>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -36,10 +35,7 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#if HAVE_CONFIG_H
-/* needed to figure out if HAVE_BG_FILES is set */
-#  include "config.h"
-#endif
+#include "config.h"
 
 #ifdef HAVE_BG_FILES
 /* These need to be the first declared since on line 187 of
@@ -160,7 +156,29 @@ static bg_record_t * _translate_object_to_block(const Block::Ptr &block_ptr)
 		len = nb_name.length()-2;
 		io_start = atoi((char*)nb_name.c_str()+len) * bg_conf->io_ratio;
 
+		/* sanity check: we have seen (bug 1514) the wrong
+		   nodeboard given for a block at times.  The only
+		   time we have seen this is when the disk was full on
+		   the sn.  It is unclear if this is the root of the
+		   problem or not, but at least the seg fault will not
+		   happen in this instance.
+		*/
+		if ((io_start + io_cnt) >= bg_conf->ionodes_per_mp) {
+			fatal("_translate_object_to_block: For some reason "
+			      "block %s claims to use nodeboard "
+			      "%s(starting IOnode %d) using %d extra IOnodes, "
+			      "but that would put us over the number "
+			      "of IOnodes we have on the midplane %d.  "
+			      "Something is most likely wrong with this "
+			      "block definition from the API/database.  "
+			      "Fixing/removing this block in "
+			      "the database is needed to resolve this issue.",
+			      bg_record->bg_block_id, nb_name.c_str(),
+			      io_start, io_cnt, bg_conf->ionodes_per_mp);
+		}
+
 		bg_record->ionode_bitmap = bit_alloc(bg_conf->ionodes_per_mp);
+
 		/* Set the correct ionodes being used in this block */
 		bit_nset(bg_record->ionode_bitmap,
 			 io_start, io_start+io_cnt);
@@ -250,7 +268,7 @@ static bg_record_t * _translate_object_to_block(const Block::Ptr &block_ptr)
 		 node_char);
 
 	xfree(node_char);
-	if (strcmp(mp_str, bg_record->mp_str)) {
+	if (xstrcmp(mp_str, bg_record->mp_str)) {
 		fatal("Couldn't make unknown block %s in our wiring.  "
 		      "Something is wrong with our algo.  Remove this block "
 		      "to continue (found %s, but allocated %s) "
@@ -356,8 +374,6 @@ static void _remove_jobs_on_block_and_reset(char *block_id,
 	char *mp_str = NULL;
 	bg_record_t *bg_record = NULL;
 	int job_remove_failed = 0;
-	slurmctld_lock_t job_read_lock =
-		{ NO_LOCK, READ_LOCK, NO_LOCK, NO_LOCK };
 
 	if (!block_id) {
 		error("_remove_jobs_on_block_and_reset: no block name given");
@@ -846,7 +862,7 @@ extern int bridge_block_boot(bg_record_t *bg_record)
 		debug("booting block %s", bg_record->bg_block_id);
 		Block::initiateBoot(bg_record->bg_block_id);
 		/* Set this here just to make sure we know we
-		   are suppose to be booting.  Just incase the
+		   are suppose to be booting.  Just in case the
 		   block goes free before we notice we are
 		   configuring.
 		*/
@@ -1084,6 +1100,10 @@ extern int bridge_block_sync_users(bg_record_t *bg_record)
 			"Block::getUsers",
 			err.getError().toValue(), bg_record);
 		return REMOVE_USER_ERR;
+	} catch (const bgsched::DatabaseException& err) {
+		bridge_handle_database_errors(
+			"Block::getUsers", err.getError().toValue());
+		return REMOVE_USER_ERR;
 	}
 
 	if (bg_record->job_ptr && (bg_record->job_ptr->magic == JOB_MAGIC)) {
@@ -1173,7 +1193,7 @@ extern int bridge_blocks_load_curr(List curr_block_list)
 		const char *bg_block_id = block_ptr->getName().c_str();
 		uint16_t state;
 
-		if (strncmp("RMP", bg_block_id, 3))
+		if (xstrncmp("RMP", bg_block_id, 3))
 			continue;
 
 		/* find BG Block record */

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 ############################################################################
 # Simple SLURM stress test
 # Usage: <prog> <exec1> <exec2> <exec3> <sleep_time> <iterations>
@@ -10,8 +10,8 @@
 # CODE-OCEC-09-009. All rights reserved.
 #
 # This file is part of SLURM, a resource management program.
-# For details, see <http://slurm.schedmd.com/>.
- # Please also read the supplied file: DISCLAIMER.
+# For details, see <https://slurm.schedmd.com/>.
+# Please also read the supplied file: DISCLAIMER.
 #
 # SLURM is free software; you can redistribute it and/or modify it under
 # the terms of the GNU General Public License as published by the Free
@@ -76,9 +76,9 @@ do
 	fi
 	sleep $sleep_time
 	if [ $bluegene ]; then
-		$exec2 --job-name=test9.7 -N1-512 -n1 -s -l hostname         >>$log 2>&1
+		$exec2 --job-name=test9.7 -N1-512 -n1 -s -l -t1 hostname         >>$log 2>&1
 	else
-		$exec2 --job-name=test9.7 -N1-$inx -n$inx -O -s -l hostname  >>$log 2>&1
+		$exec2 --job-name=test9.7 -N1-$inx -n$inx -O -s -l -t1 hostname  >>$log 2>&1
 	fi
 	rc=$?
 	if [ $rc -ne 0 ]; then

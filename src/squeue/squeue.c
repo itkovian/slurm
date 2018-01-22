@@ -9,7 +9,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -38,9 +38,7 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#ifdef HAVE_CONFIG_H
-#  include "config.h"
-#endif /* HAVE_CONFIG_H */
+#include "config.h"
 
 #ifdef HAVE_TERMCAP_H
 #  include <termcap.h>
@@ -50,6 +48,7 @@
 #include <termios.h>
 
 #include "src/common/read_config.h"
+#include "src/common/slurm_time.h"
 #include "src/common/xstring.h"
 #include "src/squeue/squeue.h"
 
@@ -59,9 +58,9 @@
 struct squeue_parameters params;
 int max_line_size;
 
-/************
- * Funtions *
- ************/
+/*************
+ * Functions *
+ *************/
 static int  _get_info(bool clear_old);
 static int  _get_window_width( void );
 static void _print_date( void );
@@ -70,7 +69,7 @@ static int  _print_job ( bool clear_old );
 static int  _print_job_steps( bool clear_old );
 
 int
-main (int argc, char *argv[])
+main (int argc, char **argv)
 {
 	log_options_t opts = LOG_OPTS_STDERR_ONLY ;
 	int error_code = SLURM_SUCCESS;
@@ -168,12 +167,19 @@ _get_window_width( void )
 static int
 _print_job ( bool clear_old )
 {
-	static job_info_msg_t * old_job_ptr = NULL, * new_job_ptr;
+	static job_info_msg_t *old_job_ptr;
+	job_info_msg_t *new_job_ptr = NULL;
 	int error_code;
 	uint16_t show_flags = 0;
 
 	if (params.all_flag || (params.job_list && list_count(params.job_list)))
 		show_flags |= SHOW_ALL;
+	if (params.federation_flag)
+		show_flags |= SHOW_FEDERATION;
+	if (params.local_flag)
+		show_flags |= SHOW_LOCAL;
+	if (params.sibling_flag)
+		show_flags |= SHOW_FEDERATION | SHOW_SIBLING;
 
 	/* We require detail data when CPUs are requested */
 	if (params.format && strstr(params.format, "C"))
@@ -191,6 +197,8 @@ _print_job ( bool clear_old )
 							 params.user_id,
 							 show_flags);
 		} else {
+			if (params.clusters)
+				show_flags |= SHOW_LOCAL;
 			error_code = slurm_load_jobs(
 				old_job_ptr->last_update,
 				&new_job_ptr, show_flags);
@@ -217,16 +225,16 @@ _print_job ( bool clear_old )
 		return SLURM_ERROR;
 	}
 	old_job_ptr = new_job_ptr;
-	if (params.job_id || params.job_id)
+	if (params.job_id || params.user_id)
 		old_job_ptr->last_update = (time_t) 0;
 
 	if (params.verbose) {
 		printf ("last_update_time=%ld records=%u\n",
-		        (long) new_job_ptr->last_update,
+			(long) new_job_ptr->last_update,
 			new_job_ptr->record_count);
 	}
 
-	if (params.format == NULL) {
+	if (!params.format && !params.format_long) {
 		if (params.long_list) {
 			xstrcat(params.format,
 				"%.18i %.9P %.8j %.8u %.8T %.10M %.9l %.6D %R");
@@ -235,8 +243,13 @@ _print_job ( bool clear_old )
 				"%.18i %.9P %.8j %.8u %.2t %.10M %.6D %R");
 		}
 	}
-	if (params.format_list == NULL)
-		parse_format(params.format);
+
+	if (!params.format_list) {
+		if (params.format)
+			parse_format(params.format);
+		else if (params.format_long)
+			parse_long_format(params.format_long);
+	}
 
 	print_jobs_array(new_job_ptr->job_array, new_job_ptr->record_count,
 			 params.format_list) ;
@@ -255,6 +268,8 @@ _print_job_steps( bool clear_old )
 
 	if (params.all_flag)
 		show_flags |= SHOW_ALL;
+	if (params.local_flag)
+		show_flags |= SHOW_LOCAL;
 
 	if (old_step_ptr) {
 		if (clear_old)
@@ -269,10 +284,10 @@ _print_job_steps( bool clear_old )
 			error_code = SLURM_SUCCESS;
 			new_step_ptr = old_step_ptr;
 		}
-	}
-	else
+	} else {
 		error_code = slurm_get_job_steps((time_t) 0, NO_VAL, NO_VAL,
 						 &new_step_ptr, show_flags);
+	}
 	if (error_code) {
 		slurm_perror ("slurm_get_job_steps error");
 		return SLURM_ERROR;
@@ -281,14 +296,19 @@ _print_job_steps( bool clear_old )
 
 	if (params.verbose) {
 		printf ("last_update_time=%ld records=%u\n",
-		        (long) new_step_ptr->last_update,
+			(long) new_step_ptr->last_update,
 			new_step_ptr->job_step_count);
 	}
 
-	if (params.format == NULL)
+	if (!params.format && !params.format_long)
 		params.format = "%.15i %.8j %.9P %.8u %.9M %N";
-	if (params.format_list == NULL)
-		parse_format(params.format);
+
+	if (!params.format_list) {
+		if (params.format)
+			parse_format(params.format);
+		else if (params.format_long)
+			parse_long_format(params.format_long);
+	}
 
 	print_steps_array( new_step_ptr->job_steps,
 			   new_step_ptr->job_step_count,
@@ -303,5 +323,5 @@ _print_date( void )
 	time_t now;
 
 	now = time( NULL );
-	printf("%s", ctime( &now ));
+	printf("%s", slurm_ctime( &now ));
 }

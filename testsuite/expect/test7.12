@@ -1,6 +1,6 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
-# Purpose:  Test of slurm_job_step_stat() API call.
+# Purpose:  Test of slurm_job_step_stat() and slurm_load_job() API calls.
 #
 # Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
 #          "FAILURE: ..." otherwise with an explanation of the failure, OR
@@ -9,13 +9,14 @@
 # Note:    This script generates and then deletes a file in the working
 #          directory named test7.12.prog
 ############################################################################
+# Portions Copyright (C) 2014 SchedMD LLC
 # Copyright (C) 2010 Lawrence Livermore National Security.
 # Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
-# Written by Morris Jette <jette1@llnl.gov>
+# Written by Morris Jette <jette@schedmd.com>
 # CODE-OCEC-09-009. All rights reserved.
 #
 # This file is part of SLURM, a resource management program.
-# For details, see <http://slurm.schedmd.com/>.
+# For details, see <https://slurm.schedmd.com/>.
 # Please also read the included file: DISCLAIMER.
 #
 # SLURM is free software; you can redistribute it and/or modify it under
@@ -47,6 +48,14 @@ if {[test_front_end] != 0} {
         exit 0
 }
 
+if {[test_launch_poe]} {
+	set step_id   1
+	set pid_count 2
+} else {
+	set step_id   0
+	set pid_count 1
+}
+
 #
 # Delete left-over program and rebuild it
 #
@@ -60,11 +69,11 @@ if {[test_aix]} {
 	send_user "$bin_cc ${test_prog}.c -Wl,-brtl -g -pthread -o ${test_prog} -I${slurm_dir}/include  -L${slurm_dir}/lib -lslurm -lntbl\n"
 	exec       $bin_cc ${test_prog}.c -Wl,-brtl -g -pthread -o ${test_prog} -I${slurm_dir}/include  -L${slurm_dir}/lib -lslurm -lntbl
 } elseif [file exists ${slurm_dir}/lib64/libslurm.so] {
-	send_user "$bin_cc ${test_prog}.c -g -pthread -o ${test_prog} -I${slurm_dir}/include -Wl,--rpath=${slurm_dir}/lib64 -L${slurm_dir}/lib64 -lslurm\n"
-	exec       $bin_cc ${test_prog}.c -g -pthread -o ${test_prog} -I${slurm_dir}/include -Wl,--rpath=${slurm_dir}/lib64 -L${slurm_dir}/lib64 -lslurm
+	send_user "$bin_cc ${test_prog}.c -g -pthread -o ${test_prog} -I${slurm_dir}/include -Wl,-rpath=${slurm_dir}/lib64 -L${slurm_dir}/lib64 -lslurm\n"
+	exec       $bin_cc ${test_prog}.c -g -pthread -o ${test_prog} -I${slurm_dir}/include -Wl,-rpath=${slurm_dir}/lib64 -L${slurm_dir}/lib64 -lslurm
 } else {
-	send_user "$bin_cc ${test_prog}.c -g -pthread -o ${test_prog} -I${slurm_dir}/include -Wl,--rpath=${slurm_dir}/lib -L${slurm_dir}/lib -lslurm\n"
-	exec       $bin_cc ${test_prog}.c -g -pthread -o ${test_prog} -I${slurm_dir}/include -Wl,--rpath=${slurm_dir}/lib -L${slurm_dir}/lib -lslurm
+	send_user "$bin_cc ${test_prog}.c -g -pthread -o ${test_prog} -I${slurm_dir}/include -Wl,-rpath=${slurm_dir}/lib -L${slurm_dir}/lib -lslurm\n"
+	exec       $bin_cc ${test_prog}.c -g -pthread -o ${test_prog} -I${slurm_dir}/include -Wl,-rpath=${slurm_dir}/lib -L${slurm_dir}/lib -lslurm
 }
 exec $bin_chmod 700 $test_prog
 
@@ -111,15 +120,21 @@ if {$debug} {
 	}
 }
 
-set matches 0
-spawn ./$test_prog $job_id
+set job_matches  0
+set pid_matches  0
+set step_matches 0
+spawn ./$test_prog $job_id $step_id
 expect {
-	-re "job_id:$job_id" {
-		incr matches
+	-re "job_id:$job_id step_id" {
+		incr step_matches
 		exp_continue
 	}
 	-re "pid:$number" {
-		incr matches
+		incr pid_matches
+		exp_continue
+	}
+	-re "job_id:$job_id name" {
+		incr job_matches
 		exp_continue
 	}
 	timeout {
@@ -132,13 +147,18 @@ expect {
 	}
 }
 
-if {$matches < 1} {
-	send_user "\nFAILURE: error running slurm_job_step_stat() program\n"
+if {$step_matches != 1} {
+	send_user "\nFAILURE: error running slurm_job_step_stat() program ($step_matches != 1)\n"
 	set exit_code 1
-} elseif {$matches != 2} {
-	send_user "\nWARNING: Failed to load PIDs associated with job step.\n"
+}
+if {$pid_matches != $pid_count} {
+	send_user "\nWARNING: Failed to load PIDs associated with job step ($pid_matches != $pid_count).\n"
 	send_user "         This is dependent upon the ProctrackType configured.\n"
 	send_user "         proctrack/pgid does NOT support this functionality.\n"
+}
+if {$job_matches != 1} {
+	send_user "\nFAILURE: Failed to load job info for this job ($job_matches != 1).\n"
+	set exit_code 1
 }
 
 cancel_job $job_id

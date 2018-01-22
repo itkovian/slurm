@@ -1,8 +1,8 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Test of SLURM functionality
 #          test that a scontrol can hold and release a whole job array
-#          or an indevidual job index.
+#          or an individual job index.
 #
 #
 # Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
@@ -13,7 +13,7 @@
 # Written by Nathan Yee <nyee32@schedmd.com>
 #
 # This file is part of SLURM, a resource management program.
-# For details, see <http://slurm.schedmd.com/>.
+# For details, see <https://slurm.schedmd.com/>.
 # Please also read the included file: DISCLAIMER.
 #
 # SLURM is free software; you can redistribute it and/or modify it under
@@ -148,7 +148,7 @@ expect {
 		send_user "\nFAILURE: sbatch did not submit jobs\n"
 		set exit_code 1
 	}
-	timout {
+	timeout {
 		send_user "\nFAILURE: sbatch not responding\n"
 		set exit_code 1
 	}
@@ -184,7 +184,9 @@ if {$job_id != 0} {
 	release_job ${job_id}_$array_in
 	check_release_job ${job_id}_$array_in
 
-	cancel_job $job_id
+	if {[cancel_job $job_id] != 0} {
+		set exit_code 1
+	}
 }
 
 if {$exit_code == 0} {

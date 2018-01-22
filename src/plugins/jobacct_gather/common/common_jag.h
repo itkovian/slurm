@@ -6,7 +6,7 @@
  *  from the original code in jobacct_gather/linux
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -72,6 +72,6 @@ extern void print_jag_prec(jag_prec_t *prec);
 
 extern void jag_common_poll_data(
 	List task_list, bool pgid_plugin, uint64_t cont_id,
-	jag_callbacks_t *callbacks);
+	jag_callbacks_t *callbacks, bool profile);
 
 #endif

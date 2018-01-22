@@ -8,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -37,14 +37,10 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#ifdef HAVE_CONFIG_H
-#  include "config.h"
-#endif
-
 #include <errno.h>
 #include <stdio.h>
-#include <unistd.h>
 #include <sys/types.h>
+#include <unistd.h>
 
 #include "slurm/slurm.h"
 
@@ -71,7 +67,8 @@ extern int slurm_set_trigger (trigger_info_t *trigger_set)
 	msg.msg_type      = REQUEST_TRIGGER_SET;
         msg.data          = &req;
 
-	if (slurm_send_recv_controller_rc_msg(&msg, &rc) < 0)
+	if (slurm_send_recv_controller_rc_msg(&msg, &rc,
+					      working_cluster_rec) < 0)
 		return SLURM_FAILURE;
 
 	if (rc)
@@ -99,7 +96,8 @@ extern int slurm_clear_trigger (trigger_info_t *trigger_clear)
 	msg.msg_type      = REQUEST_TRIGGER_CLEAR;
         msg.data          = &req;
 
-	if (slurm_send_recv_controller_rc_msg(&msg, &rc) < 0)
+	if (slurm_send_recv_controller_rc_msg(&msg, &rc,
+					      working_cluster_rec) < 0)
 		return SLURM_FAILURE;
 
 	if (rc)
@@ -128,7 +126,8 @@ extern int slurm_get_triggers (trigger_info_msg_t ** trigger_get)
 	req_msg.msg_type  = REQUEST_TRIGGER_GET;
 	req_msg.data      = &req;
 
-	if (slurm_send_recv_controller_msg(&req_msg, &resp_msg) < 0)
+	if (slurm_send_recv_controller_msg(&req_msg, &resp_msg,
+					   working_cluster_rec) < 0)
 		return SLURM_ERROR;
 
 	switch (resp_msg.msg_type) {
@@ -169,7 +168,8 @@ extern int slurm_pull_trigger (trigger_info_t *trigger_pull)
 	msg.msg_type      = REQUEST_TRIGGER_PULL;
 	msg.data	  = &req;
 
-	if (slurm_send_recv_controller_rc_msg(&msg, &rc) < 0)
+	if (slurm_send_recv_controller_rc_msg(&msg, &rc,
+					      working_cluster_rec) < 0)
 		return SLURM_FAILURE;
 	if (rc)
 		slurm_seterrno_ret(rc);

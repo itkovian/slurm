@@ -1,4 +1,4 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Test of SLURM functionality
 #          Validate checkpoint operations using srun
@@ -13,7 +13,7 @@
 # CODE-OCEC-09-009. All rights reserved.
 #
 # This file is part of SLURM, a resource management program.
-# For details, see <http://slurm.schedmd.com/>.
+# For details, see <https://slurm.schedmd.com/>.
 # Please also read the included file: DISCLAIMER.
 #
 # SLURM is free software; you can redistribute it and/or modify it under
@@ -259,6 +259,8 @@ if {$matches != 1} {
 #
 cancel_job $job_id
 if {$exit_code == 0} {
+#	The checkpoint file, if any, has the same name as the job step ID
+	exec $bin_rm -rf $job_id.$step_id
 	exec $bin_rm -f $file_in
 	send_user "\nSUCCESS\n"
 }

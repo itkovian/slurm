@@ -8,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -105,8 +105,10 @@ static int _parse_comp_file(
 
 	if (!fgets(line, BUFFER_SIZE, fd)) {
 		fprintf(stderr, "Empty step update completion file\n");
+		(void) fclose(fd);
 		return SLURM_ERROR;
 	}
+	(void) fclose(fd);
 
 	fptr = line;	/* break the record into NULL-terminated strings */
 	for (i = 0; i < MAX_RECORD_FIELDS; i++) {
@@ -168,7 +170,7 @@ static int _parse_comp_file(
  * RET 0 if no slurm error, errno otherwise. parsing error prints
  *			error message and returns 0
  */
-extern int scontrol_update_step (int argc, char *argv[])
+extern int scontrol_update_step (int argc, char **argv)
 {
 	int i, update_cnt = 0;
 	char *tag, *val;
@@ -190,7 +192,7 @@ extern int scontrol_update_step (int argc, char *argv[])
 			return -1;
 		}
 
-		if (strncasecmp(tag, "StepId", MAX(taglen, 4)) == 0) {
+		if (xstrncasecmp(tag, "StepId", MAX(taglen, 4)) == 0) {
 			char *end_ptr;
 			step_msg.job_id = (uint32_t) strtol(val, &end_ptr, 10);
 			if (end_ptr[0] == '.') {
@@ -203,7 +205,7 @@ extern int scontrol_update_step (int argc, char *argv[])
 				fprintf (stderr, "Request aborted\n");
 				return 0;
 			} /* else apply to all steps of this job_id */
-		} else if (strncasecmp(tag, "TimeLimit", MAX(taglen, 2)) == 0) {
+		} else if (xstrncasecmp(tag, "TimeLimit", MAX(taglen, 2)) == 0) {
 			bool incr, decr;
 			uint32_t step_current_time, time_limit;
 
@@ -212,7 +214,7 @@ extern int scontrol_update_step (int argc, char *argv[])
 			if (incr || decr)
 				val++;
 			time_limit = time_str2mins(val);
-			if ((time_limit < 0) && (time_limit != INFINITE)) {
+			if (time_limit == NO_VAL) {
 				error("Invalid TimeLimit value");
 				exit_code = 1;
 				return 0;
@@ -240,7 +242,7 @@ extern int scontrol_update_step (int argc, char *argv[])
 			}
 			step_msg.time_limit = time_limit;
 			update_cnt++;
-		} else if (strncasecmp(tag, "CompFile", MAX(taglen, 2)) == 0) {
+		} else if (xstrncasecmp(tag, "CompFile", MAX(taglen, 2)) == 0) {
 			if (_parse_comp_file(val, &step_msg)) {
 				exit_code = 1;
 				fprintf(stderr,

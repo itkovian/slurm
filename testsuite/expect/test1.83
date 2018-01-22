@@ -1,4 +1,4 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Test of SLURM functionality
 #          Test of contiguous option with multiple nodes (--contiguous option).
@@ -20,7 +20,7 @@
 # CODE-OCEC-09-009. All rights reserved.
 #
 # This file is part of SLURM, a resource management program.
-# For details, see <http://slurm.schedmd.com/>.
+# For details, see <https://slurm.schedmd.com/>.
 # Please also read the included file: DISCLAIMER.
 #
 # SLURM is free software; you can redistribute it and/or modify it under
@@ -44,11 +44,7 @@ set exit_code   0
 
 print_header $test_id
 
-if {[test_wiki_sched] == 1} {
-	send_user "\nWARNING: not compatable with sched/wiki (Maui)\n"
-	send_user "         or sched/wiki2 (Moab) schedulers\n"
-	exit $exit_code
-} elseif {[test_front_end]} {
+if {[test_front_end]} {
 	send_user "\nWARNING: This test is incompatible with front-end systems\n"
 	exit 0
 } elseif {[test_topology]} {
@@ -65,11 +61,15 @@ if {[test_launch_poe]} {
 	set node_name_env SLURMD_NODENAME
 }
 
-set available [available_nodes [default_partition]]
+set available [available_nodes $partition ""]
 if {$available < 3} {
 	send_user "\nWARNING: This test requires 3 nodes, "
 	send_user "but only $available available\n"
 	exit 0
+}
+
+if {[string length $partition] == 0} {
+	set partition [default_partition]
 }
 
 #
@@ -82,7 +82,7 @@ set host_0_num       0
 set host_1_num       0
 set host_2_num       0
 set timeout $max_job_delay
-set srun_pid [spawn $srun -N3-3 --contiguous -l -t1 $bin_printenv $node_name_env]
+set srun_pid [spawn $srun -N3-3 -p $partition --contiguous -l -t1 $bin_printenv $node_name_env]
 expect {
 	-re "Required node not available|Node count specification invalid|configuration not available" {
 		send_user "\nWARNING: can't test srun task distribution\n"
@@ -114,15 +114,6 @@ expect {
 	}
 }
 
-#
-# Verify node count
-#
-if {[test_front_end] != 0} {
-	send_user "\nWARNING: Additional testing is incompatible "
-	send_user "with front-end systems\n"
-	exit $exit_code
-}
-
 if {[string compare $host_0_name ""] == 0} {
 	send_user "\nFAILURE: Did not get hostname of task 0\n"
 	exit 1
@@ -136,21 +127,9 @@ if {[string compare $host_2_name ""] == 0} {
 	exit 1
 }
 
-#
-# Verify node sequence number
-#
-set host_0_num [get_suffix $host_0_name]
-set host_1_num [get_suffix $host_1_name]
-set host_2_num [get_suffix $host_2_name]
+lappend check_hosts_list $host_0_name $host_1_name $host_2_name
 
-if {$host_1_num != [expr $host_0_num + 1]} {
-	send_user "\nFAILURE: node sequence number not contiguous\n"
-	set exit_code   1
-}
-if {$host_2_num != [expr $host_1_num + 1]} {
-	send_user "\nFAILURE: node sequence number not contiguous\n"
-	set exit_code   1
-}
+set exit_code [check_hosts_contiguous $partition $check_hosts_list]
 
 if {$exit_code == 0} {
 	send_user "\nSUCCESS\n"

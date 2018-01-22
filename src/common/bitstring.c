@@ -10,7 +10,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -48,6 +48,7 @@
 #include "src/common/bitstring.h"
 #include "src/common/log.h"
 #include "src/common/macros.h"
+#include "src/common/xassert.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
 
@@ -88,6 +89,13 @@
 	assert((bit) < _bitstr_bits(name)); 	\
 } while (0)
 
+
+/* Ensure valid bitmap size, prevent overflow in buffer size calcuation */
+#define _assert_valid_size(bit) do {	\
+	assert((bit) >= 0);		\
+	assert((bit) <= 0x40000000); 	\
+} while (0)
+
 /*
  * external macros
  */
@@ -107,6 +115,8 @@ strong_alias(bit_set,		slurm_bit_set);
 strong_alias(bit_clear,		slurm_bit_clear);
 strong_alias(bit_nclear,	slurm_bit_nclear);
 strong_alias(bit_nset,		slurm_bit_nset);
+strong_alias(bit_set_all,	slurm_bit_set_all);
+strong_alias(bit_clear_all,	slurm_bit_clear_all);
 strong_alias(bit_ffc,		slurm_bit_ffc);
 strong_alias(bit_ffs,		slurm_bit_ffs);
 strong_alias(bit_free,		slurm_bit_free);
@@ -118,10 +128,12 @@ strong_alias(bit_or,		slurm_bit_or);
 strong_alias(bit_set_count,	slurm_bit_set_count);
 strong_alias(bit_set_count_range, slurm_bit_set_count_range);
 strong_alias(bit_clear_count,	slurm_bit_clear_count);
+strong_alias(bit_clear_count_range, slurm_bit_clear_count_range);
 strong_alias(bit_nset_max_count,slurm_bit_nset_max_count);
 strong_alias(bit_rotate_copy,	slurm_bit_rotate_copy);
 strong_alias(bit_rotate,	slurm_bit_rotate);
 strong_alias(bit_fmt,		slurm_bit_fmt);
+strong_alias(bit_fmt_full,	slurm_bit_fmt_full);
 strong_alias(bit_unfmt,		slurm_bit_unfmt);
 strong_alias(bitfmt2int,	slurm_bitfmt2int);
 strong_alias(bit_fmt_hexmask,	slurm_bit_fmt_hexmask);
@@ -147,16 +159,12 @@ strong_alias(bit_get_pos_num,	slurm_bit_get_pos_num);
  *   nbits (IN)		valid bits in new bitstring, initialized to all clear
  *   RETURN		new bitstring
  */
-bitstr_t *
-bit_alloc(bitoff_t nbits)
+bitstr_t *bit_alloc(bitoff_t nbits)
 {
 	bitstr_t *new;
 
-	new = (bitstr_t *)xmalloc(_bitstr_words(nbits) * sizeof(bitstr_t));
-	if (!new) {
-		log_oom(__FILE__, __LINE__, __CURRENT_FUNC__);
-		abort();
-	}
+	_assert_valid_size(nbits);
+	new = xmalloc(_bitstr_words(nbits) * sizeof(bitstr_t));
 
 	_bitstr_magic(new) = BITSTR_MAGIC;
 	_bitstr_bits(new) = nbits;
@@ -169,17 +177,13 @@ bit_alloc(bitoff_t nbits)
  *   nbits (IN)		valid bits in new bitstr
  *   RETURN		new bitstring
  */
-bitstr_t *
-bit_realloc(bitstr_t *b, bitoff_t nbits)
+bitstr_t *bit_realloc(bitstr_t *b, bitoff_t nbits)
 {
 	bitstr_t *new = NULL;
 
 	_assert_bitstr_valid(b);
+	_assert_valid_size(nbits);
 	new = xrealloc(b, _bitstr_words(nbits) * sizeof(bitstr_t));
-	if (!new) {
-		log_oom(__FILE__, __LINE__, __CURRENT_FUNC__);
-		abort();
-	}
 
 	_assert_bitstr_valid(new);
 	_bitstr_bits(new) = nbits;
@@ -299,6 +303,26 @@ bit_nclear(bitstr_t *b, bitoff_t start, bitoff_t stop)
 }
 
 /*
+ * Set all bits in bitstring
+ *   b (IN)		target bitstring
+ */
+void
+bit_set_all(bitstr_t *b)
+{
+	bit_nset(b, 0, bit_size(b)-1);
+}
+
+/*
+ * Clear all bits in bitstring
+ *   b (IN)		target bitstring
+ */
+void
+bit_clear_all(bitstr_t *b)
+{
+	bit_nclear(b, 0, bit_size(b)-1);
+}
+
+/*
  * Find first bit clear in bitstring.
  *   b (IN)		bitstring to search
  *   nbits (IN)		number of bits to search
@@ -314,7 +338,7 @@ bit_ffc(bitstr_t *b)
 	while (bit < _bitstr_bits(b) && value == -1) {
 		int32_t word = _bit_word(bit);
 
-		if (b[word] == BITSTR_MAXPOS) {
+		if (b[word] == BITSTR_MAXVAL) {
 			bit += sizeof(bitstr_t)*8;
 			continue;
 		}
@@ -457,6 +481,11 @@ bit_ffs(bitstr_t *b)
 			bit += sizeof(bitstr_t)*8;
 			continue;
 		}
+#if HAVE___BUILTIN_CLZLL && (defined SLURM_BIGENDIAN)
+		value = bit + __builtin_clzll(b[word]);
+#elif HAVE___BUILTIN_CTZLL && (!defined SLURM_BIGENDIAN)
+		value = bit + __builtin_ctzll(b[word]);
+#else
 		while (bit < _bitstr_bits(b) && _bit_word(bit) == word) {
 			if (bit_test(b, bit)) {
 				value = bit;
@@ -464,6 +493,7 @@ bit_ffs(bitstr_t *b)
 			}
 			bit++;
 		}
+#endif
 	}
 	return value;
 }
@@ -500,6 +530,11 @@ bit_fls(bitstr_t *b)
 			bit -= sizeof(bitstr_t) * 8;
 			continue;
 		}
+#if HAVE___BUILTIN_CTZLL && (defined SLURM_BIGENDIAN)
+		value = bit - __builtin_ctzll(b[word]);
+#elif HAVE___BUILTIN_CLZLL && (!defined SLURM_BIGENDIAN)
+		value = bit - __builtin_clzll(b[word]);
+#else
 		while (bit >= 0) {
 			if (bit_test(b, bit)) {
 				value = bit;
@@ -507,6 +542,7 @@ bit_fls(bitstr_t *b)
 			}
 			bit--;
 		}
+#endif
 	}
 	return value;
 }
@@ -596,6 +632,23 @@ bit_and(bitstr_t *b1, bitstr_t *b2)
 }
 
 /*
+ * b1 &= ~b2
+ * b1 (IN/OUT)
+ * b2 (IN)
+ */
+void bit_and_not(bitstr_t *b1, bitstr_t *b2)
+{
+	bitoff_t bit;
+
+	_assert_bitstr_valid(b1);
+	_assert_bitstr_valid(b2);
+	assert(_bitstr_bits(b1) == _bitstr_bits(b2));
+
+	for (bit = 0; bit < _bitstr_bits(b1); bit += sizeof(bitstr_t)*8)
+		b1[_bit_word(bit)] &= ~b2[_bit_word(bit)];
+}
+
+/*
  * b1 = ~b1		one's complement
  *   b1 (IN/OUT)	first bitmap
  */
@@ -664,43 +717,22 @@ bit_copybits(bitstr_t *dest, bitstr_t *src)
 	memcpy(&dest[BITSTR_OVERHEAD], &src[BITSTR_OVERHEAD], len);
 }
 
-#if !defined(USE_64BIT_BITSTR)
-/*
- * Returns the hamming weight (i.e. the number of bits set) in a word.
- * NOTE: This routine borrowed from Linux 2.4.9 <linux/bitops.h>.
- */
-static uint32_t
-hweight(uint32_t w)
-{
-	uint32_t res;
-
-	res = (w   & 0x55555555) + ((w >> 1)    & 0x55555555);
-	res = (res & 0x33333333) + ((res >> 2)  & 0x33333333);
-	res = (res & 0x0F0F0F0F) + ((res >> 4)  & 0x0F0F0F0F);
-	res = (res & 0x00FF00FF) + ((res >> 8)  & 0x00FF00FF);
-	res = (res & 0x0000FFFF) + ((res >> 16) & 0x0000FFFF);
-
-	return res;
-}
+#ifdef HAVE___BUILTIN_POPCOUNTLL
+#define hweight __builtin_popcountll
 #else
 /*
- * A 64 bit version crafted from 32-bit one borrowed above.
+ * Returns the hamming weight (i.e. the number of bits set) in a word.
+ * NOTE: This routine borrowed from Linux 4.9 <tools/lib/hweight.c>.
  */
 static uint64_t
 hweight(uint64_t w)
 {
-	uint64_t res;
-
-	res = (w   & 0x5555555555555555) + ((w >> 1)    & 0x5555555555555555);
-	res = (res & 0x3333333333333333) + ((res >> 2)  & 0x3333333333333333);
-	res = (res & 0x0F0F0F0F0F0F0F0F) + ((res >> 4)  & 0x0F0F0F0F0F0F0F0F);
-	res = (res & 0x00FF00FF00FF00FF) + ((res >> 8)  & 0x00FF00FF00FF00FF);
-	res = (res & 0x0000FFFF0000FFFF) + ((res >> 16) & 0x0000FFFF0000FFFF);
-	res = (res & 0x00000000FFFFFFFF) + ((res >> 32) & 0x00000000FFFFFFFF);
-
-	return res;
+        w -= (w >> 1) & 0x5555555555555555ul;
+        w =  (w & 0x3333333333333333ul) + ((w >> 2) & 0x3333333333333333ul);
+        w =  (w + (w >> 4)) & 0x0f0f0f0f0f0f0f0ful;
+        return (w * 0x0101010101010101ul) >> 56;
 }
-#endif /* !USE_64BIT_BITSTR */
+#endif
 
 /*
  * Count the number of bits set in bitstring.
@@ -799,6 +831,25 @@ bit_clear_count(bitstr_t *b)
 {
 	_assert_bitstr_valid(b);
 	return (_bitstr_bits(b) - bit_set_count(b));
+}
+
+/*
+ * Count the number of bits clear in a range of bitstring.
+ *   b (IN)		bitstring to check
+ *   start (IN) first bit to check
+ *   end (IN)	last bit to check+1
+ *   RETURN		count of set bits
+ */
+int32_t
+bit_clear_count_range(bitstr_t *b, int32_t start, int32_t end)
+{
+	_assert_bitstr_valid(b);
+	int diff = end - start;
+
+	if (diff < 1)
+		return 0;
+
+	return (diff - bit_set_count_range(b, start, end));
 }
 
 /* Return the count of the largest number of contiguous bits set in b.
@@ -955,22 +1006,9 @@ bit_pick_cnt(bitstr_t *b, bitoff_t nbits)
 }
 
 /*
- * XXX the relationship between stdint types and "unsigned [long] long"
- * types is architecture/compiler dependent, so this may have to be tweaked.
- */
-#ifdef	USE_64BIT_BITSTR
-#define BITSTR_RANGE_FMT	"%"PRIu64"-%"PRIu64","
-#define BITSTR_SINGLE_FMT	"%"PRIu64","
-#else
-#define BITSTR_RANGE_FMT	"%u-%u,"
-#define BITSTR_SINGLE_FMT	"%u,"
-#endif
-
-/*
  * Convert to range string format, e.g. 0-5,42
  */
-char *
-bit_fmt(char *str, int32_t len, bitstr_t *b)
+char *bit_fmt(char *str, int32_t len, bitstr_t *b)
 {
 	int32_t count = 0, ret, word;
 	bitoff_t start, bit;
@@ -995,23 +1033,101 @@ bit_fmt(char *str, int32_t len, bitstr_t *b)
 			if (bit == start)	/* add single bit position */
 				ret = snprintf(str+strlen(str),
 				               len-strlen(str),
-				               BITSTR_SINGLE_FMT, start);
+				               "%"BITSTR_FMT",", start);
 			else 			/* add bit position range */
 				ret = snprintf(str+strlen(str),
 				               len-strlen(str),
-				               BITSTR_RANGE_FMT, start, bit);
+				               "%"BITSTR_FMT"-%"BITSTR_FMT",",
+					       start, bit);
 			assert(ret != -1);
 		}
 		bit++;
 	}
 	if (count > 0)
 		str[strlen(str) - 1] = '\0'; 	/* zap trailing comma */
-/* 	if (count > 1) { /\* add braces if we have more than one here *\/ */
-/* 		assert(strlen(str) + 3 < len); */
-/* 		memmove(str + 1, str, strlen(str)); */
-/* 		str[0] = '['; */
-/* 		strcat(str, "]"); */
-/* 	}  */
+	return str;
+}
+
+/*
+ * Convert to range string format, e.g. 0-5,42 with no length restriction
+ * Call xfree() on return value to avoid memory leak
+ */
+char *bit_fmt_full(bitstr_t *b)
+{
+	int32_t count = 0, word;
+	bitoff_t start, bit;
+	char *str = NULL, *comma = "";
+	_assert_bitstr_valid(b);
+
+	for (bit = 0; bit < _bitstr_bits(b); ) {
+		word = _bit_word(bit);
+		if (b[word] == 0) {
+			bit += sizeof(bitstr_t)*8;
+			continue;
+		}
+
+		if (bit_test(b, bit)) {
+			count++;
+			start = bit;
+			while (bit+1 < _bitstr_bits(b) && bit_test(b, bit+1)) {
+				bit++;
+				count++;
+			}
+			if (bit == start)	/* add single bit position */
+				xstrfmtcat(str, "%s%"BITSTR_FMT"",
+					   comma, start);
+			else 			/* add bit position range */
+				xstrfmtcat(str, "%s%"BITSTR_FMT"-%"BITSTR_FMT,
+					   comma, start, bit);
+			comma = ",";
+		}
+		bit++;
+	}
+
+	return str;
+}
+
+/*
+ * Convert to range string format, e.g. 0-5,42 with no length restriction
+ * offset IN - location of bit zero
+ * len IN - number of bits to test
+ * Call xfree() on return value to avoid memory leak
+ */
+char *bit_fmt_range(bitstr_t *b, int offset, int len)
+{
+	int32_t count = 0, word;
+	bitoff_t start, fini_bit, bit;
+	char *str = NULL, *comma = "";
+	_assert_bitstr_valid(b);
+
+	fini_bit = MIN(_bitstr_bits(b), offset + len);
+	for (bit = offset; bit < fini_bit; ) {
+		word = _bit_word(bit);
+		if (b[word] == 0) {
+			bit += sizeof(bitstr_t) * 8;
+			continue;
+		}
+
+		if (bit_test(b, bit)) {
+			count++;
+			start = bit;
+			while ((bit + 1 < fini_bit) && bit_test(b, bit + 1)) {
+				bit++;
+				count++;
+			}
+			if (bit == start) {	/* add single bit position */
+				xstrfmtcat(str, "%s%"BITSTR_FMT"",
+					   comma, (start - offset));
+			} else {		/* add bit position range */
+				xstrfmtcat(str, "%s%"BITSTR_FMT"-%"BITSTR_FMT,
+					   comma, (start - offset),
+					   (bit - offset));
+			}
+			comma = ",";
+		}
+		bit++;
+	}
+
 	return str;
 }
 
@@ -1040,47 +1156,68 @@ bit_unfmt(bitstr_t *b, char *str)
  * bitfmt2int - convert a string describing bitmap (output from bit_fmt,
  *	e.g. "0-30,45,50-60") into an array of integer (start/end) pairs
  *	terminated by -1 (e.g. "0, 30, 45, 45, 50, 60, -1")
+ *	Also supports the "1-17:4" step format ("1, 5, 9, 13, 17, -1").
  * input: bitmap string as produced by bitstring.c : bitfmt
  * output: an array of integers
  * NOTE: the caller must xfree the returned memory
  */
-int32_t *
-bitfmt2int (char *bit_str_ptr)
+int32_t *bitfmt2int(char *bit_str_ptr)
 {
 	int32_t *bit_int_ptr, i, bit_inx, size, sum, start_val;
+	char *tmp = NULL;
+	int32_t start_task_id = -1;
+	int32_t end_task_id = -1;
+	int32_t step = -1;
 
 	if (bit_str_ptr == NULL)
 		return NULL;
-	size = strlen (bit_str_ptr) + 1;
-	bit_int_ptr = xmalloc ( sizeof (int32_t) *
-			(size * 2 + 1));	/* more than enough space */
-
-	bit_inx = sum = 0;
-	start_val = -1;
-	for (i = 0; i < size; i++) {
-		if (bit_str_ptr[i] >= '0' &&
-		    bit_str_ptr[i] <= '9'){
-			sum = (sum * 10) + (bit_str_ptr[i] - '0');
-		}
-
-		else if (bit_str_ptr[i] == '-') {
-			start_val = sum;
-			sum = 0;
-		}
-
-		else if (bit_str_ptr[i] == ',' ||
-		         bit_str_ptr[i] == '\0') {
-			if (i == 0)
-				break;
-			if (start_val == -1)
+	if (!(xstrchr(bit_str_ptr, ':'))) {
+		size = strlen(bit_str_ptr) + 1;
+		/* more than enough space */
+		bit_int_ptr = xmalloc(sizeof(int32_t) * (size * 2 + 1));
+		bit_inx = sum = 0;
+		start_val = -1;
+		for (i = 0; i < size; i++) {
+			if (bit_str_ptr[i] >= '0' &&
+			    bit_str_ptr[i] <= '9') {
+				sum = (sum * 10) + (bit_str_ptr[i] - '0');
+			} else if (bit_str_ptr[i] == '-') {
 				start_val = sum;
-			bit_int_ptr[bit_inx++] = start_val;
-			bit_int_ptr[bit_inx++] = sum;
-			start_val = -1;
-			sum = 0;
+				sum = 0;
+			} else if (bit_str_ptr[i] == ',' ||
+				   bit_str_ptr[i] == '\0') {
+				if (i == 0)
+					break;
+				if (start_val == -1)
+					start_val = sum;
+				bit_int_ptr[bit_inx++] = start_val;
+				bit_int_ptr[bit_inx++] = sum;
+				start_val = -1;
+				sum = 0;
+			}
+		}
+		xassert(bit_inx < (size * 2 + 1));
+	} else {	/* handle step format */
+		start_task_id = strtol(bit_str_ptr, &tmp, 10);
+		if (*tmp != '-')
+			return NULL;
+		end_task_id = strtol(tmp + 1, &tmp, 10);
+		if (*tmp != ':')
+			return NULL;
+		step = strtol(tmp + 1, &tmp, 10);
+		if (*tmp != '\0')
+			return NULL;
+		if (end_task_id < start_task_id || step <= 0)
+			return NULL;
+
+		size = ((end_task_id - start_task_id) / step) + 1;
+		bit_int_ptr = xmalloc(sizeof(int32_t) * (size * 2 + 1));
+		bit_inx = 0;
+		for(i = start_task_id; i < end_task_id; i += step) {
+			bit_int_ptr[bit_inx++] = i;     /* start of pair */
+			bit_int_ptr[bit_inx++] = i;     /* end of pair */
 		}
 	}
-	assert(bit_inx < (size*2+1));
 	bit_int_ptr[bit_inx] = -1;
 	return bit_int_ptr;
 }
@@ -1131,6 +1268,49 @@ int inx2bitstr(bitstr_t *b, int32_t *inx)
 		bit_nset(b, *p, *(p + 1));
 	}
 	return rc;
+}
+
+/*
+ * convert a bitstring to inx format
+ * returns an xmalloc()'d array of int32_t that must be xfree()'d
+ */
+int32_t *bitstr2inx(bitstr_t *b)
+{
+	bitoff_t start, bit, pos = 0;
+	int32_t *bit_inx;
+
+	if (!b) {
+		bit_inx = xmalloc(sizeof(int32_t));
+		bit_inx[0] = -1;
+		return bit_inx;
+	}
+
+	/* worst case: every other bit set, resulting in an array of length
+	 * bitstr_bits(b) + 1 (if an odd number of elements)
+	 * + 1 (for trailing -1) */
+	bit_inx = xmalloc_nz(sizeof(int32_t) * (_bitstr_bits(b) + 2));
+
+	for (bit = 0; bit < _bitstr_bits(b); ) {
+		/* skip past empty words */
+		if (!b[_bit_word(bit)]) {
+			bit += sizeof(bitstr_t) * 8;
+			continue;
+		}
+
+		if (bit_test(b, bit)) {
+			start = bit;
+			while (bit + 1 < _bitstr_bits(b)
+			       && bit_test(b, bit + 1))
+				bit++;
+			bit_inx[pos++] = start;
+			bit_inx[pos++] = bit;
+		}
+		bit++;
+	}
+	/* terminate array with -1 */
+	bit_inx[pos] = -1;
+
+	return bit_inx;
 }
 
 /* bit_fmt_hexmask
@@ -1195,7 +1375,7 @@ int bit_unfmt_hexmask(bitstr_t * bitmap, const char* str)
 	bitoff_t bitsize = bit_size(bitmap);
 
 	bit_nclear(bitmap, 0, bitsize - 1);
-	if (strncmp(str, "0x", 2) == 0) {	/* Bypass 0x */
+	if (xstrncmp(str, "0x", 2) == 0) {	/* Bypass 0x */
 		str += 2;
 		len -= 2;
 	}
@@ -1340,11 +1520,7 @@ bit_get_pos_num(bitstr_t *b, bitoff_t pos)
 	assert(pos <= bit_cnt);
 
 	if (!bit_test(b, pos)) {
-#ifdef	USE_64BIT_BITSTR
-		error("bit %"PRIu64" not set", pos);
-#else
-		error("bit %d not set", pos);
-#endif
+		error("bit %"BITSTR_FMT" not set", pos);
 		return cnt;
 	}
 	for (bit = 0; bit <= pos; bit++) {
@@ -1355,4 +1531,3 @@ bit_get_pos_num(bitstr_t *b, bitoff_t pos)
 
 	return cnt;
 }
-

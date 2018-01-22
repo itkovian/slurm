@@ -6,7 +6,7 @@
  *  from select/linear
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -35,15 +35,7 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#ifdef HAVE_CONFIG_H
-#  include "config.h"
-#  if HAVE_STDINT_H
-#    include <stdint.h>
-#  endif
-#  if HAVE_INTTYPES_H
-#    include <inttypes.h>
-#  endif
-#endif
+#include <inttypes.h>
 #include <time.h>
 
 #include "dist_tasks.h"
@@ -101,13 +93,16 @@ uint16_t _can_job_run_on_node(struct job_record *job_ptr, bitstr_t *core_map,
 			      bool test_only)
 {
 	uint16_t cpus;
-	uint32_t avail_mem, req_mem, gres_cpus, gres_cores, cpus_per_core;
+	uint64_t avail_mem, req_mem;
+	uint32_t gres_cpus, gres_cores, cpus_per_core;
 	int core_start_bit, core_end_bit;
 	struct node_record *node_ptr = node_record_table_ptr + node_i;
 	List gres_list;
 
-	if (!test_only && IS_NODE_COMPLETING(node_ptr)) {
-		/* Do not allocate more jobs to nodes with completing jobs */
+	if (((job_ptr->bit_flags & BACKFILL_TEST) == 0) &&
+	    !test_only && IS_NODE_COMPLETING(node_ptr)) {
+		/* Do not allocate more jobs to nodes with completing jobs,
+		 * backfill scheduler independently handles completing nodes */
 		cpus = 0;
 		return cpus;
 	}
@@ -127,27 +122,29 @@ uint16_t _can_job_run_on_node(struct job_record *job_ptr, bitstr_t *core_map,
 	gres_plugin_job_core_filter(job_ptr->gres_list, gres_list, test_only,
 				    core_map, core_start_bit, core_end_bit,
 				    node_ptr->name);
+	gres_cores = gres_plugin_job_test(job_ptr->gres_list,
+					  gres_list, test_only,
+					  core_map, core_start_bit,
+					  core_end_bit, job_ptr->job_id,
+					  node_ptr->name);
 
-	if ((cr_type & CR_MEMORY) && cpus) {
+	if (job_ptr->details && (cr_type & CR_MEMORY) && cpus) {
 		req_mem   = job_ptr->details->pn_min_memory & ~MEM_PER_CPU;
-		avail_mem = select_node_record[node_i].real_memory;
+		avail_mem = select_node_record[node_i].real_memory -
+			    select_node_record[node_i].mem_spec_limit;
 		if (!test_only)
 			avail_mem -= node_usage[node_i].alloc_memory;
 		if (req_mem > avail_mem)
 			cpus = 0;
 	}
 
-	gres_cores = gres_plugin_job_test(job_ptr->gres_list,
-					  gres_list, test_only,
-					  core_map, core_start_bit,
-					  core_end_bit, job_ptr->job_id,
-					  node_ptr->name);
 	gres_cpus = gres_cores;
 	if (gres_cpus != NO_VAL)
 		gres_cpus *= cpus_per_core;
-	if ((gres_cpus < job_ptr->details->ntasks_per_node) ||
-	    ((job_ptr->details->cpus_per_task > 1) &&
-	     (gres_cpus < job_ptr->details->cpus_per_task)))
+	if ((job_ptr->details) &&
+	    ((gres_cpus < job_ptr->details->ntasks_per_node) ||
+	     ((job_ptr->details->cpus_per_task > 1) &&
+	      (gres_cpus < job_ptr->details->cpus_per_task))))
 		gres_cpus = 0;
 	if (gres_cpus < cpus)
 		cpus = gres_cpus;
@@ -155,9 +152,9 @@ uint16_t _can_job_run_on_node(struct job_record *job_ptr, bitstr_t *core_map,
 	if (cpus == 0)
 		bit_nclear(core_map, core_start_bit, core_end_bit);
 
-	if (select_debug_flags & DEBUG_FLAG_CPU_BIND) {
+	if (select_debug_flags & DEBUG_FLAG_SELECT_TYPE) {
 		info("select/serial: _can_job_run_on_node: %u cpus on %s(%d), "
-		     "mem %u/%u",
+		     "mem %"PRIu64"/%"PRIu64"",
 		     cpus, select_node_record[node_i].node_ptr->name,
 		     node_usage[node_i].node_state,
 		     node_usage[node_i].alloc_memory,
@@ -224,8 +221,9 @@ static int _verify_node_state(struct part_res_record *cr_part_ptr,
 			      enum node_cr_state job_node_req)
 {
 	struct node_record *node_ptr;
-	uint32_t i, free_mem, gres_cpus, gres_cores, min_mem;
-	int i_first, i_last;
+	uint32_t gres_cpus, gres_cores;
+	uint64_t free_mem, min_mem;
+	int i, i_first, i_last;
 	int core_start_bit, core_end_bit, cpus_per_core;
 	List gres_list;
 
@@ -252,7 +250,8 @@ static int _verify_node_state(struct part_res_record *cr_part_ptr,
 			free_mem  = select_node_record[i].real_memory;
 			free_mem -= node_usage[i].alloc_memory;
 			if (free_mem < min_mem) {
-				debug3("select/serial: node %s no mem %u < %u",
+				debug3("select/serial: node %s no mem "
+					"%"PRIu64" < %"PRIu64"",
 					select_node_record[i].node_ptr->name,
 					free_mem, min_mem);
 				goto clear_bit;
@@ -336,9 +335,9 @@ clear_bit:	/* This node is not usable by this job */
 /* given an "avail" node_bitmap, return a corresponding "avail" core_bitmap */
 bitstr_t *_make_core_bitmap(bitstr_t *node_map)
 {
-	uint32_t n, c, nodes, size;
+	uint32_t c, nodes, size;
 	uint32_t coff;
-	int i_first, i_last;
+	int i, i_first, i_last;
 
 	nodes = bit_size(node_map);
 	size = cr_get_coremap_offset(nodes);
@@ -349,9 +348,9 @@ bitstr_t *_make_core_bitmap(bitstr_t *node_map)
 		i_last  = bit_fls(node_map);
 	else
 		i_last = -2;
-	for (n = i_first, c = 0; n <= i_last; n++) {
-		if (bit_test(node_map, n)) {
-			coff = cr_get_coremap_offset(n + 1);
+	for (i = i_first, c = 0; i <= i_last; i++) {
+		if (bit_test(node_map, i)) {
+			coff = cr_get_coremap_offset(i + 1);
 			while (c < coff) {
 				bit_set(core_map, c++);
 			}
@@ -378,8 +377,7 @@ static int _get_res_usage(struct job_record *job_ptr, bitstr_t *node_map,
 			   bool test_only)
 {
 	uint16_t *cpu_cnt, max_cpu_cnt = 0, part_lln_flag = 0;
-	uint32_t n;
-	int i_first, i_last;
+	int i, i_first, i_last;
 	int node_inx = -1;
 
 	if (cr_node_cnt != node_record_count) {
@@ -401,25 +399,25 @@ static int _get_res_usage(struct job_record *job_ptr, bitstr_t *node_map,
 		i_last  = bit_fls(node_map);
 	else
 		i_last = -2;
-	for (n = i_first; n <= i_last; n++) {
-		if (!bit_test(node_map, n))
+	for (i = i_first; i <= i_last; i++) {
+		if (!bit_test(node_map, i))
 			continue;
-		cpu_cnt[n] = _can_job_run_on_node(job_ptr, core_map, n,
+		cpu_cnt[i] = _can_job_run_on_node(job_ptr, core_map, i,
 						  node_usage, cr_type,
 						  test_only);
-		if (!(cr_type & CR_LLN) && !part_lln_flag && cpu_cnt[n]) {
+		if (!(cr_type & CR_LLN) && !part_lln_flag && cpu_cnt[i]) {
 			bit_nclear(node_map, 0, (node_record_count - 1));
-			bit_set(node_map, n);
-			node_inx = n;
+			bit_set(node_map, i);
+			node_inx = i;
 			break;	/* select/serial: only need one node */
 		}
 	}
 
 	if ((cr_type & CR_LLN) || part_lln_flag) {
-		for (n = i_first; n <= i_last; n++) {
-			if (cpu_cnt[n] > max_cpu_cnt) {
-				max_cpu_cnt = cpu_cnt[n];
-				node_inx = n;
+		for (i = i_first; i <= i_last; i++) {
+			if (cpu_cnt[i] > max_cpu_cnt) {
+				max_cpu_cnt = cpu_cnt[i];
+				node_inx = i;
 			}
 		}
 
@@ -504,9 +502,10 @@ extern int cr_job_test(struct job_record *job_ptr, bitstr_t *bitmap, int mode,
 	static int gang_mode = -1;
 	int error_code = SLURM_SUCCESS;
 	bitstr_t *orig_map, *avail_cores, *free_cores;
-	bitstr_t *tmpcore = NULL;
 	bool test_only;
-	uint32_t c, i, j, k, n, csize, save_mem = 0;
+	uint32_t c, i, j, k, csize;
+	uint64_t save_mem = 0;
+	int n;
 	job_resources_t *job_res;
 	struct job_details *details_ptr;
 	struct part_res_record *p_ptr, *jp_ptr;
@@ -537,7 +536,7 @@ extern int cr_job_test(struct job_record *job_ptr, bitstr_t *bitmap, int mode,
 			return error_code;
 	}
 
-	if (select_debug_flags & DEBUG_FLAG_CPU_BIND) {
+	if (select_debug_flags & DEBUG_FLAG_SELECT_TYPE) {
 		info("select/serial: evaluating job %u on %u nodes",
 		     job_ptr->job_id, bit_set_count(bitmap));
 	}
@@ -558,7 +557,7 @@ extern int cr_job_test(struct job_record *job_ptr, bitstr_t *bitmap, int mode,
 		FREE_NULL_BITMAP(orig_map);
 		FREE_NULL_BITMAP(free_cores);
 		FREE_NULL_BITMAP(avail_cores);
-		if (select_debug_flags & DEBUG_FLAG_CPU_BIND) {
+		if (select_debug_flags & DEBUG_FLAG_SELECT_TYPE) {
 			info("select/serial: cr_job_test: test 0 fail: "
 			     "insufficient resources");
 		}
@@ -568,7 +567,7 @@ extern int cr_job_test(struct job_record *job_ptr, bitstr_t *bitmap, int mode,
 		FREE_NULL_BITMAP(free_cores);
 		FREE_NULL_BITMAP(avail_cores);
 		xfree(cpu_count);
-		if (select_debug_flags & DEBUG_FLAG_CPU_BIND)
+		if (select_debug_flags & DEBUG_FLAG_SELECT_TYPE)
 			info("select/serial: cr_job_test: test 0 pass: "
 			     "test_only");
 		return SLURM_SUCCESS;
@@ -579,7 +578,7 @@ extern int cr_job_test(struct job_record *job_ptr, bitstr_t *bitmap, int mode,
 		goto alloc_job;
 	}
 	xfree(cpu_count);
-	if (select_debug_flags & DEBUG_FLAG_CPU_BIND) {
+	if (select_debug_flags & DEBUG_FLAG_SELECT_TYPE) {
 		info("select/serial: cr_job_test: test 0 pass - "
 		     "job fits on given resources");
 	}
@@ -622,23 +621,20 @@ extern int cr_job_test(struct job_record *job_ptr, bitstr_t *bitmap, int mode,
 	bit_copybits(free_cores, avail_cores);
 
 	/* remove all existing allocations from free_cores */
-	tmpcore = bit_copy(free_cores);
 	for (p_ptr = cr_part_ptr; p_ptr; p_ptr = p_ptr->next) {
 		if (!p_ptr->row)
 			continue;
 		for (i = 0; i < p_ptr->num_rows; i++) {
 			if (!p_ptr->row[i].row_bitmap)
 				continue;
-			bit_copybits(tmpcore, p_ptr->row[i].row_bitmap);
-			bit_not(tmpcore); /* set bits now "free" resources */
-			bit_and(free_cores, tmpcore);
+			bit_and_not(free_cores, p_ptr->row[i].row_bitmap);
 		}
 	}
 	cpu_count = _select_nodes(job_ptr, bitmap, cr_node_cnt, free_cores,
 				  node_usage, cr_type, test_only);
 	if (cpu_count) {
 		/* job fits! We're done. */
-		if (select_debug_flags & DEBUG_FLAG_CPU_BIND) {
+		if (select_debug_flags & DEBUG_FLAG_SELECT_TYPE) {
 			info("select/serial: cr_job_test: test 1 pass - "
 			     "idle resources found");
 		}
@@ -651,13 +647,13 @@ extern int cr_job_test(struct job_record *job_ptr, bitstr_t *bitmap, int mode,
 		 * addressed in _verify_node_state() and job preemption
 		 * removes jobs from simulated resource allocation map
 		 * before this point. */
-		if (select_debug_flags & DEBUG_FLAG_CPU_BIND) {
+		if (select_debug_flags & DEBUG_FLAG_SELECT_TYPE) {
 			info("select/serial: cr_job_test: test 1 fail - "
 			     "no idle resources available");
 		}
 		goto alloc_job;
 	}
-	if (select_debug_flags & DEBUG_FLAG_CPU_BIND) {
+	if (select_debug_flags & DEBUG_FLAG_SELECT_TYPE) {
 		info("select/serial: cr_job_test: test 1 fail - "
 		     "not enough idle resources");
 	}
@@ -679,7 +675,8 @@ extern int cr_job_test(struct job_record *job_ptr, bitstr_t *bitmap, int mode,
 	/* remove existing allocations (jobs) from higher-priority partitions
 	 * from avail_cores */
 	for (p_ptr = cr_part_ptr; p_ptr; p_ptr = p_ptr->next) {
-		if ((p_ptr->part_ptr->priority <= jp_ptr->part_ptr->priority) &&
+		if ((p_ptr->part_ptr->priority_tier <=
+		     jp_ptr->part_ptr->priority_tier) &&
 		    (p_ptr->part_ptr->preempt_mode != PREEMPT_MODE_OFF))
 			continue;
 		if (!p_ptr->row)
@@ -687,9 +684,7 @@ extern int cr_job_test(struct job_record *job_ptr, bitstr_t *bitmap, int mode,
 		for (i = 0; i < p_ptr->num_rows; i++) {
 			if (!p_ptr->row[i].row_bitmap)
 				continue;
-			bit_copybits(tmpcore, p_ptr->row[i].row_bitmap);
-			bit_not(tmpcore); /* set bits now "free" resources */
-			bit_and(free_cores, tmpcore);
+			bit_and_not(free_cores, p_ptr->row[i].row_bitmap);
 		}
 	}
 	/* make these changes permanent */
@@ -699,14 +694,14 @@ extern int cr_job_test(struct job_record *job_ptr, bitstr_t *bitmap, int mode,
 	if (!cpu_count) {
 		/* job needs resources that are currently in use by
 		 * higher-priority jobs, so fail for now */
-		if (select_debug_flags & DEBUG_FLAG_CPU_BIND) {
+		if (select_debug_flags & DEBUG_FLAG_SELECT_TYPE) {
 			info("select/serial: cr_job_test: test 2 fail - "
 			     "resources busy with higher priority jobs");
 		}
 		goto alloc_job;
 	}
 	xfree(cpu_count);
-	if (select_debug_flags & DEBUG_FLAG_CPU_BIND) {
+	if (select_debug_flags & DEBUG_FLAG_SELECT_TYPE) {
 		info("select/serial: cr_job_test: test 2 pass - "
 		     "available resources for this priority");
 	}
@@ -718,16 +713,15 @@ extern int cr_job_test(struct job_record *job_ptr, bitstr_t *bitmap, int mode,
 	/* remove existing allocations (jobs) from same-priority partitions
 	 * from avail_cores */
 	for (p_ptr = cr_part_ptr; p_ptr; p_ptr = p_ptr->next) {
-		if (p_ptr->part_ptr->priority != jp_ptr->part_ptr->priority)
+		if (p_ptr->part_ptr->priority_tier !=
+		    jp_ptr->part_ptr->priority_tier)
 			continue;
 		if (!p_ptr->row)
 			continue;
 		for (i = 0; i < p_ptr->num_rows; i++) {
 			if (!p_ptr->row[i].row_bitmap)
 				continue;
-			bit_copybits(tmpcore, p_ptr->row[i].row_bitmap);
-			bit_not(tmpcore); /* set bits now "free" resources */
-			bit_and(free_cores, tmpcore);
+			bit_and_not(free_cores,  p_ptr->row[i].row_bitmap);
 		}
 	}
 	cpu_count = _select_nodes(job_ptr, bitmap, cr_node_cnt, free_cores,
@@ -738,13 +732,13 @@ extern int cr_job_test(struct job_record *job_ptr, bitstr_t *bitmap, int mode,
 		 * a good placement algorithm here that optimizes "job overlap"
 		 * between this job (in these idle nodes) and the low-priority
 		 * jobs */
-		if (select_debug_flags & DEBUG_FLAG_CPU_BIND) {
+		if (select_debug_flags & DEBUG_FLAG_SELECT_TYPE) {
 			info("select/serial: cr_job_test: test 3 pass - "
 			     "found resources");
 		}
 		goto alloc_job;
 	}
-	if (select_debug_flags & DEBUG_FLAG_CPU_BIND) {
+	if (select_debug_flags & DEBUG_FLAG_SELECT_TYPE) {
 		info("select/serial: cr_job_test: test 3 fail - "
 		     "not enough idle resources in same priority");
 	}
@@ -753,7 +747,6 @@ extern int cr_job_test(struct job_record *job_ptr, bitstr_t *bitmap, int mode,
 	/*** Step 4 ***/
 	/* try to fit the job into an existing row
 	 *
-	 * tmpcore = worker core_bitmap
 	 * free_cores = core_bitmap to be built
 	 * avail_cores = static core_bitmap of all available cores
 	 */
@@ -770,7 +763,7 @@ extern int cr_job_test(struct job_record *job_ptr, bitstr_t *bitmap, int mode,
 		cpu_count = _select_nodes(job_ptr, bitmap, cr_node_cnt,
 					  free_cores, node_usage, cr_type,
 					  test_only);
-		if (select_debug_flags & DEBUG_FLAG_CPU_BIND) {
+		if (select_debug_flags & DEBUG_FLAG_SELECT_TYPE) {
 			info("select/serial: cr_job_test: test 4 pass - "
 			     "first row found");
 		}
@@ -786,20 +779,18 @@ extern int cr_job_test(struct job_record *job_ptr, bitstr_t *bitmap, int mode,
 			break;
 		bit_copybits(bitmap, orig_map);
 		bit_copybits(free_cores, avail_cores);
-		bit_copybits(tmpcore, jp_ptr->row[i].row_bitmap);
-		bit_not(tmpcore);
-		bit_and(free_cores, tmpcore);
+		bit_and_not(free_cores, jp_ptr->row[i].row_bitmap);
 		cpu_count = _select_nodes(job_ptr, bitmap, cr_node_cnt,
 					  free_cores, node_usage, cr_type,
 					  test_only);
 		if (cpu_count) {
-			if (select_debug_flags & DEBUG_FLAG_CPU_BIND) {
+			if (select_debug_flags & DEBUG_FLAG_SELECT_TYPE) {
 				info("select/serial: cr_job_test: "
 				     "test 4 pass - row %i", i);
 			}
 			break;
 		}
-		if (select_debug_flags & DEBUG_FLAG_CPU_BIND) {
+		if (select_debug_flags & DEBUG_FLAG_SELECT_TYPE) {
 			info("select/serial: cr_job_test: "
 			     "test 4 fail - row %i", i);
 		}
@@ -809,7 +800,7 @@ extern int cr_job_test(struct job_record *job_ptr, bitstr_t *bitmap, int mode,
 		/* we've found an empty row, so use it */
 		bit_copybits(bitmap, orig_map);
 		bit_copybits(free_cores, avail_cores);
-		if (select_debug_flags & DEBUG_FLAG_CPU_BIND) {
+		if (select_debug_flags & DEBUG_FLAG_SELECT_TYPE) {
 			info("select/serial: cr_job_test: "
 			     "test 4 trying empty row %i",i);
 		}
@@ -820,7 +811,7 @@ extern int cr_job_test(struct job_record *job_ptr, bitstr_t *bitmap, int mode,
 
 	if (!cpu_count) {
 		/* job can't fit into any row, so exit */
-		if (select_debug_flags & DEBUG_FLAG_CPU_BIND) {
+		if (select_debug_flags & DEBUG_FLAG_SELECT_TYPE) {
 			info("select/serial: cr_job_test: test 4 fail - "
 			     "busy partition");
 		}
@@ -848,11 +839,10 @@ alloc_job:
 	 */
 	FREE_NULL_BITMAP(orig_map);
 	FREE_NULL_BITMAP(avail_cores);
-	FREE_NULL_BITMAP(tmpcore);
 	if (!cpu_count) {
 		/* we were sent here to cleanup and exit */
 		FREE_NULL_BITMAP(free_cores);
-		if (select_debug_flags & DEBUG_FLAG_CPU_BIND) {
+		if (select_debug_flags & DEBUG_FLAG_SELECT_TYPE) {
 			info("select/serial: exiting cr_job_test with no "
 			     "allocation");
 		}
@@ -882,7 +872,7 @@ alloc_job:
 		return error_code;
 	}
 
-	if (select_debug_flags & DEBUG_FLAG_CPU_BIND) {
+	if (select_debug_flags & DEBUG_FLAG_SELECT_TYPE) {
 		info("select/serial: cr_job_test: distributing job %u",
 		     job_ptr->job_id);
 	}
@@ -904,9 +894,9 @@ alloc_job:
 	job_res->cpus_used        = xmalloc(job_res->nhosts *
 					    sizeof(uint16_t));
 	job_res->memory_allocated = xmalloc(job_res->nhosts *
-					    sizeof(uint32_t));
+					    sizeof(uint64_t));
 	job_res->memory_used      = xmalloc(job_res->nhosts *
-					    sizeof(uint32_t));
+					    sizeof(uint64_t));
 
 	/* store the hardware data for the selected nodes */
 	error_code = build_job_resources(job_res, node_record_table_ptr,
@@ -938,7 +928,7 @@ alloc_job:
 		break;
 	}
 
-	if (select_debug_flags & DEBUG_FLAG_CPU_BIND) {
+	if (select_debug_flags & DEBUG_FLAG_SELECT_TYPE) {
 		info("select/serial: cr_job_test: job %u ncpus %u cbits %u/%d "
 		     "nbits %u", job_ptr->job_id,
 		     job_res->ncpus, bit_set_count(free_cores), 1,
@@ -970,5 +960,6 @@ alloc_job:
 		/* memory is per-node */
 		job_res->memory_allocated[0] = save_mem;
 	}
+
 	return error_code;
 }

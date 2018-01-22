@@ -8,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -38,11 +38,7 @@
 \*****************************************************************************/
 
 #ifndef _SWITCH_H
-#define _SWITCH_H 	1
-
-#if HAVE_CONFIG_H
-#  include "config.h"
-#endif
+#define _SWITCH_H
 
 #include <stdio.h>
 #include <sys/types.h>
@@ -68,7 +64,7 @@ typedef struct slurm_switch_context slurm_switch_context_t;
 \*******************************************/
 
 /* initialize the switch plugin */
-extern int  switch_init   (void);
+extern int  switch_init(bool only_default);
 
 extern int switch_g_reconfig(void);
 
@@ -118,7 +114,7 @@ extern char *switch_g_strerror(int errnum);
  * RET         - slurm error code
  * NOTE: storage must be freed using g_switch_g_free_jobinfo
  */
-extern int  switch_g_alloc_jobinfo (switch_jobinfo_t **jobinfo,
+extern int  switch_g_alloc_jobinfo (dynamic_plugin_data_t **jobinfo,
 				    uint32_t job_id, uint32_t step_id);
 
 /* fill a job's switch credential
@@ -128,14 +124,14 @@ extern int  switch_g_alloc_jobinfo (switch_jobinfo_t **jobinfo,
  * IN  network  - plugin-specific network info (e.g. protocol)
  * NOTE: storage must be freed using g_switch_g_free_jobinfo
  */
-extern int  switch_g_build_jobinfo(switch_jobinfo_t *jobinfo,
+extern int  switch_g_build_jobinfo(dynamic_plugin_data_t *jobinfo,
 				   slurm_step_layout_t *step_layout,
 				   char *network);
 
 /* free storage previously allocated for a switch job credential
  * IN jobinfo  - the switch job credential to be freed
  */
-extern void switch_g_free_jobinfo  (switch_jobinfo_t *jobinfo);
+extern void switch_g_free_jobinfo  (dynamic_plugin_data_t *jobinfo);
 
 /* pack a switch job credential into a buffer in machine independent form
  * IN jobinfo  - the switch job credential to be saved
@@ -143,7 +139,7 @@ extern void switch_g_free_jobinfo  (switch_jobinfo_t *jobinfo);
  * IN protocol_version - version of Slurm we are talking to.
  * RET         - slurm error code
  */
-extern int  switch_g_pack_jobinfo  (switch_jobinfo_t *jobinfo, Buf buffer,
+extern int  switch_g_pack_jobinfo  (dynamic_plugin_data_t *jobinfo, Buf buffer,
 				    uint16_t protocol_version);
 
 /* unpack a switch job credential from a buffer
@@ -153,7 +149,7 @@ extern int  switch_g_pack_jobinfo  (switch_jobinfo_t *jobinfo, Buf buffer,
  * RET         - slurm error code
  * NOTE: returned value must be freed using g_switch_g_free_jobinfo
  */
-extern int  switch_g_unpack_jobinfo(switch_jobinfo_t *jobinfo, Buf buffer,
+extern int  switch_g_unpack_jobinfo(dynamic_plugin_data_t **jobinfo, Buf buffer,
 				    uint16_t protocol_version);
 
 /* get some field from a switch job credential
@@ -162,14 +158,14 @@ extern int  switch_g_unpack_jobinfo(switch_jobinfo_t *jobinfo, Buf buffer,
  * OUT data - the desired data from the credential
  * RET         - slurm error code
  */
-extern int  switch_g_get_jobinfo(switch_jobinfo_t *jobinfo,
+extern int  switch_g_get_jobinfo(dynamic_plugin_data_t *jobinfo,
 	int data_type, void *data);
 
 /*
  * Note that the job step associated with the specified nodelist
  * has completed execution.
  */
-extern int switch_g_job_step_complete(switch_jobinfo_t *jobinfo,
+extern int switch_g_job_step_complete(dynamic_plugin_data_t *jobinfo,
 	char *nodelist);
 
 /*
@@ -178,15 +174,15 @@ extern int switch_g_job_step_complete(switch_jobinfo_t *jobinfo,
  * nodes, but switch resources associated with it on the specified
  * nodes are no longer in use.
  */
-extern int switch_g_job_step_part_comp(switch_jobinfo_t *jobinfo,
+extern int switch_g_job_step_part_comp(dynamic_plugin_data_t *jobinfo,
 	char *nodelist);
 
 /*
- * Return TRUE if the switch plugin processes partial job step
+ * Return true if the switch plugin processes partial job step
  * completion calls (i.e. switch_g_job_step_part_comp). Support
  * of partition completions is compute intensive, so it should
  * be avoided unless switch resources are in short supply (e.g.
- * switch/federation). Otherwise return FALSE.
+ * switch/nrt). Otherwise return false.
  */
 extern bool switch_g_part_comp(void);
 
@@ -195,7 +191,7 @@ extern bool switch_g_part_comp(void);
  * allocated job step, most likely to restore the switch information
  * after a call to switch_g_clear().
  */
-extern int switch_g_job_step_allocated(switch_jobinfo_t *jobinfo,
+extern int switch_g_job_step_allocated(dynamic_plugin_data_t *jobinfo,
 	char *nodelist);
 
 /*
@@ -207,7 +203,7 @@ extern int switch_g_slurmctld_init(void);
  * IN fp      - an open file pointer
  * IN jobinfo - a switch job credential
  */
-extern void switch_g_print_jobinfo(FILE *fp, switch_jobinfo_t *jobinfo);
+extern void switch_g_print_jobinfo(FILE *fp, dynamic_plugin_data_t *jobinfo);
 
 /* write job credential to a string
  * IN jobinfo - a switch job credential
@@ -215,8 +211,8 @@ extern void switch_g_print_jobinfo(FILE *fp, switch_jobinfo_t *jobinfo);
  * IN size    - byte size of buf
  * RET        - the string, same as buf
  */
-extern char *switch_g_sprint_jobinfo( switch_jobinfo_t *jobinfo,
-			char *buf, size_t size);
+extern char *switch_g_sprint_jobinfo(dynamic_plugin_data_t *jobinfo,
+				     char *buf, size_t size);
 
 /********************************************************************\
  * JOB LAUNCH AND MANAGEMENT FUNCTIONS RELATED TO SWITCH CREDENTIAL *
@@ -269,7 +265,7 @@ extern int switch_g_node_fini(void);
  * that needs to be performed in the same process as switch_g_job_fini()
  *
  */
-extern int switch_g_job_preinit(switch_jobinfo_t *jobinfo);
+extern int switch_g_job_preinit(dynamic_plugin_data_t *jobinfo);
 
 /*
  * initialize switch_g on node for job. This function is run from the
@@ -286,7 +282,7 @@ extern int switch_g_job_init(stepd_step_rec_t *job);
  * IN jobinfo - switch information for a job step
  * RET SLURM_SUCCESS or error code
  */
-extern int switch_g_job_suspend_test(switch_jobinfo_t *jobinfo);
+extern int switch_g_job_suspend_test(dynamic_plugin_data_t *jobinfo);
 
 /*
  * Build data structure containing information needed to suspend or resume
@@ -295,7 +291,7 @@ extern int switch_g_job_suspend_test(switch_jobinfo_t *jobinfo);
  * IN jobinfo - switch information for a job step
  * RET data to be sent with job suspend/resume RPC
  */
-extern void switch_g_job_suspend_info_get(switch_jobinfo_t *jobinfo,
+extern void switch_g_job_suspend_info_get(dynamic_plugin_data_t *jobinfo,
 					  void **suspend_info);
 /*
  * Pack data structure containing information needed to suspend or resume
@@ -341,7 +337,7 @@ extern int switch_g_job_suspend(void *suspend_info, int max_wait);
  * IN max_wait - maximum number of seconds to wait for operation to complete
  * RET SLURM_SUCCESS or error code
  */
-extern int switch_g_job_resume(void *suspend_infoo, int max_wait);
+extern int switch_g_job_resume(void *suspend_info, int max_wait);
 
 /*
  * This function is run from the same process as switch_g_job_init()
@@ -349,7 +345,7 @@ extern int switch_g_job_resume(void *suspend_infoo, int max_wait);
  * the process in question has already setuid to the job owner.
  *
  */
-extern int switch_g_job_fini(switch_jobinfo_t *jobinfo);
+extern int switch_g_job_fini(dynamic_plugin_data_t *jobinfo);
 
 /*
  * Finalize switch_g on node.
@@ -366,7 +362,7 @@ extern int switch_g_job_postfini(stepd_step_rec_t *job);
  * (Called from within the process, so it is appropriate to set
  * switch_g specific environment variables here)
  */
-extern int switch_g_job_attach(switch_jobinfo_t *jobinfo, char ***env,
+extern int switch_g_job_attach(dynamic_plugin_data_t *jobinfo, char ***env,
 			       uint32_t nodeid, uint32_t procid,
 			       uint32_t nnodes, uint32_t nprocs, uint32_t rank);
 
@@ -402,7 +398,7 @@ extern int switch_g_pack_node_info(switch_node_info_t *switch_node,
  * Unpack the data associated with a node's switch state record
  * from a buffer.
  */
-extern int switch_g_unpack_node_info(switch_node_info_t *switch_node,
+extern int switch_g_unpack_node_info(switch_node_info_t **switch_node,
 				     Buf buffer, uint16_t protocol_version);
 
 /*
@@ -415,5 +411,29 @@ extern int switch_g_free_node_info(switch_node_info_t **switch_node);
  */
 extern char*switch_g_sprintf_node_info(switch_node_info_t *switch_node,
 	char *buf, size_t size);
+
+/********************************************************************\
+ * JOB STEP {PRE,POST}-SUSPEND and {PRE-POST}-RESUME FUNCTIONS      *
+\********************************************************************/
+
+/*
+ * Do job-step-related pre-suspend actions
+ */
+extern int switch_g_job_step_pre_suspend(stepd_step_rec_t *job);
+
+/*
+ * Do job-step-related post-suspend actions
+ */
+extern int switch_g_job_step_post_suspend(stepd_step_rec_t *job);
+
+/*
+ * Do job-step-related pre-resume actions
+ */
+extern int switch_g_job_step_pre_resume(stepd_step_rec_t *job);
+
+/*
+ * Do job-step-related post-resume actions
+ */
+extern int switch_g_job_step_post_resume(stepd_step_rec_t *job);
 
 #endif /* _SWITCH_H */

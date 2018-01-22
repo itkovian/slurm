@@ -1,4 +1,4 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Test of SLURM functionality
 #          Check sinfo node information filtering (--state and --nodes
@@ -14,7 +14,7 @@
 # CODE-OCEC-09-009. All rights reserved.
 #
 # This file is part of SLURM, a resource management program.
-# For details, see <http://slurm.schedmd.com/>.
+# For details, see <https://slurm.schedmd.com/>.
 # Please also read the included file: DISCLAIMER.
 #
 # SLURM is free software; you can redistribute it and/or modify it under
@@ -119,9 +119,9 @@ if {$num_cpus == 0} {
 # Get a list of nodes that we can use
 #
 set i 0
-spawn $sinfo -o%n --noheader -p$partition
+spawn $sinfo -o%N|%t|%o --noheader -p$partition
 expect {
-	-re "($alpha_numeric_under)" {
+	-re "($alpha_numeric_nodelist).idle" {
 		if {$i<8} {
 			set node_list($i) $expect_out(1,string)
 			incr i 1
@@ -138,7 +138,7 @@ expect {
 }
 
 if {$i != 8} {
-	send_user "\nFAILURE: unable to get all the required nodes\n"
+	send_user "\nFAILURE: unable to get all the required nodes ($i != 8)\n"
 	exit 0
 }
 
@@ -149,7 +149,7 @@ send_user "\nTesting ALLOCATED state\n"
 set tmp_id 0
 set tmp_sc "test$test_id\_tmp_sc"
 make_bash_script $tmp_sc "sleep 20"
-spawn $sbatch -w$node_list(0),$node_list(1) -o/dev/null -n[expr 2 * $num_cpus] $tmp_sc
+spawn $sbatch -p$partition -w$node_list(0),$node_list(1) -o/dev/null -n[expr 2 * $num_cpus] --exclusive $tmp_sc
 expect {
 	-re "Submitted batch job ($number)" {
 		set tmp_id $expect_out(1,string)
@@ -301,6 +301,7 @@ if {$mismatches != 0} {
 	set exit_code 1
 }
 if {$exit_code == 0} {
+	file delete $tmp_sc
 	send_user "\nSUCCESS\n"
 }
 exit $exit_code

@@ -5,7 +5,7 @@
  *  Written by Alejandro Lucero <alucero@bsc.es>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -34,10 +34,7 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-
-#if HAVE_CONFIG_H
-#  include "config.h"
-#endif
+#include "config.h"
 
 #include <stdlib.h>
 #include <unistd.h>
@@ -46,23 +43,30 @@
 #include "src/common/macros.h"
 #include "src/common/read_config.h"
 #include "src/common/slurm_protocol_defs.h"
+#include "src/common/slurm_time.h"
+#include "src/common/uid.h"
+#include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
 
 /********************
  * Global Variables *
  ********************/
 int sdiag_param = STAT_COMMAND_GET;
+bool sort_by_id    = false;
+bool sort_by_time  = false;
+bool sort_by_time2 = false;
 
 stats_info_response_msg_t *buf;
+uint32_t *rpc_type_ave_time = NULL, *rpc_user_ave_time = NULL;
 
-static int _get_info(void);
-static int _print_info(void);
+static int  _print_stats(void);
+static void _sort_rpc(void);
 
 stats_info_request_msg_t req;
 
-extern void parse_command_line(int argc, char *argv[]);
+extern void parse_command_line(int argc, char **argv);
 
-int main(int argc, char *argv[])
+int main(int argc, char **argv)
 {
 	int rc = 0;
 
@@ -76,47 +80,56 @@ int main(int argc, char *argv[])
 			printf("Reset scheduling statistics\n");
 		else
 			slurm_perror("slurm_reset_statistics");
-		exit(rc);
 	} else {
-		rc = _get_info();
-		if (rc == SLURM_SUCCESS)
-			rc = _print_info();
+		req.command_id = STAT_COMMAND_GET;
+		rc = slurm_get_statistics(&buf,
+					  (stats_info_request_msg_t *)&req);
+		if (rc == SLURM_SUCCESS) {
+			_sort_rpc();
+			rc = _print_stats();
+#ifdef MEMORY_LEAK_DEBUG
+			uid_cache_clear();
+			slurm_free_stats_response_msg(buf);
+			xfree(rpc_type_ave_time);
+			xfree(rpc_user_ave_time);
+#endif
+		} else
+			slurm_perror("slurm_get_statistics");
 	}
 
 	exit(rc);
 }
 
-static int _get_info(void)
+static int _print_stats(void)
 {
-	int rc;
+	int i;
 
-	req.command_id = STAT_COMMAND_GET;
-	rc = slurm_get_statistics(&buf, (stats_info_request_msg_t *)&req);
-	if (rc != SLURM_SUCCESS)
-		slurm_perror("slurm_get_statistics");
-
-	return rc;
-}
-
-static int _print_info(void)
-{
 	if (!buf) {
 		printf("No data available. Probably slurmctld is not working\n");
 		return -1;
 	}
 
 	printf("*******************************************************\n");
-	printf("sdiag output at %s", ctime(&buf->req_time));
-	printf("Data since      %s", ctime(&buf->req_time_start));
+	printf("sdiag output at %s (%ld)\n",
+	       slurm_ctime2(&buf->req_time), buf->req_time);
+	printf("Data since      %s (%ld)\n",
+	       slurm_ctime2(&buf->req_time_start), buf->req_time_start);
 	printf("*******************************************************\n");
 
-	printf("Server thread count: %d\n", buf->server_thread_count);
-	printf("Agent queue size:    %d\n\n", buf->agent_queue_size);
+	printf("Server thread count:  %d\n", buf->server_thread_count);
+	printf("Agent queue size:     %d\n", buf->agent_queue_size);
+	printf("DBD Agent queue size: %d\n\n", buf->dbd_agent_queue_size);
+
 	printf("Jobs submitted: %d\n", buf->jobs_submitted);
 	printf("Jobs started:   %d\n", buf->jobs_started);
 	printf("Jobs completed: %d\n", buf->jobs_completed);
 	printf("Jobs canceled:  %d\n", buf->jobs_canceled);
-	printf("Jobs failed:    %d\n", buf->jobs_failed);
+	printf("Jobs failed:    %d\n\n", buf->jobs_failed);
+
+	printf("Jobs running:    %d\n", buf->jobs_running);
+	printf("Jobs running ts: %s (%ld)\n",
+	       slurm_ctime2(&buf->jobs_running_ts), buf->jobs_running_ts);
+
 	printf("\nMain schedule statistics (microseconds):\n");
 	printf("\tLast cycle:   %u\n", buf->schedule_cycle_last);
 	printf("\tMax cycle:    %u\n", buf->schedule_cycle_max);
@@ -144,12 +157,15 @@ static int _print_info(void)
 	       buf->bf_backfilled_jobs);
 	printf("\tTotal backfilled jobs (since last stats cycle start): %u\n",
 	       buf->bf_last_backfilled_jobs);
+	printf("\tTotal backfilled heterogeneous job components: %u\n",
+	       buf->bf_backfilled_pack_jobs);
 	printf("\tTotal cycles: %u\n", buf->bf_cycle_counter);
-	printf("\tLast cycle when: %s", ctime(&buf->bf_when_last_cycle));
+	printf("\tLast cycle when: %s (%ld)\n",
+	       slurm_ctime2(&buf->bf_when_last_cycle), buf->bf_when_last_cycle);
 	printf("\tLast cycle: %u\n", buf->bf_cycle_last);
 	printf("\tMax cycle:  %u\n", buf->bf_cycle_max);
 	if (buf->bf_cycle_counter > 0) {
-		printf("\tMean cycle: %u\n",
+		printf("\tMean cycle: %"PRIu64"\n",
 		       buf->bf_cycle_sum / buf->bf_cycle_counter);
 	}
 	printf("\tLast depth cycle: %u\n", buf->bf_last_depth);
@@ -165,6 +181,203 @@ static int _print_info(void)
 		printf("\tQueue length mean: %u\n",
 		       buf->bf_queue_len_sum / buf->bf_cycle_counter);
 	}
+
+	printf("\nRemote Procedure Call statistics by message type\n");
+	for (i = 0; i < buf->rpc_type_size; i++) {
+		printf("\t%-40s(%5u) count:%-6u "
+		       "ave_time:%-6u total_time:%"PRIu64"\n",
+		       rpc_num2string(buf->rpc_type_id[i]),
+		       buf->rpc_type_id[i], buf->rpc_type_cnt[i],
+		       rpc_type_ave_time[i], buf->rpc_type_time[i]);
+	}
+
+	printf("\nRemote Procedure Call statistics by user\n");
+	for (i = 0; i < buf->rpc_user_size; i++) {
+		printf("\t%-16s(%8u) count:%-6u "
+		       "ave_time:%-6u total_time:%"PRIu64"\n",
+		       uid_to_string_cached((uid_t)buf->rpc_user_id[i]),
+		       buf->rpc_user_id[i], buf->rpc_user_cnt[i],
+		       rpc_user_ave_time[i], buf->rpc_user_time[i]);
+	}
+
 	return 0;
 }
 
+static void _sort_rpc(void)
+{
+	int i, j;
+	uint16_t type_id;
+	uint32_t type_ave, type_cnt, user_ave, user_cnt, user_id;
+	uint64_t type_time, user_time;
+
+	rpc_type_ave_time = xmalloc(sizeof(uint32_t) * buf->rpc_type_size);
+	rpc_user_ave_time = xmalloc(sizeof(uint32_t) * buf->rpc_user_size);
+
+	if (sort_by_id) {
+		for (i = 0; i < buf->rpc_type_size; i++) {
+			for (j = i+1; j < buf->rpc_type_size; j++) {
+				if (buf->rpc_type_id[i] <= buf->rpc_type_id[j])
+					continue;
+				type_id   = buf->rpc_type_id[i];
+				type_cnt  = buf->rpc_type_cnt[i];
+				type_time = buf->rpc_type_time[i];
+				buf->rpc_type_id[i]   = buf->rpc_type_id[j];
+				buf->rpc_type_cnt[i]  = buf->rpc_type_cnt[j];
+				buf->rpc_type_time[i] = buf->rpc_type_time[j];
+				buf->rpc_type_id[j]   = type_id;
+				buf->rpc_type_cnt[j]  = type_cnt;
+				buf->rpc_type_time[j] = type_time;
+			}
+			if (buf->rpc_type_cnt[i]) {
+				rpc_type_ave_time[i] = buf->rpc_type_time[i] /
+						       buf->rpc_type_cnt[i];
+			}
+		}
+		for (i = 0; i < buf->rpc_user_size; i++) {
+			for (j = i+1; j < buf->rpc_user_size; j++) {
+				if (buf->rpc_user_id[i] <= buf->rpc_user_id[j])
+					continue;
+				user_id   = buf->rpc_user_id[i];
+				user_cnt  = buf->rpc_user_cnt[i];
+				user_time = buf->rpc_user_time[i];
+				buf->rpc_user_id[i]   = buf->rpc_user_id[j];
+				buf->rpc_user_cnt[i]  = buf->rpc_user_cnt[j];
+				buf->rpc_user_time[i] = buf->rpc_user_time[j];
+				buf->rpc_user_id[j]   = user_id;
+				buf->rpc_user_cnt[j]  = user_cnt;
+				buf->rpc_user_time[j] = user_time;
+			}
+			if (buf->rpc_user_cnt[i]) {
+				rpc_user_ave_time[i] = buf->rpc_user_time[i] /
+						       buf->rpc_user_cnt[i];
+			}
+		}
+	} else if (sort_by_time) {
+		for (i = 0; i < buf->rpc_type_size; i++) {
+			for (j = i+1; j < buf->rpc_type_size; j++) {
+				if (buf->rpc_type_time[i] >= buf->rpc_type_time[j])
+					continue;
+				type_id   = buf->rpc_type_id[i];
+				type_cnt  = buf->rpc_type_cnt[i];
+				type_time = buf->rpc_type_time[i];
+				buf->rpc_type_id[i]   = buf->rpc_type_id[j];
+				buf->rpc_type_cnt[i]  = buf->rpc_type_cnt[j];
+				buf->rpc_type_time[i] = buf->rpc_type_time[j];
+				buf->rpc_type_id[j]   = type_id;
+				buf->rpc_type_cnt[j]  = type_cnt;
+				buf->rpc_type_time[j] = type_time;
+			}
+			if (buf->rpc_type_cnt[i]) {
+				rpc_type_ave_time[i] = buf->rpc_type_time[i] /
+						       buf->rpc_type_cnt[i];
+			}
+		}
+		for (i = 0; i < buf->rpc_user_size; i++) {
+			for (j = i+1; j < buf->rpc_user_size; j++) {
+				if (buf->rpc_user_time[i] >= buf->rpc_user_time[j])
+					continue;
+				user_id   = buf->rpc_user_id[i];
+				user_cnt  = buf->rpc_user_cnt[i];
+				user_time = buf->rpc_user_time[i];
+				buf->rpc_user_id[i]   = buf->rpc_user_id[j];
+				buf->rpc_user_cnt[i]  = buf->rpc_user_cnt[j];
+				buf->rpc_user_time[i] = buf->rpc_user_time[j];
+				buf->rpc_user_id[j]   = user_id;
+				buf->rpc_user_cnt[j]  = user_cnt;
+				buf->rpc_user_time[j] = user_time;
+			}
+			if (buf->rpc_user_cnt[i]) {
+				rpc_user_ave_time[i] = buf->rpc_user_time[i] /
+						       buf->rpc_user_cnt[i];
+			}
+		}
+	} else if (sort_by_time2) {
+		for (i = 0; i < buf->rpc_type_size; i++) {
+			if (buf->rpc_type_cnt[i]) {
+				rpc_type_ave_time[i] = buf->rpc_type_time[i] /
+						       buf->rpc_type_cnt[i];
+			}
+		}
+		for (i = 0; i < buf->rpc_type_size; i++) {
+			for (j = i+1; j < buf->rpc_type_size; j++) {
+				if (rpc_type_ave_time[i] >= rpc_type_ave_time[j])
+					continue;
+				type_ave  = rpc_type_ave_time[i];
+				type_id   = buf->rpc_type_id[i];
+				type_cnt  = buf->rpc_type_cnt[i];
+				type_time = buf->rpc_type_time[i];
+				rpc_type_ave_time[i]  = rpc_type_ave_time[j];
+				buf->rpc_type_id[i]   = buf->rpc_type_id[j];
+				buf->rpc_type_cnt[i]  = buf->rpc_type_cnt[j];
+				buf->rpc_type_time[i] = buf->rpc_type_time[j];
+				rpc_type_ave_time[j]  = type_ave;
+				buf->rpc_type_id[j]   = type_id;
+				buf->rpc_type_cnt[j]  = type_cnt;
+				buf->rpc_type_time[j] = type_time;
+			}
+		}
+		for (i = 0; i < buf->rpc_user_size; i++) {
+			if (buf->rpc_user_cnt[i]) {
+				rpc_user_ave_time[i] = buf->rpc_user_time[i] /
+						       buf->rpc_user_cnt[i];
+			}
+		}
+		for (i = 0; i < buf->rpc_user_size; i++) {
+			for (j = i+1; j < buf->rpc_user_size; j++) {
+				if (rpc_user_ave_time[i] >= rpc_user_ave_time[j])
+					continue;
+				user_ave  = rpc_user_ave_time[i];
+				user_id   = buf->rpc_user_id[i];
+				user_cnt  = buf->rpc_user_cnt[i];
+				user_time = buf->rpc_user_time[i];
+				rpc_user_ave_time[i]  = rpc_user_ave_time[j];
+				buf->rpc_user_id[i]   = buf->rpc_user_id[j];
+				buf->rpc_user_cnt[i]  = buf->rpc_user_cnt[j];
+				buf->rpc_user_time[i] = buf->rpc_user_time[j];
+				rpc_user_ave_time[j]  = user_ave;
+				buf->rpc_user_id[j]   = user_id;
+				buf->rpc_user_cnt[j]  = user_cnt;
+				buf->rpc_user_time[j] = user_time;
+			}
+		}
+	} else { /* sort by count */
+		for (i = 0; i < buf->rpc_type_size; i++) {
+			for (j = i+1; j < buf->rpc_type_size; j++) {
+				if (buf->rpc_type_cnt[i] >= buf->rpc_type_cnt[j])
+					continue;
+				type_id   = buf->rpc_type_id[i];
+				type_cnt  = buf->rpc_type_cnt[i];
+				type_time = buf->rpc_type_time[i];
+				buf->rpc_type_id[i]   = buf->rpc_type_id[j];
+				buf->rpc_type_cnt[i]  = buf->rpc_type_cnt[j];
+				buf->rpc_type_time[i] = buf->rpc_type_time[j];
+				buf->rpc_type_id[j]   = type_id;
+				buf->rpc_type_cnt[j]  = type_cnt;
+				buf->rpc_type_time[j] = type_time;
+			}
+			if (buf->rpc_type_cnt[i]) {
+				rpc_type_ave_time[i] = buf->rpc_type_time[i] /
+						       buf->rpc_type_cnt[i];
+			}
+		}
+		for (i = 0; i < buf->rpc_user_size; i++) {
+			for (j = i+1; j < buf->rpc_user_size; j++) {
+				if (buf->rpc_user_cnt[i] >= buf->rpc_user_cnt[j])
+					continue;
+				user_id   = buf->rpc_user_id[i];
+				user_cnt  = buf->rpc_user_cnt[i];
+				user_time = buf->rpc_user_time[i];
+				buf->rpc_user_id[i]   = buf->rpc_user_id[j];
+				buf->rpc_user_cnt[i]  = buf->rpc_user_cnt[j];
+				buf->rpc_user_time[i] = buf->rpc_user_time[j];
+				buf->rpc_user_id[j]   = user_id;
+				buf->rpc_user_cnt[j]  = user_cnt;
+				buf->rpc_user_time[j] = user_time;
+			}
+			if (buf->rpc_user_cnt[i]) {
+				rpc_user_ave_time[i] = buf->rpc_user_time[i] /
+						       buf->rpc_user_cnt[i];
+			}
+		}
+	}
+}

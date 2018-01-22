@@ -7,7 +7,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -36,16 +36,14 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
+#include "config.h"
+
 #include "sstat.h"
 
-void _destroy_steps(void *object);
-void _print_header(void);
-void *_stat_thread(void *args);
-int _sstat_query(slurm_step_layout_t *step_layout, uint32_t job_id,
-		 uint32_t step_id);
-int _process_results();
 int _do_stat(uint32_t jobid, uint32_t stepid, char *nodelist,
-	     uint32_t req_cpufreq);
+	     uint32_t req_cpufreq_min, uint32_t req_cpufreq_max,
+	     uint32_t req_cpufreq_gov,
+	     uint16_t use_protocol_ver);
 
 /*
  * Globals
@@ -60,7 +58,7 @@ print_field_t fields[] = {
 	{10, "AveRSS", print_fields_str, PRINT_AVERSS},
 	{10, "AveVMSize", print_fields_str, PRINT_AVEVSIZE},
 	{14, "ConsumedEnergy", print_fields_str, PRINT_CONSUMED_ENERGY},
-	{17, "ConsumedEnergyRaw", print_fields_double,
+	{17, "ConsumedEnergyRaw", print_fields_uint64,
 	 PRINT_CONSUMED_ENERGY_RAW},
 	{-12, "JobID", print_fields_str, PRINT_JOBID},
 	{12, "MaxDiskRead", print_fields_str, PRINT_MAXDISKREAD},
@@ -84,7 +82,10 @@ print_field_t fields[] = {
 	{20, "Nodelist", print_fields_str, PRINT_NODELIST},
 	{8, "NTasks", print_fields_uint, PRINT_NTASKS},
 	{20, "Pids", print_fields_str, PRINT_PIDS},
-	{10, "ReqCPUFreq", print_fields_str, PRINT_REQ_CPUFREQ},
+	{10, "ReqCPUFreq", print_fields_str, PRINT_REQ_CPUFREQ_MIN}, /*vestigial*/
+	{13, "ReqCPUFreqMin", print_fields_str, PRINT_REQ_CPUFREQ_MIN},
+	{13, "ReqCPUFreqMax", print_fields_str, PRINT_REQ_CPUFREQ_MAX},
+	{13, "ReqCPUFreqGov", print_fields_str, PRINT_REQ_CPUFREQ_GOV},
 	{0, NULL, NULL, 0}};
 
 List jobs = NULL;
@@ -95,7 +96,8 @@ ListIterator print_fields_itr = NULL;
 int field_count = 0;
 
 int _do_stat(uint32_t jobid, uint32_t stepid, char *nodelist,
-	     uint32_t req_cpufreq)
+	     uint32_t req_cpufreq_min, uint32_t req_cpufreq_max,
+	     uint32_t req_cpufreq_gov, uint16_t use_protocol_ver)
 {
 	job_step_stat_response_msg_t *step_stat_response = NULL;
 	int rc = SLURM_SUCCESS;
@@ -107,7 +109,7 @@ int _do_stat(uint32_t jobid, uint32_t stepid, char *nodelist,
 	hostlist_t hl = NULL;
 
 	debug("requesting info for job %u.%u", jobid, stepid);
-	if ((rc = slurm_job_step_stat(jobid, stepid, nodelist,
+	if ((rc = slurm_job_step_stat(jobid, stepid, nodelist, use_protocol_ver,
 				      &step_stat_response)) != SLURM_SUCCESS) {
 		if (rc == ESLURM_INVALID_JOB_ID) {
 			debug("job step %u.%u has already completed",
@@ -116,6 +118,7 @@ int _do_stat(uint32_t jobid, uint32_t stepid, char *nodelist,
 			error("problem getting step_layout for %u.%u: %s",
 			      jobid, stepid, slurm_strerror(rc));
 		}
+		slurm_job_step_pids_response_msg_free(step_stat_response);
 		return rc;
 	}
 
@@ -132,7 +135,9 @@ int _do_stat(uint32_t jobid, uint32_t stepid, char *nodelist,
 	step.job_ptr = &job;
 	step.stepid = stepid;
 	step.nodes = xmalloc(BUF_SIZE);
-	step.req_cpufreq = req_cpufreq;
+	step.req_cpufreq_min = req_cpufreq_min;
+	step.req_cpufreq_max = req_cpufreq_max;
+	step.req_cpufreq_gov = req_cpufreq_gov;
 	step.stepname = NULL;
 	step.state = JOB_RUNNING;
 
@@ -195,7 +200,9 @@ int _do_stat(uint32_t jobid, uint32_t stepid, char *nodelist,
 int main(int argc, char **argv)
 {
 	ListIterator itr = NULL;
-	uint32_t req_cpufreq = NO_VAL;
+	uint32_t req_cpufreq_min = NO_VAL;
+	uint32_t req_cpufreq_max = NO_VAL;
+	uint32_t req_cpufreq_gov = NO_VAL;
 	uint32_t stepid = NO_VAL;
 	slurmdb_selected_step_t *selected_step = NULL;
 
@@ -223,7 +230,8 @@ int main(int argc, char **argv)
 	while ((selected_step = list_next(itr))) {
 		char *nodelist = NULL;
 		bool free_nodelist = false;
-		if (selected_step->stepid == INFINITE) {
+		uint16_t use_protocol_ver = NO_VAL16;
+		if (selected_step->stepid == SSTAT_BATCH_STEP) {
 			/* get the batch step info */
 			job_info_msg_t *job_ptr = NULL;
 			hostlist_t hl;
@@ -235,11 +243,28 @@ int main(int argc, char **argv)
 				continue;
 			}
 
-			stepid = NO_VAL;
+			use_protocol_ver =
+				job_ptr->job_array[0].start_protocol_ver;
+			stepid = SLURM_BATCH_SCRIPT;
 			hl = hostlist_create(job_ptr->job_array[0].nodes);
-			nodelist = hostlist_pop(hl);
+			nodelist = hostlist_shift(hl);
 			free_nodelist = true;
 			hostlist_destroy(hl);
+			slurm_free_job_info_msg(job_ptr);
+		} else if (selected_step->stepid == SSTAT_EXTERN_STEP) {
+			/* get the extern step info */
+			job_info_msg_t *job_ptr = NULL;
+
+			if (slurm_load_job(
+				    &job_ptr, selected_step->jobid, SHOW_ALL)) {
+				error("couldn't get info for job %u",
+				      selected_step->jobid);
+				continue;
+			}
+			use_protocol_ver =
+				job_ptr->job_array[0].start_protocol_ver;
+			stepid = SLURM_EXTERN_CONT;
+			nodelist = job_ptr->job_array[0].nodes;
 			slurm_free_job_info_msg(job_ptr);
 		} else if (selected_step->stepid != NO_VAL) {
 			stepid = selected_step->stepid;
@@ -258,13 +283,19 @@ int main(int argc, char **argv)
 				_do_stat(selected_step->jobid,
 					 step_ptr->job_steps[i].step_id,
 					 step_ptr->job_steps[i].nodes,
-					 step_ptr->job_steps[i].cpu_freq);
+					 step_ptr->job_steps[i].cpu_freq_min,
+					 step_ptr->job_steps[i].cpu_freq_max,
+					 step_ptr->job_steps[i].cpu_freq_gov,
+					 step_ptr->job_steps[i].
+					 start_protocol_ver);
 			}
 			slurm_free_job_step_info_response_msg(step_ptr);
 			continue;
 		} else {
 			/* get the first running step to query against. */
 			job_step_info_response_msg_t *step_ptr = NULL;
+			job_step_info_t *step_info;
+
 			if (slurm_get_job_steps(
 				    0, selected_step->jobid, NO_VAL,
 				    &step_ptr, SHOW_ALL)) {
@@ -277,24 +308,36 @@ int main(int argc, char **argv)
 				      selected_step->jobid);
 				continue;
 			}
-			stepid = step_ptr->job_steps[0].step_id;
-			nodelist = step_ptr->job_steps[0].nodes;
-			req_cpufreq = step_ptr->job_steps[0].cpu_freq;
+
+			/* If the first step is the extern step lets
+			 * just skip it.  They should ask for it
+			 * directly.
+			 */
+			if ((step_ptr->job_steps[0].step_id ==
+			    SLURM_EXTERN_CONT) && step_ptr->job_step_count > 1)
+				step_info = ++step_ptr->job_steps;
+			else
+				step_info = step_ptr->job_steps;
+			stepid = step_info->step_id;
+			nodelist = step_info->nodes;
+			req_cpufreq_min = step_info->cpu_freq_min;
+			req_cpufreq_max = step_info->cpu_freq_max;
+			req_cpufreq_gov = step_info->cpu_freq_gov;
+			use_protocol_ver = step_info->start_protocol_ver;
 		}
-		_do_stat(selected_step->jobid, stepid, nodelist, req_cpufreq);
+		_do_stat(selected_step->jobid, stepid, nodelist,
+			 req_cpufreq_min, req_cpufreq_max, req_cpufreq_gov,
+			 use_protocol_ver);
 		if (free_nodelist && nodelist)
 			free(nodelist);
 	}
 	list_iterator_destroy(itr);
 
 	xfree(params.opt_field_list);
-	if (params.opt_job_list)
-		list_destroy(params.opt_job_list);
-
+	FREE_NULL_LIST(params.opt_job_list);
 	if (print_fields_itr)
 		list_iterator_destroy(print_fields_itr);
-	if (print_fields_list)
-		list_destroy(print_fields_list);
+	FREE_NULL_LIST(print_fields_list);
 
 	return 0;
 }

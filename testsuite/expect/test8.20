@@ -1,4 +1,4 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Test of SLURM functionality
 #          Bluegene/Q only: Test that job step allocations are a valid size
@@ -12,7 +12,7 @@
 # Written by Morris Jette <jette@schedmd.com>
 #
 # This file is part of SLURM, a resource management program.
-# For details, see <http://slurm.schedmd.com/>.
+# For details, see <https://slurm.schedmd.com/>.
 # Please also read the included file: DISCLAIMER.
 #
 # SLURM is free software; you can redistribute it and/or modify it under
@@ -40,7 +40,7 @@ set prompt           "PROMPT: "
 print_header $test_id
 
 if {([test_bluegene] == 0) || [string compare [get_bluegene_type] "Q"]} {
-	send_user "\nWARNING: This test is only compatable with Bluegene/Q systems\n"
+	send_user "\nWARNING: This test is only compatible with Bluegene/Q systems\n"
 	exit $exit_code
 } elseif (![test_emulated]) {
 	send_user "\nWARNING: This test will only work on an emulated Blugene/Q system."
@@ -143,7 +143,7 @@ if {$actual_job_size != $job_size} {
 }
 
 #
-# Create job step allocations and insure they are the right size and
+# Create job step allocations and ensure they are the right size and
 # fall within the c-nodes allocated to the job
 #
 # NOTE: Change this to increment step size by one once SLURM logic can

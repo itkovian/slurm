@@ -1,7 +1,5 @@
 /*****************************************************************************\
  *  bg_core.c - blue gene node configuration processing module.
- *
- *  $Id$
  *****************************************************************************
  *  Copyright (C) 2004-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2011 Lawrence Livermore National Security.
@@ -9,7 +7,7 @@
  *  Written by Danny Auble <auble1@llnl.gov> et. al.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -120,6 +118,14 @@ static int _post_block_free(bg_record_t *bg_record, bool restore)
 		return SLURM_SUCCESS;
 	}
 
+	/* The reason restore is used on the entire list is if this
+	 * was for a bunch of small blocks.  If we record is marked to
+	 * be destroyed and it is bigger than 1 midplane destroy it
+	 * even if restore is true.
+	 */
+	 if (restore && bg_record->destroy && (bg_record->mp_count > 1))
+		restore = false;
+
 	/* If we are here we are done with the destroy so just reset it. */
 	bg_record->destroy = 0;
 
@@ -198,7 +204,7 @@ static void *_track_freeing_blocks(void *args)
 		bridge_status_update_block_list_state(track_list);
 
 		list_iterator_reset(itr);
-		/* just incase this changes from the update function */
+		/* just in case this changes from the update function */
 		track_cnt = list_count(track_list);
 		while ((bg_record = list_next(itr))) {
 			if (bg_record->magic != BLOCK_MAGIC) {
@@ -259,7 +265,7 @@ static void *_track_freeing_blocks(void *args)
 	slurm_mutex_unlock(&block_state_mutex);
 	last_bg_update = time(NULL);
 	list_iterator_destroy(itr);
-	list_destroy(track_list);
+	FREE_NULL_LIST(track_list);
 	xfree(bg_free_list);
 	return NULL;
 }
@@ -322,24 +328,27 @@ extern bool block_mp_passthrough(bg_record_t *bg_record, int mp_bit)
 
 /* block_state_mutex must be unlocked before calling this. */
 extern void bg_requeue_job(uint32_t job_id, bool wait_for_start,
-			   bool slurmctld_locked, uint16_t job_state,
+			   bool slurmctld_locked, uint32_t job_state,
 			   bool preempted)
 {
 	int rc;
 	slurmctld_lock_t job_write_lock = {
-		NO_LOCK, WRITE_LOCK, WRITE_LOCK, NO_LOCK };
+		NO_LOCK, WRITE_LOCK, WRITE_LOCK, NO_LOCK, READ_LOCK };
 
 	/* Wait for the slurmd to begin the batch script, slurm_fail_job()
 	   is a no-op if issued prior to the script initiation do
-	   clean up just incase the fail job isn't ran. */
+	   clean up just in case the fail job isn't ran. */
 	if (wait_for_start)
 		sleep(2);
 
 	if (!slurmctld_locked)
 		lock_slurmctld(job_write_lock);
-	if ((rc = job_requeue(0, job_id, -1, (uint16_t)NO_VAL, preempted))) {
-		error("Couldn't requeue job %u, failing it: %s",
-		      job_id, slurm_strerror(rc));
+	rc = job_requeue(0, job_id, NULL, preempted, 0);
+	if (rc == ESLURM_JOB_PENDING) {
+		error("%s: Could not requeue pending job %u", __func__, job_id);
+	} else if (rc != SLURM_SUCCESS) {
+		error("%s: Could not requeue job %u, failing it: %s",
+		      __func__, job_id, slurm_strerror(rc));
 		job_fail(job_id, job_state);
 	}
 	if (!slurmctld_locked)
@@ -456,7 +465,7 @@ extern int bg_free_block(bg_record_t *bg_record, bool wait, bool locked)
 		*/
 		if (bg_record->state & BG_BLOCK_ERROR_FLAG) {
 			/* This will set the state to ERROR(Free)
-			 * just incase the state was ERROR(SOMETHING ELSE) */
+			 * just in case the state was ERROR(SOMETHING ELSE) */
 			bg_record->state = BG_BLOCK_ERROR_FLAG;
 			break;
 		} else if (!wait || (count >= 3))
@@ -639,8 +648,7 @@ extern void free_block_list(uint32_t job_id, List track_list,
 
 	if (kill_job_list) {
 		bg_status_process_kill_job_list(kill_job_list, JOB_FAILED, 0);
-		list_destroy(kill_job_list);
-		kill_job_list = NULL;
+		FREE_NULL_LIST(kill_job_list);
 	}
 
 	if (wait) {
@@ -693,7 +701,7 @@ extern int node_already_down(char *node_name)
  */
 extern const char *bg_err_str(int inx)
 {
-	static char tmp_char[10];
+	static char tmp_char[32];
 
 	switch (inx) {
 	case SLURM_SUCCESS:

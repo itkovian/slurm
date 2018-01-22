@@ -8,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -122,7 +122,7 @@ extern int task_g_pre_setuid(stepd_step_rec_t *job);
  *
  * RET - slurm error code
  */
-extern int task_g_pre_launch_priv(stepd_step_rec_t *job);
+extern int task_g_pre_launch_priv(stepd_step_rec_t *job, pid_t pid);
 
 /*
  * Note that a task launch is about to occur.
@@ -145,5 +145,19 @@ extern int task_g_post_term(stepd_step_rec_t *job,
  * RET - slurm error code
  */
 extern int task_g_post_step(stepd_step_rec_t *job);
+
+/*
+ * Keep track of a pid.
+ *
+ * RET - slurm error code
+ */
+extern int task_g_add_pid(pid_t pid);
+
+
+extern void task_slurm_chkaffinity(cpu_set_t *mask, stepd_step_rec_t *job,
+				   int statval);
+extern char *task_cpuset_to_str(const cpu_set_t *mask, char *str);
+
+extern int task_str_to_cpuset(cpu_set_t *mask, const char* str);
 
 #endif /* _SLURMD_TASK_PLUGIN_H_ */

@@ -6,7 +6,7 @@
  *  Written by Morris Jette <jette@schedmd.com>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -35,26 +35,14 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#if HAVE_CONFIG_H
-#   include "config.h"
-#endif
-
-#if HAVE_STDINT_H
-#  include <stdint.h>
-#endif
-
-#if HAVE_INTTYPES_H
-#  include <inttypes.h>
-#endif
-
-#include <stdio.h>
-
-#include <sys/types.h>
-#include <signal.h>
-#include <stdlib.h>
-#include <unistd.h>
 #include <dlfcn.h>
+#include <inttypes.h>
 #include <pthread.h>
+#include <signal.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 #include "slurm/slurm.h"
 #include "slurm/slurm_errno.h"
@@ -88,14 +76,14 @@
  * only load authentication plugins if the plugin_type string has a prefix
  * of "auth/".
  *
- * plugin_version   - specifies the version number of the plugin.
- * min_plug_version - specifies the minumum version number of incoming
- *                    messages that this plugin can accept
+ * plugin_version - an unsigned 32-bit integer containing the Slurm version
+ * (major.minor.micro combined into a single number).
  */
 const char plugin_name[]       	= "Job submit PBS plugin";
 const char plugin_type[]       	= "job_submit/pbs";
-const uint32_t plugin_version   = 100;
-const uint32_t min_plug_version = 100;
+const uint32_t plugin_version   = SLURM_VERSION_NUMBER;
+
+static pthread_mutex_t depend_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 int init (void)
 {
@@ -159,9 +147,11 @@ static void _decr_depend_cnt(struct job_record *job_ptr)
  * later. */
 static void *_dep_agent(void *args)
 {
-	struct job_record *job_ptr = (struct job_record *) args;
+	/* Locks: Write job, read node, read partition */
 	slurmctld_lock_t job_write_lock = {
-		NO_LOCK, WRITE_LOCK, NO_LOCK, NO_LOCK};
+		READ_LOCK, WRITE_LOCK, READ_LOCK, READ_LOCK, NO_LOCK };
+
+	struct job_record *job_ptr = (struct job_record *) args;
 	char *end_ptr = NULL, *tok;
 	int cnt = 0;
 
@@ -179,6 +169,7 @@ static void *_dep_agent(void *args)
 	if (cnt == 0)
 		set_job_prio(job_ptr);
 	unlock_slurmctld(job_write_lock);
+
 	return NULL;
 }
 
@@ -187,18 +178,15 @@ static void _xlate_before(char *depend, uint32_t submit_uid, uint32_t my_job_id)
 	uint32_t job_id;
 	char *last_ptr = NULL, *new_dep = NULL, *tok, *type;
 	struct job_record *job_ptr;
-        pthread_attr_t attr;
-	pthread_t dep_thread;
-
 
 	tok = strtok_r(depend, ":", &last_ptr);
-	if (!strcmp(tok, "before"))
+	if (!xstrcmp(tok, "before"))
 		type = "after";
-	else if (!strcmp(tok, "beforeany"))
+	else if (!xstrcmp(tok, "beforeany"))
 		type = "afterany";
-	else if (!strcmp(tok, "beforenotok"))
+	else if (!xstrcmp(tok, "beforenotok"))
 		type = "afternotok";
-	else if (!strcmp(tok, "beforeok"))
+	else if (!xstrcmp(tok, "beforeok"))
 		type = "afterok";
 	else {
 		info("%s: discarding invalid job dependency option %s",
@@ -206,6 +194,16 @@ static void _xlate_before(char *depend, uint32_t submit_uid, uint32_t my_job_id)
 		return;
 	}
 
+	/* NOTE: We are updating a job record here in order to implement
+	 * the depend=before option. We are doing so without the write lock
+	 * on the job record, but using a local mutex to prevent multiple
+	 * updates on the same job when multiple jobs satisfying the dependency
+	 * are being processed at the same time (all with read locks). The
+	 * job read lock will prevent anyone else from getting a job write
+	 * lock and using a job write lock causes serious performance problems
+	 * for slow job_submit plugins. Not an ideal solution, but the best
+	 * option that we see. */
+	slurm_mutex_lock(&depend_mutex);
 	tok = strtok_r(NULL, ":", &last_ptr);
 	while (tok) {
 		job_id = atoi(tok);
@@ -235,14 +233,11 @@ static void _xlate_before(char *depend, uint32_t submit_uid, uint32_t my_job_id)
 			new_dep = NULL;
 			_decr_depend_cnt(job_ptr);
 
-			slurm_attr_init(&attr);
-			pthread_attr_setdetachstate(&attr,
-						    PTHREAD_CREATE_DETACHED);
-			pthread_create(&dep_thread, &attr, _dep_agent, job_ptr);
-			slurm_attr_destroy(&attr);
+			slurm_thread_create_detached(NULL, _dep_agent, job_ptr);
 		}
 		tok = strtok_r(NULL, ":", &last_ptr);
 	}
+	slurm_mutex_unlock(&depend_mutex);
 }
 
 /* Translate PBS job dependencies to Slurm equivalents to the exptned possible
@@ -276,18 +271,18 @@ static void _xlate_dependency(struct job_descriptor *job_desc,
 
 	tok = strtok_r(job_desc->dependency, ",", &last_ptr);
 	while (tok) {
-		if (!strncmp(tok, "after", 5)  ||
-		    !strncmp(tok, "expand", 6) ||
-		    !strncmp(tok, "singleton", 9)) {
+		if (!xstrncmp(tok, "after", 5)  ||
+		    !xstrncmp(tok, "expand", 6) ||
+		    !xstrncmp(tok, "singleton", 9)) {
 			if (result)
 				xstrcat(result, ",");
 			xstrcat(result, tok);
-		} else if (!strncmp(tok, "on:", 3)) {
+		} else if (!xstrncmp(tok, "on:", 3)) {
 			job_desc->priority = 0;	/* Job is held */
 			if (job_desc->comment)
 				xstrcat(job_desc->comment, ",");
 			xstrcat(job_desc->comment, tok);
-		} else if (!strncmp(tok, "before", 6)) {
+		} else if (!xstrncmp(tok, "before", 6)) {
 			_xlate_before(tok, submit_uid, my_job_id);
 		} else {
 			info("%s: discarding unknown job dependency option %s",
@@ -305,8 +300,9 @@ static void _xlate_dependency(struct job_descriptor *job_desc,
 extern int job_submit(struct job_descriptor *job_desc, uint32_t submit_uid)
 {
 	char *std_out, *tok;
-	uint32_t my_job_id = get_next_job_id();
+	uint32_t my_job_id;
 
+	my_job_id = get_next_job_id(true);
 	_xlate_dependency(job_desc, submit_uid, my_job_id);
 
 	if (job_desc->account)
@@ -358,6 +354,8 @@ extern int job_submit(struct job_descriptor *job_desc, uint32_t submit_uid)
 extern int job_modify(struct job_descriptor *job_desc,
 		      struct job_record *job_ptr, uint32_t submit_uid)
 {
+	/* Locks: Read config, write job, read node, read partition
+	 * HAVE BEEN SET ON ENTRY TO THIS FUNCTION */
 	char *tok;
 
 	xassert(job_ptr);

@@ -7,7 +7,7 @@
  *  Written by Rod Schultz <rod.schultz@bull.com>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://www.schedmd.com/slurmdocs/>.
+ *  For details, see <https://slurm.schedmd.com>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -47,12 +47,12 @@
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/slurm_protocol_defs.h"
 #include "src/slurmd/common/proctrack.h"
+#include "src/common/slurm_acct_gather_profile.h"
 
 #include <fcntl.h>
 #include <signal.h>
 
 #define _DEBUG 1
-#define _DEBUG_STATS 1
 
 /*
  * These variables are required by the generic plugin interface.  If they
@@ -76,16 +76,12 @@
  * only load job completion logging plugins if the plugin_type string has a
  * prefix of "jobacct/".
  *
- * plugin_version - an unsigned 32-bit integer giving the version number
- * of the plugin.  If major and minor revisions are desired, the major
- * version number may be multiplied by a suitable magnitude constant such
- * as 100 or 1000.  Various SLURM versions will likely require a certain
- * minimum version for their plugins as the job accounting API
- * matures.
+ * plugin_version - an unsigned 32-bit integer containing the Slurm version
+ * (major.minor.micro combined into a single number).
  */
 const char plugin_name[] = "AcctGatherProfile NONE plugin";
 const char plugin_type[] = "acct_gather_Profile/none";
-const uint32_t plugin_version = 100;
+const uint32_t plugin_version = SLURM_VERSION_NUMBER;
 
 /*
  * init() is called when the plugin is loaded, before any other functions
@@ -93,7 +89,7 @@ const uint32_t plugin_version = 100;
  */
 extern int init(void)
 {
-	verbose("%s loaded", plugin_name);
+	debug("%s loaded", plugin_name);
 	return SLURM_SUCCESS;
 }
 
@@ -135,7 +131,12 @@ extern int acct_gather_profile_p_node_step_start(stepd_step_rec_t* job)
 	return SLURM_SUCCESS;
 }
 
-extern int acct_gather_profile_p_node_step_end()
+extern int acct_gather_profile_p_child_forked(void)
+{
+	return SLURM_SUCCESS;
+}
+
+extern int acct_gather_profile_p_node_step_end(void)
 {
 	return SLURM_SUCCESS;
 }
@@ -150,7 +151,19 @@ extern int acct_gather_profile_p_task_end(pid_t taskpid)
 	return SLURM_SUCCESS;
 }
 
-extern int acct_gather_profile_p_add_sample_data(uint32_t type, void* data)
+extern int acct_gather_profile_p_create_group(const char* name)
+{
+	return SLURM_SUCCESS;
+}
+
+extern int acct_gather_profile_p_create_dataset(
+	const char* name, int parent, acct_gather_profile_dataset_t *dataset)
+{
+	return SLURM_SUCCESS;
+}
+
+extern int acct_gather_profile_p_add_sample_data(int dataset_id, void* data,
+						 time_t sample_time)
 {
 	return SLURM_SUCCESS;
 }
@@ -159,3 +172,9 @@ extern void acct_gather_profile_p_conf_values(List *data)
 {
 	return;
 }
+
+extern bool acct_gather_profile_p_is_active(uint32_t type)
+{
+	return false;
+}
+

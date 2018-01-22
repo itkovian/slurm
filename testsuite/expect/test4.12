@@ -1,4 +1,4 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Test of SLURM functionality
 #          Test of sinfo cpu total and allocated
@@ -13,7 +13,7 @@
 # CODE-OCEC-09-009. All rights reserved.
 #
 # This file is part of SLURM, a resource management program.
-# For details, see <http://slurm.schedmd.com/>.
+# For details, see <https://slurm.schedmd.com/>.
 # Please also read the included file: DISCLAIMER.
 #
 # SLURM is free software; you can redistribute it and/or modify it under
@@ -292,10 +292,31 @@ proc allocate_and_quit { node proc_cnt total_procs } {
 
 print_header $test_id
 
+if {[test_select_type_params "CR_ONE_TASK_PER_CORE"]} {
+	send_user "\nWARNING: This test is incompatible SelectTypeParameters=CR_ONE_TASK_PER_CORE\n"
+	exit 0
+}
+
 # find the default partition
 set def_part [default_partition]
 
 # find the nodes in the default partition
+set def_node_name ""
+spawn $sinfo -h -o "=%N=" -p $def_part
+expect {
+	-re "=($alpha_numeric).($number)-($number).=" {
+		set def_node_name $expect_out(1,string)
+		exp_continue
+	}
+	eof {
+		wait
+	}
+}
+if {[string compare $def_node_name ""] == 0} {
+	send_user "\nWARNING: Node name format not supported for this test\n"
+	exit $exit_code
+}
+
 log_user 0
 set def_hostlist ""
 set part_exclusive 0
@@ -309,7 +330,7 @@ expect {
 		set def_hostlist $expect_out(1,string)
 		exp_continue
 	}
-	-re " Shared=EXCLUSIVE" {
+	-re " OverSubscribe=EXCLUSIVE" {
 		set part_exclusive 1
 		exp_continue
 	}
@@ -434,22 +455,15 @@ if {![string compare $select_type "bluegene"]} {
 } elseif {![string compare $select_type "linear"]} {
 	 set smallest $inode_procs
 } else {
-	set select_params [test_select_type_params]
 	if {$part_exclusive == 1} {
 		set smallest $inode_procs
-	} elseif {![string compare $select_params "CR_CPU"]} {
+	} elseif {[test_select_type_params "CR_CPU"]} {
 		set smallest $inode_threads_per_core
-	} elseif {![string compare $select_params "CR_CPU_MEMORY"]} {
+	} elseif {[test_select_type_params "NONE"]} {
 		set smallest $inode_threads_per_core
-	} elseif {![string compare $select_params "NONE"]} {
+	} elseif {[test_select_type_params "CR_CORE"]} {
 		set smallest $inode_threads_per_core
-	} elseif {![string compare $select_params "CR_CORE"]} {
-		set smallest $inode_threads_per_core
-	} elseif {![string compare $select_params "CR_CORE_MEMORY"]} {
-		set smallest $inode_threads_per_core
-	} elseif {![string compare $select_params "CR_SOCKET"]} {
-		set smallest [expr $inode_cores_per_socket *$inode_threads_per_core]
-	} elseif {![string compare $select_params "CR_SOCKET_MEMORY"]} {
+	} elseif {[test_select_type_params "CR_SOCKET"]} {
 		set smallest [expr $inode_cores_per_socket *$inode_threads_per_core]
 	} else {
 		send_user "\nWARNING: failed to parse SelectTypeParameters '$select_params'\n"

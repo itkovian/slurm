@@ -1,4 +1,4 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Test of srun functionality
 #          Test of hostfile option (-hostfile) inside of an allocation.
@@ -15,7 +15,7 @@
 # UCRL-CODE-217948.
 #
 # This file is part of SLURM, a resource management program.
-# For details, see <http://slurm.schedmd.com/>.
+# For details, see <https://slurm.schedmd.com/>.
 # Please also read the included file: DISCLAIMER.
 #
 # SLURM is free software; you can redistribute it and/or modify it under
@@ -62,12 +62,9 @@ if {[test_launch_poe]} {
 
 # find out if we have enough nodes to test functionality
 set partition [default_partition]
-
 set node_count [get_node_cnt_in_part $partition]
 if { $node_count < 3 } {
-	send_user "WARNING: system must have at least 3 \
-		   nodes to run this test on.  This system \
-		   only has $node_count.\n"
+	send_user "WARNING: Insufficient nodes in default partition ($node_count < 3)\n"
 	exit $exit_code
 }
 
@@ -86,7 +83,7 @@ make_bash_script $file_in "
 "
 
 set timeout $max_job_delay
-set salloc_pid [spawn $salloc -N$num_nodes -v -t1 ./$file_in]
+set salloc_pid [spawn $salloc -N$num_nodes -v -t2 ./$file_in]
 expect {
 	-re "salloc: Granted job allocation ($number)" {
 		set job_id $expect_out(1,string)
@@ -96,7 +93,7 @@ expect {
 		#send_user "Job initiated\n"
 	}
 	timeout {
-		send_user "\nFAILURE: srun not responding\n"
+		send_user "\nFAILURE: salloc not responding\n"
 		slow_kill $salloc_pid
 		set exit_code 1
 	}
@@ -205,7 +202,7 @@ for {set i 0} {$i<4} {incr i} {
 		}
 		timeout {
 			send_user "\nFAILURE: srun not responding\n"
-			exec $scancel --quiet $job_id
+			cancel_job $job_id
 			set exit_code 1
 		}
 		eof {
@@ -366,7 +363,7 @@ for {set i 0} {$i<5} {incr i} {
 		}
 		timeout {
 			send_user "\nFAILURE: srun not responding\n"
-			exec $scancel --quiet $job_id
+			cancel_job $job_id
 			set exit_code 1
 		}
 		eof {
@@ -374,30 +371,30 @@ for {set i 0} {$i<5} {incr i} {
 	}
 	if { $i == 1 } {
 		if { [string compare $node0 $1node2] } {
-			send_user "\nFAILURE: tasks not distributed by hostfile\n"
+			send_user "\nFAILURE: tasks not distributed by -w\n"
 			set exit_code 1
 		} elseif { [string compare $node1 $1node0] } {
-			send_user "\nFAILURE: tasks not distributed by hostfile\n"
+			send_user "\nFAILURE: tasks not distributed by -w\n"
 			set exit_code 1
 		} elseif { [string compare $node2 $1node1] } {
-			send_user "\nFAILURE: tasks not distributed by hostfile\n"
+			send_user "\nFAILURE: tasks not distributed by -w\n"
 			set exit_code 1
 		}
 	} elseif { $i == 2 } {
 		if { [string compare $node0 $2node0] } {
-			send_user "\nFAILURE: tasks not distributed by hostfile\n"
+			send_user "\nFAILURE: tasks not distributed by -w\n"
 			set exit_code 1
 		} elseif { [string compare $node1 $2node1] } {
-			send_user "\nFAILURE: tasks not distributed by hostfile\n"
+			send_user "\nFAILURE: tasks not distributed by -w\n"
 			set exit_code 1
 		} elseif { [string compare $node2 $2node2] } {
-			send_user "\nFAILURE: tasks not distributed by hostfile\n"
+			send_user "\nFAILURE: tasks not distributed by -w\n"
 			set exit_code 1
 		} elseif { [string compare $node3 $2node3] } {
-			send_user "\nFAILURE: tasks not distributed by hostfile\n"
+			send_user "\nFAILURE: tasks not distributed by -w\n"
 			set exit_code 1
 		} elseif { [string compare $node4 $2node4] } {
-			send_user "\nFAILURE: tasks not distributed by hostfile\n"
+			send_user "\nFAILURE: tasks not distributed by -w\n"
 			set exit_code 1
 		}
 	} elseif { $i == 3 } {
@@ -416,6 +413,7 @@ expect {
 	}
 	timeout {
 		send_user "\nFAILURE: srun not responding\n"
+		cancel_job $job_id
 		kill_srun
 		exit 1
 	}

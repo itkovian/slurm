@@ -1,8 +1,7 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Test of SLURM functionality
-#          Validates the rpm build is accepting the prefix and that
-#          Slurm is being built in the correct directories.
+#          Validates that RPMs are built with the correct prefix.
 #
 #
 # Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
@@ -13,7 +12,7 @@
 # Written by Nathan Yee <nyee32@schedmd.com>
 #
 # This file is part of SLURM, a resource management program.
-# For details, see <http://slurm.schedmd.com/>.
+# For details, see <https://slurm.schedmd.com/>.
 # Please also read the included file: DISCLAIMER.
 #
 # SLURM is free software; you can redistribute it and/or modify it under
@@ -32,7 +31,7 @@
 ############################################################################
 source ./globals
 
-set test_id      "test30.1"
+set test_id      "30.1"
 set tar_name     "Slurm-0-0.tar.bz2"
 set prefix_loc   "_prefix /opt/slurm"
 set rpm_loc      "/opt/slurm"
@@ -76,9 +75,15 @@ if {[test_cray] || [test_alps]} {
 	exit $exit_code
 }
 
-set timeout 1000
+if { [catch {exec which rpmbuild}]} {
+	send_user "Warning: This test requires rpmbuild to work.\n";
+	exit $exit_code
+}
+
+
+set timeout 1200
 exec $bin_rm -fr /tmp/slurm $tar_name /tmp/built_rpms
-spawn $bin_cp -L -r -v $src_dir /tmp/slurm
+spawn $bin_cp -L -R -v $src_dir /tmp/slurm
 expect {
 	timeout {
 		send_user "\nFAILURE: $src_dir was not copied\n"
@@ -174,7 +179,7 @@ expect {
 	}
 }
 set rpm_path "${rpm_base}/${sub_dir}/Slurm-0-0.${sub_dir}.rpm"
-set timeout 1000
+set timeout 1200
 
 # Check to see that srun man pages are in the correct directory.
 check_path /opt/slurm srun.1

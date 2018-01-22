@@ -1,6 +1,5 @@
 /*****************************************************************************\
  *  sfree.c - free specified block or all blocks.
- *  $Id$
  *****************************************************************************
  *  Copyright (C) 2004 The Regents of the University of California.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -9,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -96,10 +95,10 @@ static int _check_status()
 			while ((block_name = list_next(itr))) {
 				for (i=0; i<block_ptr->record_count;
 				     i++) {
-					if (!strcmp(block_name,
-						    block_ptr->
-						    block_array[i].
-						    bg_block_id)) {
+					if (!xstrcmp(block_name,
+						     block_ptr->
+						     block_array[i].
+						     bg_block_id)) {
 						if (block_ptr->
 						    block_array[i].
 						    state == BG_BLOCK_FREE)
@@ -120,7 +119,7 @@ static int _check_status()
 	return SLURM_SUCCESS;
 }
 
-int main(int argc, char *argv[])
+int main(int argc, char **argv)
 {
 	log_options_t opts = LOG_OPTS_STDERR_ONLY;
 	update_block_msg_t msg;
@@ -173,7 +172,7 @@ int main(int argc, char *argv[])
 	if (wait_full)
 		_check_status();
 
-	list_destroy(block_list);
+	FREE_NULL_LIST(block_list);
 	info("done");
 	return 0;
 }

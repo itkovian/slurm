@@ -9,7 +9,7 @@
  *  Written by Martin Perry <martin.perry@bull.com>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -41,14 +41,6 @@
 #include "select_cons_res.h"
 #include "dist_tasks.h"
 
-#if (0)
-/* Using CR_SOCKET or CR_SOCKET_MEMORY will not allocate a socket to more
- * than one job at a time, but it also will not grant a job access to more
- * CPUs on the socket than requested. If ALLOCATE_FULL_SOCKET is defined,
- * then a job will be given access to every cores on each allocated socket.
- */
-#define ALLOCATE_FULL_SOCKET 1
-#endif
 
 /* Max boards supported for best-fit across boards */
 /* Larger board configurations may require new algorithm */
@@ -74,7 +66,7 @@ uint32_t comb_counts[MAX_BOARDS][MAX_BOARDS] =
    {7,21,35,35,21,7,1,0},
    {8,28,56,70,56,28,8,1}};
 
-static int *sockets_cpu_cnt = NULL;
+static int *sockets_core_cnt = NULL;
 
 /* Generate all combinations of k integers from the
  * set of integers 0 to n-1.
@@ -308,10 +300,10 @@ static int _cmp_int_descend(const void *a, const void *b)
 
 
 /* qsort compare function for board combination socket list
- * NOTE: sockets_cpu_cnt is a global symbol in this module */
+ * NOTE: sockets_core_cnt is a global symbol in this module */
 static int _cmp_sock(const void *a, const void *b)
 {
-	return (sockets_cpu_cnt[*(int*)b] -  sockets_cpu_cnt[*(int*)a]);
+	return (sockets_core_cnt[*(int*)b] -  sockets_core_cnt[*(int*)a]);
 }
 
 /* sync up core bitmap with new CPU count using a best-fit approach
@@ -334,17 +326,20 @@ static void _block_sync_core_bitmap(struct job_record *job_ptr,
 {
 	uint32_t c, s, i, j, n, b, z, size, csize, core_cnt;
 	uint16_t cpus, num_bits, vpus = 1;
+	uint16_t cpus_per_task = job_ptr->details->cpus_per_task;
 	job_resources_t *job_res = job_ptr->job_resrcs;
 	bool alloc_cores = false, alloc_sockets = false;
 	uint16_t ntasks_per_core = 0xffff;
+	int tmp_cpt = 0;
 	int count, cpu_min, b_min, elig, s_min, comb_idx, sock_idx;
 	int elig_idx, comb_brd_idx, sock_list_idx, comb_min, board_num;
-	int* boards_cpu_cnt;
-	int* sort_brds_cpu_cnt;
+	int sock_per_comb;
+	int* boards_core_cnt;
+	int* sort_brds_core_cnt;
 	int* board_combs;
 	int* socket_list;
 	int* elig_brd_combs;
-	int* elig_cpu_cnt;
+	int* elig_core_cnt;
 	bool* sockets_used;
 	uint16_t boards_nb;
 	uint16_t nboards_nb;
@@ -352,33 +347,34 @@ static void _block_sync_core_bitmap(struct job_record *job_ptr,
 	uint16_t ncores_nb;
 	uint16_t nsockets_nb;
 	uint16_t sock_per_brd;
-	uint16_t sock_per_comb;
-	uint16_t req_cpus,best_fit_cpus = 0;
+	uint16_t req_cores,best_fit_cores = 0;
 	uint32_t best_fit_location = 0;
 	uint64_t ncomb_brd;
 	bool sufficient, best_fit_sufficient;
 
 	if (!job_res)
 		return;
-
-	if (cr_type & CR_CORE)
-		alloc_cores = true;
-	if (slurmctld_conf.select_type_param & CR_ALLOCATE_FULL_SOCKET) {
-		if (cr_type & CR_SOCKET)
-			alloc_sockets = true;
-	} else {
-		if (cr_type & CR_SOCKET)
-			alloc_cores = true;
+	if (!job_res->core_bitmap) {
+		error("%s: core_bitmap for job %u is NULL",
+		      __func__, job_ptr->job_id);
+		return;
 	}
+	if (bit_ffs(job_res->core_bitmap) == -1) {
+		error("%s: core_bitmap for job %u has no bits set",
+		      __func__, job_ptr->job_id);
+		return;
+	}
+
+	if (cr_type & CR_SOCKET)
+		alloc_sockets = true;
+	else if (cr_type & CR_CORE)
+		alloc_cores = true;
 
 	if (job_ptr->details && job_ptr->details->mc_ptr) {
 		multi_core_data_t *mc_ptr = job_ptr->details->mc_ptr;
-		if (mc_ptr->ntasks_per_core) {
+		if ((mc_ptr->ntasks_per_core != INFINITE16) &&
+		    (mc_ptr->ntasks_per_core)) {
 			ntasks_per_core = mc_ptr->ntasks_per_core;
-		}
-		if ((mc_ptr->threads_per_core != (uint16_t) NO_VAL) &&
-		    (mc_ptr->threads_per_core <  ntasks_per_core)) {
-			ntasks_per_core = mc_ptr->threads_per_core;
 		}
 	}
 
@@ -386,11 +382,11 @@ static void _block_sync_core_bitmap(struct job_record *job_ptr,
 	csize = bit_size(job_res->core_bitmap);
 
 	sockets_nb  = select_node_record[0].sockets;
-	sockets_cpu_cnt = xmalloc(sockets_nb * sizeof(int));
+	sockets_core_cnt = xmalloc(sockets_nb * sizeof(int));
 	sockets_used = xmalloc(sockets_nb * sizeof(bool));
 	boards_nb = select_node_record[0].boards;
-	boards_cpu_cnt = xmalloc(boards_nb * sizeof(int));
-	sort_brds_cpu_cnt = xmalloc(boards_nb * sizeof(int));
+	boards_core_cnt = xmalloc(boards_nb * sizeof(int));
+	sort_brds_core_cnt = xmalloc(boards_nb * sizeof(int));
 
 	for (c = 0, i = 0, n = 0; n < size; n++) {
 
@@ -407,12 +403,22 @@ static void _block_sync_core_bitmap(struct job_record *job_ptr,
 			fatal("cons_res: _block_sync_core_bitmap index error");
 
 		cpus  = job_res->cpus[i];
-		vpus  = MIN(select_node_record[n].vpus, ntasks_per_core);
+		vpus = cr_cpus_per_core(job_ptr->details, n);
 
 		/* compute still required cores on the node */
-		req_cpus = cpus / vpus;
+		req_cores = cpus / vpus;
 		if ( cpus % vpus )
-			req_cpus++;
+			req_cores++;
+
+		/* figure out core cnt if task requires more than one core and
+		 * tasks_per_core is 1 */
+		if ((ntasks_per_core == 1) &&
+		    (cpus_per_task > vpus)) {
+			/* how many cores a task will consume */
+			int cores_per_task = (cpus_per_task + vpus - 1) / vpus;
+			int tasks = cpus / cpus_per_task;
+			req_cores = tasks * cores_per_task;
+		}
 
 		if (nboards_nb > MAX_BOARDS) {
 			debug3("cons_res: node[%u]: exceeds max boards; "
@@ -422,46 +428,54 @@ static void _block_sync_core_bitmap(struct job_record *job_ptr,
 
 		if ( nsockets_nb > sockets_nb) {
 			sockets_nb = nsockets_nb;
-			xrealloc(sockets_cpu_cnt, sockets_nb * sizeof(int));
+			xrealloc(sockets_core_cnt, sockets_nb * sizeof(int));
 			xrealloc(sockets_used,sockets_nb * sizeof(bool));
 		}
 
 		if ( nboards_nb > boards_nb) {
 			boards_nb = nboards_nb;
-			xrealloc(boards_cpu_cnt, boards_nb * sizeof(int));
-			xrealloc(sort_brds_cpu_cnt, boards_nb * sizeof(int));
+			xrealloc(boards_core_cnt, boards_nb * sizeof(int));
+			xrealloc(sort_brds_core_cnt, boards_nb * sizeof(int));
 		}
 
 		/* Count available cores on each socket and board */
-		sock_per_brd = nsockets_nb / nboards_nb;
+		if (nsockets_nb >= nboards_nb) {
+			sock_per_brd = nsockets_nb / nboards_nb;
+		} else {
+			error("Node socket count lower than board count "
+			      "(%u < %u), job %u node %s",
+			      nsockets_nb, nboards_nb, job_ptr->job_id,
+			      node_record_table_ptr[n].name);
+			sock_per_brd = 1;
+		}
 		for (b = 0; b < nboards_nb; b++) {
-			boards_cpu_cnt[b] = 0;
-			sort_brds_cpu_cnt[b] = 0;
+			boards_core_cnt[b] = 0;
+			sort_brds_core_cnt[b] = 0;
 		}
 		for (s = 0; s < nsockets_nb; s++) {
-			sockets_cpu_cnt[s]=0;
+			sockets_core_cnt[s]=0;
 			sockets_used[s]=false;
 			b = s/sock_per_brd;
 			for ( j = c + (s * ncores_nb) ;
 			      j < c + ((s+1) * ncores_nb) ;
 			      j++ ) {
 				if ( bit_test(job_res->core_bitmap,j) ) {
-					sockets_cpu_cnt[s]++;
-					boards_cpu_cnt[b]++;
-					sort_brds_cpu_cnt[b]++;
+					sockets_core_cnt[s]++;
+					boards_core_cnt[b]++;
+					sort_brds_core_cnt[b]++;
 				}
 			}
 		}
 
 		/* Sort boards in descending order of available core count */
-		qsort(sort_brds_cpu_cnt, nboards_nb, sizeof (int),
+		qsort(sort_brds_core_cnt, nboards_nb, sizeof (int),
 				_cmp_int_descend);
 		/* Determine minimum number of boards required for the
 		 * allocation (b_min) */
 		count = 0;
 		for (b = 0; b < nboards_nb; b++) {
-			count+=sort_brds_cpu_cnt[b];
-			if (count >= req_cpus)
+			count+=sort_brds_core_cnt[b];
+			if (count >= req_cores)
 				break;
 		}
 		b_min = b+1;
@@ -477,19 +491,19 @@ static void _block_sync_core_bitmap(struct job_record *job_ptr,
 		 * for the allocation (eligible board combinations)
 		 */
 		elig_brd_combs = xmalloc(ncomb_brd * sizeof(int));
-		elig_cpu_cnt = xmalloc(ncomb_brd * sizeof(int));
+		elig_core_cnt = xmalloc(ncomb_brd * sizeof(int));
 		elig = 0;
 		for (comb_idx = 0; comb_idx < ncomb_brd; comb_idx++) {
 			count = 0;
 			for (comb_brd_idx = 0; comb_brd_idx < b_min;
 				comb_brd_idx++) {
 				board_num = board_combs[(comb_idx * b_min)
-				                        + comb_brd_idx];
-				count += boards_cpu_cnt[board_num];
+							+ comb_brd_idx];
+				count += boards_core_cnt[board_num];
 			}
-			if (count >= req_cpus) {
+			if (count >= req_cores) {
 				elig_brd_combs[elig] = comb_idx;
-				elig_cpu_cnt[elig] = count;
+				elig_core_cnt[elig] = count;
 				elig++;
 			}
 		}
@@ -511,7 +525,7 @@ static void _block_sync_core_bitmap(struct job_record *job_ptr,
 			for (comb_brd_idx = 0; comb_brd_idx < b_min;
 							comb_brd_idx++) {
 				board_num = board_combs[(comb_idx * b_min)
-				                        + comb_brd_idx];
+							+ comb_brd_idx];
 				sock_list_idx = (elig_idx * sock_per_comb) +
 					(comb_brd_idx * sock_per_brd);
 				for (sock_idx = 0; sock_idx < sock_per_brd;
@@ -531,8 +545,8 @@ static void _block_sync_core_bitmap(struct job_record *job_ptr,
 			for (b = 0; b < sock_per_comb; b++) {
 				sock_idx =
 				socket_list[(int)((elig_idx*sock_per_comb)+b)];
-				count+=sockets_cpu_cnt[sock_idx];
-				if (count >= req_cpus)
+				count+=sockets_core_cnt[sock_idx];
+				if (count >= req_cores)
 					break;
 			}
 			b++;
@@ -540,17 +554,21 @@ static void _block_sync_core_bitmap(struct job_record *job_ptr,
 			 * of required sockets and minimum number of CPUs
 			 */
 			if ((b < s_min) ||
-				(b == s_min && elig_cpu_cnt[elig_idx]
-				                            <= cpu_min)) {
+				(b == s_min && elig_core_cnt[elig_idx]
+							    <= cpu_min)) {
 				s_min = b;
 				comb_min = elig_idx;
-				cpu_min = elig_cpu_cnt[elig_idx];
+				cpu_min = elig_core_cnt[elig_idx];
 			}
 		}
-		debug3("cons_res: best_fit: node[%u]: required cpus: %u, "
-				"min req boards: %u,", n, cpus, b_min);
-		debug3("cons_res: best_fit: node[%u]: min req sockets: %u, "
-				"min avail cores: %u", n, s_min, cpu_min);
+		if (select_debug_flags & DEBUG_FLAG_SELECT_TYPE) {
+			info("cons_res: best_fit: node[%u]: "
+			     "required cpus: %u, min req boards: %u,",
+			     n, cpus, b_min);
+			info("cons_res: best_fit: node[%u]: "
+			     "min req sockets: %u, min avail cores: %u",
+			     n, s_min, cpu_min);
+		}
 		/* Re-sort socket list for best-fit board combination in
 		 * ascending order of socket number */
 		qsort(&socket_list[comb_min * sock_per_comb], sock_per_comb,
@@ -558,55 +576,50 @@ static void _block_sync_core_bitmap(struct job_record *job_ptr,
 
 		xfree(board_combs);
 		xfree(elig_brd_combs);
-		xfree(elig_cpu_cnt);
+		xfree(elig_core_cnt);
 
 		/* select cores from the sockets of the best-fit board
 		 * combination using a best-fit approach */
-		while( cpus > 0 ) {
+		tmp_cpt = cpus_per_task;
+		while ( cpus > 0 ) {
 
-			best_fit_cpus = 0;
+			best_fit_cores = 0;
 			best_fit_sufficient = false;
 
-			/* search for the best socket, */
-			/* starting from the last one to let more room */
-			/* in the first one for system usage */
-			for ( z = sock_per_comb-1; (int) z >= (int) 0; z-- ) {
+			/* search for the socket with best fit */
+			for ( z = 0; z < sock_per_comb; z++ ) {
 				s = socket_list[(comb_min*sock_per_comb)+z];
-				sufficient = sockets_cpu_cnt[s] >= req_cpus ;
-				if ( (best_fit_cpus == 0) ||
+				sufficient = sockets_core_cnt[s] >= req_cores;
+				if ( (best_fit_cores == 0) ||
 				     (sufficient && !best_fit_sufficient ) ||
-				     (sufficient && (sockets_cpu_cnt[s] <
-						     best_fit_cpus)) ||
-				     (!sufficient && (sockets_cpu_cnt[s] >
-						      best_fit_cpus)) ) {
-					best_fit_cpus = sockets_cpu_cnt[s];
+				     (sufficient && (sockets_core_cnt[s] <
+						     best_fit_cores)) ||
+				     (!sufficient && (sockets_core_cnt[s] >
+						      best_fit_cores)) ) {
+					best_fit_cores = sockets_core_cnt[s];
 					best_fit_location = s;
 					best_fit_sufficient = sufficient;
 				}
 			}
 
 			/* check that we have found a usable socket */
-			if ( best_fit_cpus == 0 )
+			if ( best_fit_cores == 0 )
 				break;
 
 			j = best_fit_location;
 			if (sock_per_brd)
 				j /= sock_per_brd;
-			debug3("cons_res: best_fit: using node[%u]: "
-			       "board[%u]: socket[%u]: %u cores available",
-			       n, j, best_fit_location,
-			       sockets_cpu_cnt[best_fit_location]);
+			if (select_debug_flags & DEBUG_FLAG_SELECT_TYPE) {
+				info("cons_res: best_fit: using node[%u]: "
+				     "board[%u]: socket[%u]: %u cores "
+				     "available", n, j, best_fit_location,
+				     sockets_core_cnt[best_fit_location]);
+			}
 
-			/* select socket cores from last to first */
-			/* socket[0]:Core[0] would be the last one */
 			sockets_used[best_fit_location] = true;
-
-			for ( j = c + ((best_fit_location+1) * ncores_nb)
-				      - 1 ;
-			      (int) j >= (int) (c + (best_fit_location *
-						     ncores_nb)) ;
-			      j-- ) {
-
+			for ( j = (c + (best_fit_location * ncores_nb));
+			      j < (c + ((best_fit_location + 1) * ncores_nb));
+			      j++ ) {
 				/*
 				 * if no more cpus to select
 				 * release remaining cores unless
@@ -626,13 +639,23 @@ static void _block_sync_core_bitmap(struct job_record *job_ptr,
 				 * remove cores from socket count and
 				 * cpus count using hyperthreading requirement
 				 */
-				if ( bit_test(job_res->core_bitmap,j) ) {
-					sockets_cpu_cnt[best_fit_location]--;
+				if ( bit_test(job_res->core_bitmap, j) ) {
+					sockets_core_cnt[best_fit_location]--;
 					core_cnt++;
 					if (cpus < vpus)
 						cpus = 0;
-					else
+					else if ((ntasks_per_core == 1) &&
+						 (cpus_per_task > vpus)) {
+						int used = MIN(tmp_cpt, vpus);
+						cpus -= used;
+
+						if (tmp_cpt <= used)
+							tmp_cpt = cpus_per_task;
+						else
+							tmp_cpt -= used;
+					} else {
 						cpus -= vpus;
+					}
 				} else if (alloc_sockets) {
 					/* If the core is not used, add it
 					 * anyway if allocating whole sockets */
@@ -676,9 +699,9 @@ static void _block_sync_core_bitmap(struct job_record *job_ptr,
 
 	}
 
-	xfree(boards_cpu_cnt);
-	xfree(sort_brds_cpu_cnt);
-	xfree(sockets_cpu_cnt);
+	xfree(boards_core_cnt);
+	xfree(sort_brds_core_cnt);
+	xfree(sockets_core_cnt);
 	xfree(sockets_used);
 }
 
@@ -688,7 +711,7 @@ static void _block_sync_core_bitmap(struct job_record *job_ptr,
  * virtual CPUs (hyperthreads)
  */
 static int _cyclic_sync_core_bitmap(struct job_record *job_ptr,
-				     const uint16_t cr_type)
+				     const uint16_t cr_type, bool preempt_mode)
 {
 	uint32_t c, i, j, s, n, *sock_start, *sock_end, size, csize, core_cnt;
 	uint16_t cps = 0, cpus, vpus, sockets, sock_size;
@@ -696,31 +719,26 @@ static int _cyclic_sync_core_bitmap(struct job_record *job_ptr,
 	bitstr_t *core_map;
 	bool *sock_used, *sock_avoid;
 	bool alloc_cores = false, alloc_sockets = false;
-	uint16_t ntasks_per_core = 0xffff, ntasks_per_socket = 0xffff;
+	uint16_t ntasks_per_socket = 0xffff;
+	uint16_t ntasks_per_core = 0xffff;
 	int error_code = SLURM_SUCCESS;
+	int tmp_cpt = 0; /* cpus_per_task */
 
-	if ((job_res == NULL) || (job_res->core_bitmap == NULL))
+	if ((job_res == NULL) || (job_res->core_bitmap == NULL) ||
+	    (job_ptr->details == NULL))
 		return error_code;
 
-	if (cr_type & CR_CORE)
+	if (cr_type & CR_SOCKET)
+		alloc_sockets = true;
+	else if (cr_type & CR_CORE)
 		alloc_cores = true;
-	if (slurmctld_conf.select_type_param & CR_ALLOCATE_FULL_SOCKET) {
-		if (cr_type & CR_SOCKET)
-			alloc_sockets = true;
-	} else {
-		if (cr_type & CR_SOCKET)
-			alloc_cores = true;
-	}
-	core_map = job_res->core_bitmap;
-	if (job_ptr->details && job_ptr->details->mc_ptr) {
-		multi_core_data_t *mc_ptr = job_ptr->details->mc_ptr;
-		if (mc_ptr->ntasks_per_core) {
-			ntasks_per_core = mc_ptr->ntasks_per_core;
-		}
 
-		if ((mc_ptr->threads_per_core != (uint16_t) NO_VAL) &&
-		    (mc_ptr->threads_per_core <  ntasks_per_core)) {
-			ntasks_per_core = mc_ptr->threads_per_core;
+	core_map = job_res->core_bitmap;
+	if (job_ptr->details->mc_ptr) {
+		multi_core_data_t *mc_ptr = job_ptr->details->mc_ptr;
+		if ((mc_ptr->ntasks_per_core != INFINITE16) &&
+		    (mc_ptr->ntasks_per_core)) {
+			ntasks_per_core = mc_ptr->ntasks_per_core;
 		}
 
 		if (mc_ptr->ntasks_per_socket)
@@ -740,9 +758,9 @@ static int _cyclic_sync_core_bitmap(struct job_record *job_ptr,
 			continue;
 		sockets = select_node_record[n].sockets;
 		cps     = select_node_record[n].cores;
-		vpus    = MIN(select_node_record[n].vpus, ntasks_per_core);
+		vpus    = cr_cpus_per_core(job_ptr->details, n);
 
-		if (select_debug_flags & DEBUG_FLAG_CPU_BIND) {
+		if (select_debug_flags & DEBUG_FLAG_SELECT_TYPE) {
 			info("DEBUG: job %u node %s vpus %u cpus %u",
 			     job_ptr->job_id,
 			     select_node_record[n].node_ptr->name,
@@ -800,6 +818,7 @@ static int _cyclic_sync_core_bitmap(struct job_record *job_ptr,
 			}
 			xfree(cpus_cnt);
 		} else if (job_ptr->details->cpus_per_task > 1) {
+			/* CLANG false positive */
 			/* Try to pack all CPUs of each tasks on one socket. */
 			uint32_t *cpus_cnt, cpus_per_task;
 
@@ -812,20 +831,34 @@ static int _cyclic_sync_core_bitmap(struct job_record *job_ptr,
 				}
 				cpus_cnt[s] -= (cpus_cnt[s] % cpus_per_task);
 			}
+			tmp_cpt = cpus_per_task;
 			for (s = 0; ((s < sockets) && (cpus > 0)); s++) {
 				while ((sock_start[s] < sock_end[s]) &&
 				       (cpus_cnt[s] > 0) && (cpus > 0)) {
 					if (bit_test(core_map, sock_start[s])) {
+						int used;
 						sock_used[s] = true;
 						core_cnt++;
+
+						if ((ntasks_per_core == 1) &&
+						    (cpus_per_task > vpus)) {
+							used = MIN(tmp_cpt,
+								   vpus);
+							if (tmp_cpt <= used)
+								tmp_cpt = cpus_per_task;
+							else
+								tmp_cpt -= used;
+						} else
+							used = vpus;
+
 						if (cpus_cnt[s] < vpus)
 							cpus_cnt[s] = 0;
 						else
-							cpus_cnt[s] -= vpus;
+							cpus_cnt[s] -= used;
 						if (cpus < vpus)
 							cpus = 0;
 						else
-							cpus -= vpus;
+							cpus -= used;
 					}
 					sock_start[s]++;
 				}
@@ -855,15 +888,19 @@ static int _cyclic_sync_core_bitmap(struct job_record *job_ptr,
 					cpus -= vpus;
 				sock_start[s]++;
 			}
-			if (prev_cpus == cpus) {
+			if (prev_cpus != cpus)
+				 continue;
+			if (!preempt_mode) {
 				/* we're stuck! */
 				job_ptr->priority = 0;
 				job_ptr->state_reason = WAIT_HELD;
-				error("cons_res: sync loop not progressing, "
-				      "holding job %u", job_ptr->job_id);
-				error_code = SLURM_ERROR;
-				goto fini;
+				error("%s: sync loop not progressing on node %s, holding job %u",
+				      __func__,
+				      select_node_record[n].node_ptr->name,
+				      job_ptr->job_id);
 			}
+			error_code = SLURM_ERROR;
+			goto fini;
 		}
 
 		/* clear the rest of the cores in each socket
@@ -902,6 +939,40 @@ fini:	xfree(sock_avoid);
 	return error_code;
 }
 
+/* Remove any specialized cores from those allocated to the job */
+static void _clear_spec_cores(job_resources_t *job_res,
+			      bitstr_t *avail_core_bitmap)
+{
+	int first_node, last_node, i_node;
+	int first_core, last_core, i_core;
+	int alloc_node = -1, alloc_core = -1, size;
+
+	size = bit_size(job_res->core_bitmap);
+	bit_nset(job_res->core_bitmap, 0, size - 1);
+
+	first_node = bit_ffs(job_res->node_bitmap);
+	if (first_node >= 0)
+		last_node = bit_fls(job_res->node_bitmap);
+	else
+		last_node = first_node - 1;
+
+	for (i_node = first_node; i_node <= last_node; i_node++) {
+		if (!bit_test(job_res->node_bitmap, i_node))
+			continue;
+		job_res->cpus[++alloc_node] = 0;
+		first_core = cr_get_coremap_offset(i_node);
+		last_core  = cr_get_coremap_offset(i_node + 1) - 1;
+		for (i_core = first_core; i_core <= last_core; i_core++) {
+			alloc_core++;
+			if (bit_test(avail_core_bitmap, i_core)) {
+				job_res->cpus[alloc_node] +=
+					select_node_record[i_node].vpus;
+			} else {
+				bit_clear(job_res->core_bitmap, alloc_core);
+			}
+		}
+	}
+}
 
 /* To effectively deal with heterogeneous nodes, we fake a cyclic
  * distribution to figure out how many cpus are needed on each node.
@@ -930,25 +1001,39 @@ fini:	xfree(sock_avoid);
  * - "cyclic" removes cores "evenly", starting from the last socket,
  * - "block" removes cores from the "last" socket(s)
  * - "plane" removes cores "in chunks"
+ *
+ * IN job_ptr - job to be allocated resources
+ * IN cr_type - allocation type (sockets, cores, etc.)
+ * IN preempt_mode - true if testing with simulated preempted jobs
+ * IN avail_core_bitmap - system-wide bitmap of cores originally available to
+ *		the job, only used to identify specialized cores
  */
-extern int cr_dist(struct job_record *job_ptr, const uint16_t cr_type)
+extern int cr_dist(struct job_record *job_ptr, const uint16_t cr_type,
+		   bool preempt_mode, bitstr_t *avail_core_bitmap)
 {
 	int error_code, cr_cpu = 1;
 
-	if (((job_ptr->job_resrcs->node_req == NODE_CR_RESERVED) ||
-	     (job_ptr->details->whole_node != 0)) &&
-	    (job_ptr->details->core_spec == 0)) {
-		/* the job has been allocated an EXCLUSIVE set of nodes,
-		 * so it gets all of the bits in the core_bitmap and
-		 * all of the available CPUs in the cpus array */
-		int size = bit_size(job_ptr->job_resrcs->core_bitmap);
-		bit_nset(job_ptr->job_resrcs->core_bitmap, 0, size-1);
+	if (job_ptr->details->core_spec != NO_VAL16) {
+		/* The job has been allocated all non-specialized cores,
+		 * so we don't need to select specific CPUs. */
+		return SLURM_SUCCESS;
+	}
+
+	if ((job_ptr->job_resrcs->node_req == NODE_CR_RESERVED) ||
+	    (job_ptr->details->whole_node == 1)) {
+		/* The job has been allocated an EXCLUSIVE set of nodes,
+		 * so it gets all of the bits in the core_bitmap and all of
+		 * the available CPUs in the cpus array. Up to this point
+		 * we might not have the correct CPU count, but a core count
+		 * and ignoring specialized cores. Fix that too. */
+		_clear_spec_cores(job_ptr->job_resrcs, avail_core_bitmap);
 		return SLURM_SUCCESS;
 	}
 
 	_log_select_maps("cr_dist/start", job_ptr->job_resrcs->node_bitmap,
 			 job_ptr->job_resrcs->core_bitmap);
-	if (job_ptr->details->task_dist == SLURM_DIST_PLANE) {
+	if ((job_ptr->details->task_dist & SLURM_DIST_STATE_BASE) ==
+	    SLURM_DIST_PLANE) {
 		/* perform a plane distribution on the 'cpus' array */
 		error_code = _compute_plane_dist(job_ptr);
 		if (error_code != SLURM_SUCCESS) {
@@ -984,7 +1069,7 @@ extern int cr_dist(struct job_record *job_ptr, const uint16_t cr_type)
 	 * by the next code block
 	 */
 	if ( slurmctld_conf.select_type_param & CR_CORE_DEFAULT_DIST_BLOCK ) {
-		switch(job_ptr->details->task_dist) {
+		switch(job_ptr->details->task_dist & SLURM_DIST_NODEMASK) {
 		case SLURM_DIST_ARBITRARY:
 		case SLURM_DIST_BLOCK:
 		case SLURM_DIST_CYCLIC:
@@ -997,7 +1082,7 @@ extern int cr_dist(struct job_record *job_ptr, const uint16_t cr_type)
 	/* Determine the number of logical processors per node needed
 	 * for this job. Make sure below matches the layouts in
 	 * lllp_distribution in plugins/task/affinity/dist_task.c (FIXME) */
-	switch(job_ptr->details->task_dist) {
+	switch(job_ptr->details->task_dist & SLURM_DIST_NODESOCKMASK) {
 	case SLURM_DIST_BLOCK_BLOCK:
 	case SLURM_DIST_CYCLIC_BLOCK:
 	case SLURM_DIST_PLANE:
@@ -1011,7 +1096,8 @@ extern int cr_dist(struct job_record *job_ptr, const uint16_t cr_type)
 	case SLURM_DIST_BLOCK_CFULL:
 	case SLURM_DIST_CYCLIC_CFULL:
 	case SLURM_DIST_UNKNOWN:
-		error_code = _cyclic_sync_core_bitmap(job_ptr, cr_type);
+		error_code = _cyclic_sync_core_bitmap(job_ptr, cr_type,
+						      preempt_mode);
 		break;
 	default:
 		error("select/cons_res: invalid task_dist entry");

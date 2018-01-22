@@ -8,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -40,17 +40,8 @@
 #ifndef _HAVE_SLURM_CRED_H
 #define _HAVE_SLURM_CRED_H
 
-#ifdef HAVE_CONFIG_H
-#  include "config.h"
-#endif
-
-#if HAVE_UNISTD_H
-#  include <unistd.h>
-#endif
-
-#if HAVE_SYS_TYPES_H
-#  include <sys/types.h>
-#endif
+#include <sys/types.h>
+#include <unistd.h>
 
 #include "src/common/bitstring.h"
 #include "src/common/macros.h"
@@ -146,7 +137,11 @@ int  slurm_cred_ctx_unpack(slurm_cred_ctx_t ctx, Buf buffer);
 typedef struct {
 	uint32_t  jobid;
 	uint32_t  stepid;
-	uid_t     uid;
+	uid_t uid;
+	gid_t gid;
+	char *user_name;
+	int ngids;
+	gid_t *gids;
 
 	/* job_core_bitmap and step_core_bitmap cover the same set of nodes,
 	 * namely the set of nodes allocated to the job. The core and socket
@@ -156,23 +151,28 @@ typedef struct {
 	uint32_t *sock_core_rep_count;	/* Used for job/step_core_bitmaps */
 
 	/* JOB specific info */
+	char     *job_constraints;	/* constraints in job allocation */
 	bitstr_t *job_core_bitmap;	/* cores allocated to JOB */
 	uint16_t  job_core_spec;	/* count of specialized cores */
 	char     *job_hostlist;		/* list of nodes allocated to JOB */
-	uint32_t  job_mem_limit;	/* MB of memory reserved per node OR
+	uint64_t  job_mem_limit;	/* MB of memory reserved per node OR
 					 * real memory per CPU | MEM_PER_CPU,
 					 * default=0 (no limit) */
 	uint32_t  job_nhosts;		/* count of nodes allocated to JOB */
 	List job_gres_list;		/* Generic resources allocated to JOB */
+	uint16_t  x11;			/* x11 flag set on job */
 
 	/* STEP specific info */
 	bitstr_t *step_core_bitmap;	/* cores allocated to STEP */
 	char     *step_hostlist;	/* list of nodes allocated to STEP */
-	uint32_t  step_mem_limit;	/* MB of memory reserved per node OR
+	uint64_t  step_mem_limit;	/* MB of memory reserved per node OR
 					 * real memory per CPU | MEM_PER_CPU,
 					 * default=0 (no limit) */
 	List step_gres_list;		/* Generic resources allocated to STEP */
 } slurm_cred_arg_t;
+
+/* Initialize the plugin. */
+int slurm_crypto_init(void);
 
 /* Terminate the plugin and release all memory. */
 int slurm_crypto_fini(void);
@@ -318,7 +318,7 @@ int slurm_cred_get_signature(slurm_cred_t *cred, char **datap,
  */
 void format_core_allocs(slurm_cred_t *cred, char *node_name, uint16_t cpus,
 			 char **job_alloc_cores, char **step_alloc_cores,
-			 uint32_t *job_mem_limit, uint32_t *step_mem_limit);
+			 uint64_t *job_mem_limit, uint64_t *step_mem_limit);
 
 /*
  * Retrieve the job and step generic resources (gres) allocate to this job
@@ -338,19 +338,31 @@ void slurm_cred_print(slurm_cred_t *cred);
  * Functions to create, delete, pack, and unpack an sbcast credential
  * Caller of extract_sbcast_cred() must xfree returned node string
  */
+
+typedef struct {
+	uint32_t job_id;
+	uid_t uid;
+	gid_t gid;
+	char *user_name;
+	int ngids;
+	gid_t *gids;
+
+	time_t expiration;
+	char *nodes;
+} sbcast_cred_arg_t;
+
 sbcast_cred_t *create_sbcast_cred(slurm_cred_ctx_t ctx,
-				  uint32_t job_id, char *nodes,
-				  time_t expiration);
-void          delete_sbcast_cred(sbcast_cred_t *sbcast_cred);
-int           extract_sbcast_cred(slurm_cred_ctx_t ctx,
-				  sbcast_cred_t *sbcast_cred, uint16_t block_no,
-				  uint32_t *job_id, char **nodes);
-void          pack_sbcast_cred(sbcast_cred_t *sbcast_cred, Buf buffer);
-sbcast_cred_t *unpack_sbcast_cred(Buf buffer);
-void          print_sbcast_cred(sbcast_cred_t *sbcast_cred);
+				  sbcast_cred_arg_t *arg,
+				  uint16_t protocol_version);
+void delete_sbcast_cred(sbcast_cred_t *sbcast_cred);
+sbcast_cred_arg_t *extract_sbcast_cred(slurm_cred_ctx_t ctx,
+				       sbcast_cred_t *sbcast_cred,
+				       uint16_t block_no,
+				       uint16_t protocol_version);
+void pack_sbcast_cred(sbcast_cred_t *sbcast_cred, Buf buffer,
+		      uint16_t protocol_Version);
+sbcast_cred_t *unpack_sbcast_cred(Buf buffer, uint16_t protocol_version);
+void print_sbcast_cred(sbcast_cred_t *sbcast_cred);
+void sbcast_cred_arg_free(sbcast_cred_arg_t *arg);
 
-
-#ifdef DISABLE_LOCALTIME
-extern char * timestr (const time_t *tp, char *buf, size_t n);
-#endif
 #endif  /* _HAVE_SLURM_CREDS_H */

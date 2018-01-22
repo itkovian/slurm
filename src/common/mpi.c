@@ -7,7 +7,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -36,18 +36,16 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#if HAVE_CONFIG_H
-#  include "config.h"
-#endif
+#include "config.h"
 
-#include <unistd.h>
 #include <stdlib.h>
+#include <unistd.h>
 
+#include "src/common/env.h"
 #include "src/common/macros.h"
 #include "src/common/plugin.h"
 #include "src/common/plugrack.h"
-#include "src/common/env.h"
-#include "src/common/mpi.h"
+#include "src/common/slurm_mpi.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
 
@@ -65,7 +63,6 @@ typedef struct slurm_mpi_ops {
 	mpi_plugin_client_state_t *
 	             (*client_prelaunch)  (const mpi_plugin_client_info_t *job,
 					   char ***env);
-	bool         (*client_single_task)(void);
 	int          (*client_fini)       (mpi_plugin_client_state_t *);
 } slurm_mpi_ops_t;
 
@@ -77,7 +74,6 @@ static const char *syms[] = {
 	"p_mpi_hook_slurmstepd_prefork",
 	"p_mpi_hook_slurmstepd_task",
 	"p_mpi_hook_client_prelaunch",
-	"p_mpi_hook_client_single_task_per_node",
 	"p_mpi_hook_client_fini"
 };
 
@@ -111,7 +107,7 @@ int _mpi_init (char *mpi_type)
 		goto done;
 	}
 
-	if (!strcmp(mpi_type, "list")) {
+	if (!xstrcmp(mpi_type, "list")) {
 		char *plugin_dir;
 		plugrack_t mpi_rack;
 
@@ -158,6 +154,7 @@ int mpi_hook_slurmstepd_init (char ***env)
 	if (_mpi_init(mpi_type) == SLURM_ERROR)
 		return SLURM_ERROR;
 
+	/* Unset env var so that "none" doesn't exist in salloc'ed env */
 	unsetenvp (*env, "SLURM_MPI_TYPE");
 
 	return SLURM_SUCCESS;
@@ -196,21 +193,6 @@ mpi_hook_client_prelaunch(const mpi_plugin_client_info_t *job, char ***env)
 		return NULL;
 
 	return (*(ops.client_prelaunch))(job, env);
-}
-
-bool mpi_hook_client_single_task_per_node (void)
-{
-	if (_mpi_init(NULL) < 0)
-		return SLURM_ERROR;
-#if defined HAVE_BGQ
-//#if defined HAVE_BGQ && defined HAVE_BG_FILES
-	/* On BGQ systems we only want 1 task to be spawned since srun
-	   is wrapping runjob.
-	*/
-	return true;
-#else
-	return (*(ops.client_single_task))();
-#endif
 }
 
 int mpi_hook_client_fini (mpi_plugin_client_state_t *state)

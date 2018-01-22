@@ -8,7 +8,7 @@
  *  Written by Danny Auble <da@llnl.gov>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -43,25 +43,47 @@
 #include <unistd.h>
 
 #include "as_mysql_archive.h"
-#include "src/common/slurmdbd_defs.h"
 #include "src/common/env.h"
+#include "src/common/slurm_time.h"
+#include "src/common/slurmdbd_defs.h"
+
+#define SLURM_15_08_PROTOCOL_VERSION ((29 << 8) | 0) /* slurm version 15.08. */
+#define SLURM_14_11_PROTOCOL_VERSION ((28 << 8) | 0) /* slurm version 14.11. */
+#define SLURM_14_03_PROTOCOL_VERSION ((27 << 8) | 0) /* slurm version
+						      * 14.03, not
+						      * needed here
+						      * but added for
+						      * reference. */
+/* Before 14.03 the DBD had it's own versioning, in 14.03 all daemons use the
+ * same version numbering. */
+#define SLURMDBD_2_6_VERSION   12	/* slurm version 2.6 */
+#define SLURMDBD_2_5_VERSION   11	/* slurm version 2.5 */
+
+#define MAX_PURGE_LIMIT 50000 /* Number of records that are purged at a time
+				 so that locks can be periodically released. */
+#define MAX_ARCHIVE_AGE (60 * 60 * 24 * 60) /* If archive data is older than
+					       this then archive by month to
+					       handle large datasets. */
 
 typedef struct {
 	char *cluster_nodes;
-	char *cpu_count;
 	char *node_name;
 	char *period_end;
 	char *period_start;
 	char *reason;
 	char *reason_uid;
 	char *state;
+	char *tres_str;
 } local_event_t;
 
 typedef struct {
 	char *account;
-	char *alloc_cpus;
+	char *admin_comment;
 	char *alloc_nodes;
 	char *associd;
+	char *array_jobid;
+	char *array_max_tasks;
+	char *array_taskid;
 	char *blockid;
 	char *derived_ec;
 	char *derived_es;
@@ -69,12 +91,15 @@ typedef struct {
 	char *eligible;
 	char *end;
 	char *gid;
-	char *id;
+	char *job_db_inx;
 	char *jobid;
 	char *kill_requid;
+	char *mcs_label;
 	char *name;
 	char *nodelist;
 	char *node_inx;
+	char *pack_job_id;
+	char *pack_job_offset;
 	char *partition;
 	char *priority;
 	char *qos;
@@ -87,14 +112,16 @@ typedef struct {
 	char *suspended;
 	char *timelimit;
 	char *track_steps;
+	char *tres_alloc_str;
+	char *tres_req_str;
 	char *uid;
 	char *wckey;
 	char *wckey_id;
+	char *work_dir;
 } local_job_t;
 
 typedef struct {
 	char *assocs;
-	char *cpus;
 	char *flags;
 	char *id;
 	char *name;
@@ -102,6 +129,8 @@ typedef struct {
 	char *node_inx;
 	char *time_end;
 	char *time_start;
+	char *tres_str;
+	char *unused_wall;
 } local_resv_t;
 
 typedef struct {
@@ -114,8 +143,7 @@ typedef struct {
 	char *ave_vsize;
 	char *exit_code;
 	char *consumed_energy;
-	char *cpus;
-	char *id;
+	char *job_db_inx;
 	char *kill_requid;
 	char *max_disk_read;
 	char *max_disk_read_node;
@@ -142,35 +170,66 @@ typedef struct {
 	char *period_end;
 	char *period_start;
 	char *period_suspended;
-	char *req_cpufreq;
+	char *req_cpufreq_min;
+	char *req_cpufreq_max;
+	char *req_cpufreq_gov;
 	char *state;
 	char *stepid;
 	char *sys_sec;
 	char *sys_usec;
 	char *tasks;
 	char *task_dist;
+	char *tres_alloc_str;
 	char *user_sec;
 	char *user_usec;
 } local_step_t;
 
 typedef struct {
 	char *associd;
-	char *id;
+	char *job_db_inx;
 	char *period_end;
 	char *period_start;
 } local_suspend_t;
 
-/* if this changes you will need to edit the corresponding
- * enum below */
+typedef struct {
+	char *id;
+	char *timestamp;
+	char *action;
+	char *name;
+	char *actor;
+	char *info;
+	char *cluster;
+} local_txn_t;
+
+typedef struct {
+	char *alloc_secs;
+	char *id;
+	char *time_start;
+	char *tres_id;
+} local_usage_t;
+
+typedef struct {
+	char *alloc_secs;
+	char *down_secs;
+	char *idle_secs;
+	char *over_secs;
+	char *pdown_secs;
+	char *time_start;
+	char *resv_secs;
+	char *tres_id;
+	char *tres_cnt;
+} local_cluster_usage_t;
+
+/* if this changes you will need to edit the corresponding enum below */
 char *event_req_inx[] = {
 	"time_start",
 	"time_end",
 	"node_name",
 	"cluster_nodes",
-	"cpu_count",
 	"reason",
 	"reason_uid",
 	"state",
+	"tres",
 };
 
 enum {
@@ -178,20 +237,21 @@ enum {
 	EVENT_REQ_END,
 	EVENT_REQ_NODE,
 	EVENT_REQ_CNODES,
-	EVENT_REQ_CPU,
 	EVENT_REQ_REASON,
 	EVENT_REQ_REASON_UID,
 	EVENT_REQ_STATE,
+	EVENT_REQ_TRES,
 	EVENT_REQ_COUNT
 };
 
-/* if this changes you will need to edit the corresponding
- * enum below */
+/* if this changes you will need to edit the corresponding enum below */
 static char *job_req_inx[] = {
 	"account",
-	"cpus_alloc",
+	"array_max_tasks",
 	"nodes_alloc",
 	"id_assoc",
+	"id_array_job",
+	"id_array_task",
 	"id_block",
 	"derived_ec",
 	"derived_es",
@@ -203,9 +263,12 @@ static char *job_req_inx[] = {
 	"job_db_inx",
 	"id_job",
 	"kill_requid",
+	"mcs_label",
 	"job_name",
 	"nodelist",
 	"node_inx",
+	"pack_job_id",
+	"pack_job_offset",
 	"`partition`",
 	"priority",
 	"id_qos",
@@ -219,14 +282,19 @@ static char *job_req_inx[] = {
 	"track_steps",
 	"id_user",
 	"wckey",
-	"id_wckey"
+	"id_wckey",
+	"work_dir",
+	"tres_alloc",
+	"tres_req",
 };
 
 enum {
 	JOB_REQ_ACCOUNT,
-	JOB_REQ_ALLOC_CPUS,
+	JOB_REQ_ARRAY_MAX,
 	JOB_REQ_ALLOC_NODES,
 	JOB_REQ_ASSOCID,
+	JOB_REQ_ARRAYJOBID,
+	JOB_REQ_ARRAYTASKID,
 	JOB_REQ_BLOCKID,
 	JOB_REQ_DERIVED_EC,
 	JOB_REQ_DERIVED_ES,
@@ -235,18 +303,21 @@ enum {
 	JOB_REQ_ELIGIBLE,
 	JOB_REQ_END,
 	JOB_REQ_GID,
-	JOB_REQ_ID,
+	JOB_REQ_DB_INX,
 	JOB_REQ_JOBID,
 	JOB_REQ_KILL_REQUID,
+	JOB_REQ_MCS_LABEL,
 	JOB_REQ_NAME,
 	JOB_REQ_NODELIST,
 	JOB_REQ_NODE_INX,
-	JOB_REQ_RESVID,
+	JOB_REQ_PACK_JOB_ID,
+	JOB_REQ_PACK_JOB_OFFSET,
 	JOB_REQ_PARTITION,
 	JOB_REQ_PRIORITY,
 	JOB_REQ_QOS,
 	JOB_REQ_REQ_CPUS,
 	JOB_REQ_REQ_MEM,
+	JOB_REQ_RESVID,
 	JOB_REQ_START,
 	JOB_REQ_STATE,
 	JOB_REQ_SUBMIT,
@@ -255,6 +326,9 @@ enum {
 	JOB_REQ_UID,
 	JOB_REQ_WCKEY,
 	JOB_REQ_WCKEYID,
+	JOB_REQ_WORK_DIR,
+	JOB_REQ_TRESA,
+	JOB_REQ_TRESR,
 	JOB_REQ_COUNT
 };
 
@@ -262,30 +336,31 @@ enum {
 char *resv_req_inx[] = {
 	"id_resv",
 	"assoclist",
-	"cpus",
 	"flags",
+	"tres",
 	"nodelist",
 	"node_inx",
 	"resv_name",
 	"time_start",
 	"time_end",
+	"unused_wall",
 };
 
 enum {
 	RESV_REQ_ID,
 	RESV_REQ_ASSOCS,
-	RESV_REQ_CPUS,
 	RESV_REQ_FLAGS,
+	RESV_REQ_TRES,
 	RESV_REQ_NODES,
 	RESV_REQ_NODE_INX,
 	RESV_REQ_NAME,
 	RESV_REQ_START,
 	RESV_REQ_END,
+	RESV_REQ_UNUSED,
 	RESV_REQ_COUNT
 };
 
-/* if this changes you will need to edit the corresponding
- * enum below */
+/* if this changes you will need to edit the corresponding enum below */
 static char *step_req_inx[] = {
 	"job_db_inx",
 	"id_step",
@@ -299,7 +374,6 @@ static char *step_req_inx[] = {
 	"kill_requid",
 	"exit_code",
 	"nodes_alloc",
-	"cpus_alloc",
 	"task_cnt",
 	"task_dist",
 	"user_sec",
@@ -324,7 +398,9 @@ static char *step_req_inx[] = {
 	"ave_cpu",
 	"act_cpufreq",
 	"consumed_energy",
+	"req_cpufreq_min",
 	"req_cpufreq",
+	"req_cpufreq_gov",
 	"max_disk_read",
 	"max_disk_read_task",
 	"max_disk_read_node",
@@ -332,12 +408,13 @@ static char *step_req_inx[] = {
 	"max_disk_write",
 	"max_disk_write_task",
 	"max_disk_write_node",
-	"ave_disk_write"
+	"ave_disk_write",
+	"tres_alloc",
 };
 
 
 enum {
-	STEP_REQ_ID,
+	STEP_REQ_DB_INX,
 	STEP_REQ_STEPID,
 	STEP_REQ_START,
 	STEP_REQ_END,
@@ -349,7 +426,6 @@ enum {
 	STEP_REQ_KILL_REQUID,
 	STEP_REQ_EXIT_CODE,
 	STEP_REQ_NODES,
-	STEP_REQ_CPUS,
 	STEP_REQ_TASKS,
 	STEP_REQ_TASKDIST,
 	STEP_REQ_USER_SEC,
@@ -374,7 +450,9 @@ enum {
 	STEP_REQ_AVE_CPU,
 	STEP_REQ_ACT_CPUFREQ,
 	STEP_REQ_CONSUMED_ENERGY,
-	STEP_REQ_REQ_CPUFREQ,
+	STEP_REQ_REQ_CPUFREQ_MIN,
+	STEP_REQ_REQ_CPUFREQ_MAX,
+	STEP_REQ_REQ_CPUFREQ_GOV,
 	STEP_REQ_MAX_DISK_READ,
 	STEP_REQ_MAX_DISK_READ_TASK,
 	STEP_REQ_MAX_DISK_READ_NODE,
@@ -383,11 +461,11 @@ enum {
 	STEP_REQ_MAX_DISK_WRITE_TASK,
 	STEP_REQ_MAX_DISK_WRITE_NODE,
 	STEP_REQ_AVE_DISK_WRITE,
+	STEP_REQ_TRES,
 	STEP_REQ_COUNT,
 };
 
-/* if this changes you will need to edit the corresponding
- * enum below */
+/* if this changes you will need to edit the corresponding enum below */
 static char *suspend_req_inx[] = {
 	"job_db_inx",
 	"id_assoc",
@@ -396,12 +474,92 @@ static char *suspend_req_inx[] = {
 };
 
 enum {
-	SUSPEND_REQ_ID,
+	SUSPEND_REQ_DB_INX,
 	SUSPEND_REQ_ASSOCID,
 	SUSPEND_REQ_START,
 	SUSPEND_REQ_END,
 	SUSPEND_REQ_COUNT
 };
+
+/* if this changes you will need to edit the corresponding enum below */
+static char *txn_req_inx[] = {
+	"id",
+	"timestamp",
+	"action",
+	"name",
+	"actor",
+	"info",
+	"cluster"
+};
+
+enum {
+	TXN_REQ_ID,
+	TXN_REQ_TS,
+	TXN_REQ_ACTION,
+	TXN_REQ_NAME,
+	TXN_REQ_ACTOR,
+	TXN_REQ_INFO,
+	TXN_REQ_CLUSTER,
+	TXN_REQ_COUNT
+};
+
+/* if this changes you will need to edit the corresponding enum below */
+char *usage_req_inx[] = {
+	"id",
+	"id_tres",
+	"time_start",
+	"alloc_secs",
+};
+
+enum {
+	USAGE_ID,
+	USAGE_TRES,
+	USAGE_START,
+	USAGE_ALLOC,
+	USAGE_COUNT
+};
+
+/* if this changes you will need to edit the corresponding enum below */
+char *cluster_req_inx[] = {
+	"id_tres",
+	"time_start",
+	"count",
+	"alloc_secs",
+	"down_secs",
+	"pdown_secs",
+	"idle_secs",
+	"resv_secs",
+	"over_secs",
+};
+
+enum {
+	CLUSTER_TRES,
+	CLUSTER_START,
+	CLUSTER_CNT,
+	CLUSTER_ACPU,
+	CLUSTER_DCPU,
+	CLUSTER_PDCPU,
+	CLUSTER_ICPU,
+	CLUSTER_RCPU,
+	CLUSTER_OCPU,
+	CLUSTER_COUNT
+};
+
+typedef enum {
+	PURGE_EVENT,
+	PURGE_SUSPEND,
+	PURGE_RESV,
+	PURGE_JOB,
+	PURGE_STEP,
+	PURGE_TXN,
+	PURGE_USAGE,
+	PURGE_CLUSTER_USAGE
+} purge_type_t;
+
+static uint32_t _archive_table(purge_type_t type, mysql_conn_t *mysql_conn,
+			       char *cluster_name, time_t period_end,
+			       char *arch_dir, uint32_t archive_period,
+			       char *sql_table, uint32_t usage_info);
 
 static int high_buffer_size = (1024 * 1024);
 
@@ -409,13 +567,13 @@ static void _pack_local_event(local_event_t *object,
 			      uint16_t rpc_version, Buf buffer)
 {
 	packstr(object->cluster_nodes, buffer);
-	packstr(object->cpu_count, buffer);
 	packstr(object->node_name, buffer);
 	packstr(object->period_end, buffer);
 	packstr(object->period_start, buffer);
 	packstr(object->reason, buffer);
 	packstr(object->reason_uid, buffer);
 	packstr(object->state, buffer);
+	packstr(object->tres_str, buffer);
 }
 
 /* this needs to be allocated before calling, and since we aren't
@@ -424,15 +582,28 @@ static int _unpack_local_event(local_event_t *object,
 			       uint16_t rpc_version, Buf buffer)
 {
 	uint32_t tmp32;
+	char *tmp_char;
 
-	unpackstr_ptr(&object->cluster_nodes, &tmp32, buffer);
-	unpackstr_ptr(&object->cpu_count, &tmp32, buffer);
-	unpackstr_ptr(&object->node_name, &tmp32, buffer);
-	unpackstr_ptr(&object->period_end, &tmp32, buffer);
-	unpackstr_ptr(&object->period_start, &tmp32, buffer);
-	unpackstr_ptr(&object->reason, &tmp32, buffer);
-	unpackstr_ptr(&object->reason_uid, &tmp32, buffer);
-	unpackstr_ptr(&object->state, &tmp32, buffer);
+	if (rpc_version >= SLURM_15_08_PROTOCOL_VERSION) {
+		unpackstr_ptr(&object->cluster_nodes, &tmp32, buffer);
+		unpackstr_ptr(&object->node_name, &tmp32, buffer);
+		unpackstr_ptr(&object->period_end, &tmp32, buffer);
+		unpackstr_ptr(&object->period_start, &tmp32, buffer);
+		unpackstr_ptr(&object->reason, &tmp32, buffer);
+		unpackstr_ptr(&object->reason_uid, &tmp32, buffer);
+		unpackstr_ptr(&object->state, &tmp32, buffer);
+		unpackstr_ptr(&object->tres_str, &tmp32, buffer);
+	} else {
+		unpackstr_ptr(&object->cluster_nodes, &tmp32, buffer);
+		unpackstr_ptr(&tmp_char, &tmp32, buffer);
+		object->tres_str = xstrdup_printf("%d=%s", TRES_CPU, tmp_char);
+		unpackstr_ptr(&object->node_name, &tmp32, buffer);
+		unpackstr_ptr(&object->period_end, &tmp32, buffer);
+		unpackstr_ptr(&object->period_start, &tmp32, buffer);
+		unpackstr_ptr(&object->reason, &tmp32, buffer);
+		unpackstr_ptr(&object->reason_uid, &tmp32, buffer);
+		unpackstr_ptr(&object->state, &tmp32, buffer);
+	}
 
 	return SLURM_SUCCESS;
 }
@@ -441,9 +612,12 @@ static void _pack_local_job(local_job_t *object,
 			    uint16_t rpc_version, Buf buffer)
 {
 	packstr(object->account, buffer);
-	packstr(object->alloc_cpus, buffer);
+	packstr(object->admin_comment, buffer);
 	packstr(object->alloc_nodes, buffer);
 	packstr(object->associd, buffer);
+	packstr(object->array_jobid, buffer);
+	packstr(object->array_max_tasks, buffer);
+	packstr(object->array_taskid, buffer);
 	packstr(object->blockid, buffer);
 	packstr(object->derived_ec, buffer);
 	packstr(object->derived_es, buffer);
@@ -452,12 +626,15 @@ static void _pack_local_job(local_job_t *object,
 	packstr(object->eligible, buffer);
 	packstr(object->end, buffer);
 	packstr(object->gid, buffer);
-	packstr(object->id, buffer);
+	packstr(object->job_db_inx, buffer);
 	packstr(object->jobid, buffer);
 	packstr(object->kill_requid, buffer);
+	packstr(object->mcs_label, buffer);
 	packstr(object->name, buffer);
 	packstr(object->nodelist, buffer);
 	packstr(object->node_inx, buffer);
+	packstr(object->pack_job_id, buffer);
+	packstr(object->pack_job_offset, buffer);
 	packstr(object->partition, buffer);
 	packstr(object->priority, buffer);
 	packstr(object->qos, buffer);
@@ -469,9 +646,12 @@ static void _pack_local_job(local_job_t *object,
 	packstr(object->submit, buffer);
 	packstr(object->suspended, buffer);
 	packstr(object->track_steps, buffer);
+	packstr(object->tres_alloc_str, buffer);
+	packstr(object->tres_req_str, buffer);
 	packstr(object->uid, buffer);
 	packstr(object->wckey, buffer);
 	packstr(object->wckey_id, buffer);
+	packstr(object->work_dir, buffer);
 }
 
 /* this needs to be allocated before calling, and since we aren't
@@ -480,12 +660,37 @@ static int _unpack_local_job(local_job_t *object,
 			     uint16_t rpc_version, Buf buffer)
 {
 	uint32_t tmp32;
+	char *tmp_char;
 
-	if (rpc_version >= SLURMDBD_2_6_VERSION) {
+	memset(object, 0, sizeof(local_job_t));
+
+	/* For protocols <= 14_11, job_req_inx and it's corresponding enum,
+	 * were out of sync. This caused the following variables to have the
+	 * corresponding values:
+	 * job->partition = priority
+	 * job->priority  = qos
+	 * job->qos       = req_cpus
+	 * job->req_cpus  = req_mem
+	 * job->req_mem   = resvid
+	 * job->resvid    = partition
+	 *
+	 * The values were packed in the above order. To unpack the values
+	 * into the correct variables, the unpacking order is changed to
+	 * accomodate the shift in values. job->partition is unpacked before
+	 * job->start instead of after job->node_inx.
+	 *
+	 * 15.08: job_req_inx and the it's corresponding enum were synced up
+	 * and it unpacks in the expected order.
+	 */
+
+	if (rpc_version >= SLURM_17_11_PROTOCOL_VERSION) {
 		unpackstr_ptr(&object->account, &tmp32, buffer);
-		unpackstr_ptr(&object->alloc_cpus, &tmp32, buffer);
+		unpackstr_ptr(&object->admin_comment, &tmp32, buffer);
 		unpackstr_ptr(&object->alloc_nodes, &tmp32, buffer);
 		unpackstr_ptr(&object->associd, &tmp32, buffer);
+		unpackstr_ptr(&object->array_jobid, &tmp32, buffer);
+		unpackstr_ptr(&object->array_max_tasks, &tmp32, buffer);
+		unpackstr_ptr(&object->array_taskid, &tmp32, buffer);
 		unpackstr_ptr(&object->blockid, &tmp32, buffer);
 		unpackstr_ptr(&object->derived_ec, &tmp32, buffer);
 		unpackstr_ptr(&object->derived_es, &tmp32, buffer);
@@ -494,12 +699,15 @@ static int _unpack_local_job(local_job_t *object,
 		unpackstr_ptr(&object->eligible, &tmp32, buffer);
 		unpackstr_ptr(&object->end, &tmp32, buffer);
 		unpackstr_ptr(&object->gid, &tmp32, buffer);
-		unpackstr_ptr(&object->id, &tmp32, buffer);
+		unpackstr_ptr(&object->job_db_inx, &tmp32, buffer);
 		unpackstr_ptr(&object->jobid, &tmp32, buffer);
 		unpackstr_ptr(&object->kill_requid, &tmp32, buffer);
+		unpackstr_ptr(&object->mcs_label, &tmp32, buffer);
 		unpackstr_ptr(&object->name, &tmp32, buffer);
 		unpackstr_ptr(&object->nodelist, &tmp32, buffer);
 		unpackstr_ptr(&object->node_inx, &tmp32, buffer);
+		unpackstr_ptr(&object->pack_job_id, &tmp32, buffer);
+		unpackstr_ptr(&object->pack_job_offset, &tmp32, buffer);
 		unpackstr_ptr(&object->partition, &tmp32, buffer);
 		unpackstr_ptr(&object->priority, &tmp32, buffer);
 		unpackstr_ptr(&object->qos, &tmp32, buffer);
@@ -511,13 +719,192 @@ static int _unpack_local_job(local_job_t *object,
 		unpackstr_ptr(&object->submit, &tmp32, buffer);
 		unpackstr_ptr(&object->suspended, &tmp32, buffer);
 		unpackstr_ptr(&object->track_steps, &tmp32, buffer);
+		unpackstr_ptr(&object->tres_alloc_str, &tmp32, buffer);
+		unpackstr_ptr(&object->tres_req_str, &tmp32, buffer);
 		unpackstr_ptr(&object->uid, &tmp32, buffer);
 		unpackstr_ptr(&object->wckey, &tmp32, buffer);
 		unpackstr_ptr(&object->wckey_id, &tmp32, buffer);
-	} else {
+		unpackstr_ptr(&object->work_dir, &tmp32, buffer);
+	} else if (rpc_version >= SLURM_17_02_PROTOCOL_VERSION) {
 		unpackstr_ptr(&object->account, &tmp32, buffer);
-		unpackstr_ptr(&object->alloc_cpus, &tmp32, buffer);
+		unpackstr_ptr(&object->admin_comment, &tmp32, buffer);
 		unpackstr_ptr(&object->alloc_nodes, &tmp32, buffer);
+		unpackstr_ptr(&object->associd, &tmp32, buffer);
+		unpackstr_ptr(&object->array_jobid, &tmp32, buffer);
+		unpackstr_ptr(&object->array_max_tasks, &tmp32, buffer);
+		unpackstr_ptr(&object->array_taskid, &tmp32, buffer);
+		unpackstr_ptr(&object->blockid, &tmp32, buffer);
+		unpackstr_ptr(&object->derived_ec, &tmp32, buffer);
+		unpackstr_ptr(&object->derived_es, &tmp32, buffer);
+		unpackstr_ptr(&object->exit_code, &tmp32, buffer);
+		unpackstr_ptr(&object->timelimit, &tmp32, buffer);
+		unpackstr_ptr(&object->eligible, &tmp32, buffer);
+		unpackstr_ptr(&object->end, &tmp32, buffer);
+		unpackstr_ptr(&object->gid, &tmp32, buffer);
+		unpackstr_ptr(&object->job_db_inx, &tmp32, buffer);
+		unpackstr_ptr(&object->jobid, &tmp32, buffer);
+		unpackstr_ptr(&object->kill_requid, &tmp32, buffer);
+		unpackstr_ptr(&object->name, &tmp32, buffer);
+		unpackstr_ptr(&object->nodelist, &tmp32, buffer);
+		unpackstr_ptr(&object->node_inx, &tmp32, buffer);
+		object->pack_job_id = "0";
+		object->pack_job_offset = "4294967294";
+		unpackstr_ptr(&object->partition, &tmp32, buffer);
+		unpackstr_ptr(&object->priority, &tmp32, buffer);
+		unpackstr_ptr(&object->qos, &tmp32, buffer);
+		unpackstr_ptr(&object->req_cpus, &tmp32, buffer);
+		unpackstr_ptr(&object->req_mem, &tmp32, buffer);
+		if (object->req_mem) {
+			uint64_t tmp_uint64 = slurm_atoull(object->req_mem);
+			if ((tmp_uint64 & 0x80000000) &&
+			    (tmp_uint64 < 0x100000000)) {
+				/*
+				 * Handle old conversion of memory
+				 * stored incorrectly in the database.
+				 * This will be fixed in 17.11 and we
+				 * can remove this check.  0x80000000
+				 * was the old value of MEM_PER_CPU
+				 */
+				tmp_uint64 &= (~0x80000000);
+				tmp_uint64 |= MEM_PER_CPU;
+				xfree(object->req_mem);
+				object->req_mem = xstrdup_printf("%"PRIu64,
+								 tmp_uint64);
+			}
+		}
+		unpackstr_ptr(&object->resvid, &tmp32, buffer);
+		unpackstr_ptr(&object->start, &tmp32, buffer);
+		unpackstr_ptr(&object->state, &tmp32, buffer);
+		unpackstr_ptr(&object->submit, &tmp32, buffer);
+		unpackstr_ptr(&object->suspended, &tmp32, buffer);
+		unpackstr_ptr(&object->track_steps, &tmp32, buffer);
+		unpackstr_ptr(&object->tres_alloc_str, &tmp32, buffer);
+		unpackstr_ptr(&object->tres_req_str, &tmp32, buffer);
+		unpackstr_ptr(&object->uid, &tmp32, buffer);
+		unpackstr_ptr(&object->wckey, &tmp32, buffer);
+		unpackstr_ptr(&object->wckey_id, &tmp32, buffer);
+	} else if (rpc_version >= SLURM_15_08_PROTOCOL_VERSION) {
+		unpackstr_ptr(&object->account, &tmp32, buffer);
+		unpackstr_ptr(&object->alloc_nodes, &tmp32, buffer);
+		unpackstr_ptr(&object->associd, &tmp32, buffer);
+		unpackstr_ptr(&object->array_jobid, &tmp32, buffer);
+		unpackstr_ptr(&object->array_max_tasks, &tmp32, buffer);
+		unpackstr_ptr(&object->array_taskid, &tmp32, buffer);
+		unpackstr_ptr(&object->blockid, &tmp32, buffer);
+		unpackstr_ptr(&object->derived_ec, &tmp32, buffer);
+		unpackstr_ptr(&object->derived_es, &tmp32, buffer);
+		unpackstr_ptr(&object->exit_code, &tmp32, buffer);
+		unpackstr_ptr(&object->timelimit, &tmp32, buffer);
+		unpackstr_ptr(&object->eligible, &tmp32, buffer);
+		unpackstr_ptr(&object->end, &tmp32, buffer);
+		unpackstr_ptr(&object->gid, &tmp32, buffer);
+		unpackstr_ptr(&object->job_db_inx, &tmp32, buffer);
+		unpackstr_ptr(&object->jobid, &tmp32, buffer);
+		unpackstr_ptr(&object->kill_requid, &tmp32, buffer);
+		unpackstr_ptr(&object->name, &tmp32, buffer);
+		unpackstr_ptr(&object->nodelist, &tmp32, buffer);
+		unpackstr_ptr(&object->node_inx, &tmp32, buffer);
+		object->pack_job_id = "0";
+		object->pack_job_offset = "4294967294";
+		unpackstr_ptr(&object->partition, &tmp32, buffer);
+		unpackstr_ptr(&object->priority, &tmp32, buffer);
+		unpackstr_ptr(&object->qos, &tmp32, buffer);
+		unpackstr_ptr(&object->req_cpus, &tmp32, buffer);
+		unpackstr_ptr(&object->req_mem, &tmp32, buffer);
+		if (object->req_mem) {
+			uint64_t tmp_uint64 = slurm_atoull(object->req_mem);
+			if ((tmp_uint64 & 0x80000000) &&
+			    (tmp_uint64 < 0x100000000)) {
+				/*
+				 * Handle old conversion of memory
+				 * stored incorrectly in the database.
+				 * This will be fixed in 17.11 and we
+				 * can remove this check.  0x80000000
+				 * was the old value of MEM_PER_CPU
+				 */
+				tmp_uint64 &= (~0x80000000);
+				tmp_uint64 |= MEM_PER_CPU;
+				xfree(object->req_mem);
+				object->req_mem = xstrdup_printf("%"PRIu64,
+								 tmp_uint64);
+			}
+		}
+		unpackstr_ptr(&object->resvid, &tmp32, buffer);
+		unpackstr_ptr(&object->start, &tmp32, buffer);
+		unpackstr_ptr(&object->state, &tmp32, buffer);
+		unpackstr_ptr(&object->submit, &tmp32, buffer);
+		unpackstr_ptr(&object->suspended, &tmp32, buffer);
+		unpackstr_ptr(&object->track_steps, &tmp32, buffer);
+		unpackstr_ptr(&object->tres_alloc_str, &tmp32, buffer);
+		unpackstr_ptr(&object->tres_req_str, &tmp32, buffer);
+		unpackstr_ptr(&object->uid, &tmp32, buffer);
+		unpackstr_ptr(&object->wckey, &tmp32, buffer);
+		unpackstr_ptr(&object->wckey_id, &tmp32, buffer);
+	} else if (rpc_version >= SLURM_14_11_PROTOCOL_VERSION) {
+		unpackstr_ptr(&object->account, &tmp32, buffer);
+		unpackstr_ptr(&tmp_char, &tmp32, buffer);
+		object->tres_alloc_str = xstrdup_printf(
+			"%d=%s", TRES_CPU, tmp_char);
+		unpackstr_ptr(&object->alloc_nodes, &tmp32, buffer);
+		unpackstr_ptr(&object->associd, &tmp32, buffer);
+		unpackstr_ptr(&object->array_jobid, &tmp32, buffer);
+		unpackstr_ptr(&object->array_max_tasks, &tmp32, buffer);
+		unpackstr_ptr(&object->array_taskid, &tmp32, buffer);
+		unpackstr_ptr(&object->blockid, &tmp32, buffer);
+		unpackstr_ptr(&object->derived_ec, &tmp32, buffer);
+		unpackstr_ptr(&object->derived_es, &tmp32, buffer);
+		unpackstr_ptr(&object->exit_code, &tmp32, buffer);
+		unpackstr_ptr(&object->timelimit, &tmp32, buffer);
+		unpackstr_ptr(&object->eligible, &tmp32, buffer);
+		unpackstr_ptr(&object->end, &tmp32, buffer);
+		unpackstr_ptr(&object->gid, &tmp32, buffer);
+		unpackstr_ptr(&object->job_db_inx, &tmp32, buffer);
+		unpackstr_ptr(&object->jobid, &tmp32, buffer);
+		unpackstr_ptr(&object->kill_requid, &tmp32, buffer);
+		unpackstr_ptr(&object->name, &tmp32, buffer);
+		unpackstr_ptr(&object->nodelist, &tmp32, buffer);
+		unpackstr_ptr(&object->node_inx, &tmp32, buffer);
+		unpackstr_ptr(&object->priority, &tmp32, buffer);
+		unpackstr_ptr(&object->qos, &tmp32, buffer);
+		unpackstr_ptr(&object->req_cpus, &tmp32, buffer);
+		unpackstr_ptr(&object->req_mem, &tmp32, buffer);
+		if (object->req_mem) {
+			uint64_t tmp_uint64 = slurm_atoull(object->req_mem);
+			if ((tmp_uint64 & 0x80000000) &&
+			    (tmp_uint64 < 0x100000000)) {
+				/*
+				 * Handle old conversion of memory
+				 * stored incorrectly in the database.
+				 * This will be fixed in 17.11 and we
+				 * can remove this check.  0x80000000
+				 * was the old value of MEM_PER_CPU
+				 */
+				tmp_uint64 &= (~0x80000000);
+				tmp_uint64 |= MEM_PER_CPU;
+				xfree(object->req_mem);
+				object->req_mem = xstrdup_printf("%"PRIu64,
+								 tmp_uint64);
+			}
+		}
+		unpackstr_ptr(&object->resvid, &tmp32, buffer);
+		object->pack_job_id = "0";
+		object->pack_job_offset = "4294967294";
+		unpackstr_ptr(&object->partition, &tmp32, buffer);
+		unpackstr_ptr(&object->start, &tmp32, buffer);
+		unpackstr_ptr(&object->state, &tmp32, buffer);
+		unpackstr_ptr(&object->submit, &tmp32, buffer);
+		unpackstr_ptr(&object->suspended, &tmp32, buffer);
+		unpackstr_ptr(&object->track_steps, &tmp32, buffer);
+		unpackstr_ptr(&object->uid, &tmp32, buffer);
+		unpackstr_ptr(&object->wckey, &tmp32, buffer);
+		unpackstr_ptr(&object->wckey_id, &tmp32, buffer);
+	} else if (rpc_version >= SLURMDBD_2_6_VERSION) {
+		unpackstr_ptr(&object->account, &tmp32, buffer);
+		unpackstr_ptr(&tmp_char, &tmp32, buffer);
+		object->tres_alloc_str = xstrdup_printf(
+			"%d=%s", TRES_CPU, tmp_char);
+		unpackstr_ptr(&object->alloc_nodes, &tmp32, buffer);
+		object->array_taskid = "4294967294";
 		unpackstr_ptr(&object->associd, &tmp32, buffer);
 		unpackstr_ptr(&object->blockid, &tmp32, buffer);
 		unpackstr_ptr(&object->derived_ec, &tmp32, buffer);
@@ -527,17 +914,75 @@ static int _unpack_local_job(local_job_t *object,
 		unpackstr_ptr(&object->eligible, &tmp32, buffer);
 		unpackstr_ptr(&object->end, &tmp32, buffer);
 		unpackstr_ptr(&object->gid, &tmp32, buffer);
-		unpackstr_ptr(&object->id, &tmp32, buffer);
+		unpackstr_ptr(&object->job_db_inx, &tmp32, buffer);
 		unpackstr_ptr(&object->jobid, &tmp32, buffer);
 		unpackstr_ptr(&object->kill_requid, &tmp32, buffer);
 		unpackstr_ptr(&object->name, &tmp32, buffer);
 		unpackstr_ptr(&object->nodelist, &tmp32, buffer);
 		unpackstr_ptr(&object->node_inx, &tmp32, buffer);
+		unpackstr_ptr(&object->priority, &tmp32, buffer);
+		unpackstr_ptr(&object->qos, &tmp32, buffer);
+		unpackstr_ptr(&object->req_cpus, &tmp32, buffer);
+		unpackstr_ptr(&object->req_mem, &tmp32, buffer);
+		if (object->req_mem) {
+			uint64_t tmp_uint64 = slurm_atoull(object->req_mem);
+			if ((tmp_uint64 & 0x80000000) &&
+			    (tmp_uint64 < 0x100000000)) {
+				/*
+				 * Handle old conversion of memory
+				 * stored incorrectly in the database.
+				 * This will be fixed in 17.11 and we
+				 * can remove this check.  0x80000000
+				 * was the old value of MEM_PER_CPU
+				 */
+				tmp_uint64 &= (~0x80000000);
+				tmp_uint64 |= MEM_PER_CPU;
+				xfree(object->req_mem);
+				object->req_mem = xstrdup_printf("%"PRIu64,
+								 tmp_uint64);
+			}
+		}
+		unpackstr_ptr(&object->resvid, &tmp32, buffer);
+		object->pack_job_id = "0";
+		object->pack_job_offset = "4294967294";
 		unpackstr_ptr(&object->partition, &tmp32, buffer);
+		unpackstr_ptr(&object->start, &tmp32, buffer);
+		unpackstr_ptr(&object->state, &tmp32, buffer);
+		unpackstr_ptr(&object->submit, &tmp32, buffer);
+		unpackstr_ptr(&object->suspended, &tmp32, buffer);
+		unpackstr_ptr(&object->track_steps, &tmp32, buffer);
+		unpackstr_ptr(&object->uid, &tmp32, buffer);
+		unpackstr_ptr(&object->wckey, &tmp32, buffer);
+		unpackstr_ptr(&object->wckey_id, &tmp32, buffer);
+	} else {
+		unpackstr_ptr(&object->account, &tmp32, buffer);
+		unpackstr_ptr(&tmp_char, &tmp32, buffer);
+		object->tres_alloc_str = xstrdup_printf(
+			"%d=%s", TRES_CPU, tmp_char);
+		unpackstr_ptr(&object->alloc_nodes, &tmp32, buffer);
+		object->array_taskid = "4294967294";
+		unpackstr_ptr(&object->associd, &tmp32, buffer);
+		unpackstr_ptr(&object->blockid, &tmp32, buffer);
+		unpackstr_ptr(&object->derived_ec, &tmp32, buffer);
+		unpackstr_ptr(&object->derived_es, &tmp32, buffer);
+		unpackstr_ptr(&object->exit_code, &tmp32, buffer);
+		unpackstr_ptr(&object->timelimit, &tmp32, buffer);
+		unpackstr_ptr(&object->eligible, &tmp32, buffer);
+		unpackstr_ptr(&object->end, &tmp32, buffer);
+		unpackstr_ptr(&object->gid, &tmp32, buffer);
+		unpackstr_ptr(&object->job_db_inx, &tmp32, buffer);
+		unpackstr_ptr(&object->jobid, &tmp32, buffer);
+		unpackstr_ptr(&object->kill_requid, &tmp32, buffer);
+		unpackstr_ptr(&object->name, &tmp32, buffer);
+		unpackstr_ptr(&object->nodelist, &tmp32, buffer);
+		unpackstr_ptr(&object->node_inx, &tmp32, buffer);
 		unpackstr_ptr(&object->priority, &tmp32, buffer);
 		unpackstr_ptr(&object->qos, &tmp32, buffer);
 		unpackstr_ptr(&object->req_cpus, &tmp32, buffer);
 		unpackstr_ptr(&object->resvid, &tmp32, buffer);
+		object->pack_job_id = "0";
+		object->pack_job_offset = "4294967294";
+		unpackstr_ptr(&object->partition, &tmp32, buffer);
 		unpackstr_ptr(&object->start, &tmp32, buffer);
 		unpackstr_ptr(&object->state, &tmp32, buffer);
 		unpackstr_ptr(&object->submit, &tmp32, buffer);
@@ -554,7 +999,6 @@ static void _pack_local_resv(local_resv_t *object,
 			     uint16_t rpc_version, Buf buffer)
 {
 	packstr(object->assocs, buffer);
-	packstr(object->cpus, buffer);
 	packstr(object->flags, buffer);
 	packstr(object->id, buffer);
 	packstr(object->name, buffer);
@@ -562,6 +1006,8 @@ static void _pack_local_resv(local_resv_t *object,
 	packstr(object->node_inx, buffer);
 	packstr(object->time_end, buffer);
 	packstr(object->time_start, buffer);
+	packstr(object->tres_str, buffer);
+	packstr(object->unused_wall, buffer);
 }
 
 /* this needs to be allocated before calling, and since we aren't
@@ -570,16 +1016,41 @@ static int _unpack_local_resv(local_resv_t *object,
 			      uint16_t rpc_version, Buf buffer)
 {
 	uint32_t tmp32;
+	char *tmp_char;
 
-	unpackstr_ptr(&object->assocs, &tmp32, buffer);
-	unpackstr_ptr(&object->cpus, &tmp32, buffer);
-	unpackstr_ptr(&object->flags, &tmp32, buffer);
-	unpackstr_ptr(&object->id, &tmp32, buffer);
-	unpackstr_ptr(&object->name, &tmp32, buffer);
-	unpackstr_ptr(&object->nodes, &tmp32, buffer);
-	unpackstr_ptr(&object->node_inx, &tmp32, buffer);
-	unpackstr_ptr(&object->time_end, &tmp32, buffer);
-	unpackstr_ptr(&object->time_start, &tmp32, buffer);
+	if (rpc_version >= SLURM_17_11_PROTOCOL_VERSION) {
+		unpackstr_ptr(&object->assocs, &tmp32, buffer);
+		unpackstr_ptr(&object->flags, &tmp32, buffer);
+		unpackstr_ptr(&object->id, &tmp32, buffer);
+		unpackstr_ptr(&object->name, &tmp32, buffer);
+		unpackstr_ptr(&object->nodes, &tmp32, buffer);
+		unpackstr_ptr(&object->node_inx, &tmp32, buffer);
+		unpackstr_ptr(&object->time_end, &tmp32, buffer);
+		unpackstr_ptr(&object->time_start, &tmp32, buffer);
+		unpackstr_ptr(&object->tres_str, &tmp32, buffer);
+		unpackstr_ptr(&object->unused_wall, &tmp32, buffer);
+	} else if (rpc_version >= SLURM_15_08_PROTOCOL_VERSION) {
+		unpackstr_ptr(&object->assocs, &tmp32, buffer);
+		unpackstr_ptr(&object->flags, &tmp32, buffer);
+		unpackstr_ptr(&object->id, &tmp32, buffer);
+		unpackstr_ptr(&object->name, &tmp32, buffer);
+		unpackstr_ptr(&object->nodes, &tmp32, buffer);
+		unpackstr_ptr(&object->node_inx, &tmp32, buffer);
+		unpackstr_ptr(&object->time_end, &tmp32, buffer);
+		unpackstr_ptr(&object->time_start, &tmp32, buffer);
+		unpackstr_ptr(&object->tres_str, &tmp32, buffer);
+	} else {
+		unpackstr_ptr(&object->assocs, &tmp32, buffer);
+		unpackstr_ptr(&tmp_char, &tmp32, buffer);
+		object->tres_str = xstrdup_printf("%d=%s", TRES_CPU, tmp_char);
+		unpackstr_ptr(&object->flags, &tmp32, buffer);
+		unpackstr_ptr(&object->id, &tmp32, buffer);
+		unpackstr_ptr(&object->name, &tmp32, buffer);
+		unpackstr_ptr(&object->nodes, &tmp32, buffer);
+		unpackstr_ptr(&object->node_inx, &tmp32, buffer);
+		unpackstr_ptr(&object->time_end, &tmp32, buffer);
+		unpackstr_ptr(&object->time_start, &tmp32, buffer);
+	}
 
 	return SLURM_SUCCESS;
 }
@@ -587,128 +1058,54 @@ static int _unpack_local_resv(local_resv_t *object,
 static void _pack_local_step(local_step_t *object,
 			     uint16_t rpc_version, Buf buffer)
 {
-	if (rpc_version >= SLURMDBD_2_6_VERSION) {
-		packstr(object->act_cpufreq, buffer);
-		packstr(object->ave_cpu, buffer);
-		packstr(object->ave_disk_read, buffer);
-		packstr(object->ave_disk_write, buffer);
-		packstr(object->ave_pages, buffer);
-		packstr(object->ave_rss, buffer);
-		packstr(object->ave_vsize, buffer);
-		packstr(object->exit_code, buffer);
-		packstr(object->consumed_energy, buffer);
-		packstr(object->cpus, buffer);
-		packstr(object->id, buffer);
-		packstr(object->kill_requid, buffer);
-		packstr(object->max_disk_read, buffer);
-		packstr(object->max_disk_read_node, buffer);
-		packstr(object->max_disk_read_task, buffer);
-		packstr(object->max_disk_write, buffer);
-		packstr(object->max_disk_write_node, buffer);
-		packstr(object->max_disk_write_task, buffer);
-		packstr(object->max_pages, buffer);
-		packstr(object->max_pages_node, buffer);
-		packstr(object->max_pages_task, buffer);
-		packstr(object->max_rss, buffer);
-		packstr(object->max_rss_node, buffer);
-		packstr(object->max_rss_task, buffer);
-		packstr(object->max_vsize, buffer);
-		packstr(object->max_vsize_node, buffer);
-		packstr(object->max_vsize_task, buffer);
-		packstr(object->min_cpu, buffer);
-		packstr(object->min_cpu_node, buffer);
-		packstr(object->min_cpu_task, buffer);
-		packstr(object->name, buffer);
-		packstr(object->nodelist, buffer);
-		packstr(object->nodes, buffer);
-		packstr(object->node_inx, buffer);
-		packstr(object->period_end, buffer);
-		packstr(object->period_start, buffer);
-		packstr(object->period_suspended, buffer);
-		packstr(object->req_cpufreq, buffer);
-		packstr(object->state, buffer);
-		packstr(object->stepid, buffer);
-		packstr(object->sys_sec, buffer);
-		packstr(object->sys_usec, buffer);
-		packstr(object->tasks, buffer);
-		packstr(object->task_dist, buffer);
-		packstr(object->user_sec, buffer);
-		packstr(object->user_usec, buffer);
-	} else if (rpc_version >= SLURMDBD_2_5_VERSION) {
-		packstr(object->act_cpufreq, buffer);
-		packstr(object->ave_cpu, buffer);
-		packstr(object->ave_pages, buffer);
-		packstr(object->ave_rss, buffer);
-		packstr(object->ave_vsize, buffer);
-		packstr(object->exit_code, buffer);
-		packstr(object->consumed_energy, buffer);
-		packstr(object->cpus, buffer);
-		packstr(object->id, buffer);
-		packstr(object->kill_requid, buffer);
-		packstr(object->max_pages, buffer);
-		packstr(object->max_pages_node, buffer);
-		packstr(object->max_pages_task, buffer);
-		packstr(object->max_rss, buffer);
-		packstr(object->max_rss_node, buffer);
-		packstr(object->max_rss_task, buffer);
-		packstr(object->max_vsize, buffer);
-		packstr(object->max_vsize_node, buffer);
-		packstr(object->max_vsize_task, buffer);
-		packstr(object->min_cpu, buffer);
-		packstr(object->min_cpu_node, buffer);
-		packstr(object->min_cpu_task, buffer);
-		packstr(object->name, buffer);
-		packstr(object->nodelist, buffer);
-		packstr(object->nodes, buffer);
-		packstr(object->node_inx, buffer);
-		packstr(object->period_end, buffer);
-		packstr(object->period_start, buffer);
-		packstr(object->period_suspended, buffer);
-		packstr(object->state, buffer);
-		packstr(object->stepid, buffer);
-		packstr(object->sys_sec, buffer);
-		packstr(object->sys_usec, buffer);
-		packstr(object->tasks, buffer);
-		packstr(object->task_dist, buffer);
-		packstr(object->user_sec, buffer);
-		packstr(object->user_usec, buffer);
-	} else if (rpc_version >= SLURMDBD_VERSION_MIN) {
-		packstr(object->ave_cpu, buffer);
-		packstr(object->ave_pages, buffer);
-		packstr(object->ave_rss, buffer);
-		packstr(object->ave_vsize, buffer);
-		packstr(object->exit_code, buffer);
-		packstr(object->cpus, buffer);
-		packstr(object->id, buffer);
-		packstr(object->kill_requid, buffer);
-		packstr(object->max_pages, buffer);
-		packstr(object->max_pages_node, buffer);
-		packstr(object->max_pages_task, buffer);
-		packstr(object->max_rss, buffer);
-		packstr(object->max_rss_node, buffer);
-		packstr(object->max_rss_task, buffer);
-		packstr(object->max_vsize, buffer);
-		packstr(object->max_vsize_node, buffer);
-		packstr(object->max_vsize_task, buffer);
-		packstr(object->min_cpu, buffer);
-		packstr(object->min_cpu_node, buffer);
-		packstr(object->min_cpu_task, buffer);
-		packstr(object->name, buffer);
-		packstr(object->nodelist, buffer);
-		packstr(object->nodes, buffer);
-		packstr(object->node_inx, buffer);
-		packstr(object->period_end, buffer);
-		packstr(object->period_start, buffer);
-		packstr(object->period_suspended, buffer);
-		packstr(object->state, buffer);
-		packstr(object->stepid, buffer);
-		packstr(object->sys_sec, buffer);
-		packstr(object->sys_usec, buffer);
-		packstr(object->tasks, buffer);
-		packstr(object->task_dist, buffer);
-		packstr(object->user_sec, buffer);
-		packstr(object->user_usec, buffer);
-	}
+	packstr(object->act_cpufreq, buffer);
+	packstr(object->ave_cpu, buffer);
+	packstr(object->ave_disk_read, buffer);
+	packstr(object->ave_disk_write, buffer);
+	packstr(object->ave_pages, buffer);
+	packstr(object->ave_rss, buffer);
+	packstr(object->ave_vsize, buffer);
+	packstr(object->exit_code, buffer);
+	packstr(object->consumed_energy, buffer);
+	packstr(object->job_db_inx, buffer);
+	packstr(object->kill_requid, buffer);
+	packstr(object->max_disk_read, buffer);
+	packstr(object->max_disk_read_node, buffer);
+	packstr(object->max_disk_read_task, buffer);
+	packstr(object->max_disk_write, buffer);
+	packstr(object->max_disk_write_node, buffer);
+	packstr(object->max_disk_write_task, buffer);
+	packstr(object->max_pages, buffer);
+	packstr(object->max_pages_node, buffer);
+	packstr(object->max_pages_task, buffer);
+	packstr(object->max_rss, buffer);
+	packstr(object->max_rss_node, buffer);
+	packstr(object->max_rss_task, buffer);
+	packstr(object->max_vsize, buffer);
+	packstr(object->max_vsize_node, buffer);
+	packstr(object->max_vsize_task, buffer);
+	packstr(object->min_cpu, buffer);
+	packstr(object->min_cpu_node, buffer);
+	packstr(object->min_cpu_task, buffer);
+	packstr(object->name, buffer);
+	packstr(object->nodelist, buffer);
+	packstr(object->nodes, buffer);
+	packstr(object->node_inx, buffer);
+	packstr(object->period_end, buffer);
+	packstr(object->period_start, buffer);
+	packstr(object->period_suspended, buffer);
+	packstr(object->req_cpufreq_min, buffer);
+	packstr(object->req_cpufreq_max, buffer);
+	packstr(object->req_cpufreq_gov, buffer);
+	packstr(object->state, buffer);
+	packstr(object->stepid, buffer);
+	packstr(object->sys_sec, buffer);
+	packstr(object->sys_usec, buffer);
+	packstr(object->tasks, buffer);
+	packstr(object->task_dist, buffer);
+	packstr(object->tres_alloc_str, buffer);
+	packstr(object->user_sec, buffer);
+	packstr(object->user_usec, buffer);
 }
 
 /* this needs to be allocated before calling, and since we aren't
@@ -717,8 +1114,9 @@ static int _unpack_local_step(local_step_t *object,
 			      uint16_t rpc_version, Buf buffer)
 {
 	uint32_t tmp32;
+	char *tmp_char;
 
-	if (rpc_version >= SLURMDBD_2_6_VERSION) {
+	if (rpc_version >= SLURM_15_08_PROTOCOL_VERSION) {
 		unpackstr_ptr(&object->act_cpufreq, &tmp32, buffer);
 		unpackstr_ptr(&object->ave_cpu, &tmp32, buffer);
 		unpackstr_ptr(&object->ave_disk_read, &tmp32, buffer);
@@ -728,8 +1126,7 @@ static int _unpack_local_step(local_step_t *object,
 		unpackstr_ptr(&object->ave_vsize, &tmp32, buffer);
 		unpackstr_ptr(&object->exit_code, &tmp32, buffer);
 		unpackstr_ptr(&object->consumed_energy, &tmp32, buffer);
-		unpackstr_ptr(&object->cpus, &tmp32, buffer);
-		unpackstr_ptr(&object->id, &tmp32, buffer);
+		unpackstr_ptr(&object->job_db_inx, &tmp32, buffer);
 		unpackstr_ptr(&object->kill_requid, &tmp32, buffer);
 		unpackstr_ptr(&object->max_disk_read, &tmp32, buffer);
 		unpackstr_ptr(&object->max_disk_read_node, &tmp32, buffer);
@@ -756,26 +1153,39 @@ static int _unpack_local_step(local_step_t *object,
 		unpackstr_ptr(&object->period_end, &tmp32, buffer);
 		unpackstr_ptr(&object->period_start, &tmp32, buffer);
 		unpackstr_ptr(&object->period_suspended, &tmp32, buffer);
-		unpackstr_ptr(&object->req_cpufreq, &tmp32, buffer);
+		unpackstr_ptr(&object->req_cpufreq_min, &tmp32, buffer);
+		unpackstr_ptr(&object->req_cpufreq_max, &tmp32, buffer);
+		unpackstr_ptr(&object->req_cpufreq_gov, &tmp32, buffer);
 		unpackstr_ptr(&object->state, &tmp32, buffer);
 		unpackstr_ptr(&object->stepid, &tmp32, buffer);
 		unpackstr_ptr(&object->sys_sec, &tmp32, buffer);
 		unpackstr_ptr(&object->sys_usec, &tmp32, buffer);
 		unpackstr_ptr(&object->tasks, &tmp32, buffer);
 		unpackstr_ptr(&object->task_dist, &tmp32, buffer);
+		unpackstr_ptr(&object->tres_alloc_str, &tmp32, buffer);
 		unpackstr_ptr(&object->user_sec, &tmp32, buffer);
 		unpackstr_ptr(&object->user_usec, &tmp32, buffer);
-	} else if (rpc_version >= SLURMDBD_2_5_VERSION) {
+	} else if (rpc_version >= SLURMDBD_2_6_VERSION) {
 		unpackstr_ptr(&object->act_cpufreq, &tmp32, buffer);
 		unpackstr_ptr(&object->ave_cpu, &tmp32, buffer);
+		unpackstr_ptr(&object->ave_disk_read, &tmp32, buffer);
+		unpackstr_ptr(&object->ave_disk_write, &tmp32, buffer);
 		unpackstr_ptr(&object->ave_pages, &tmp32, buffer);
 		unpackstr_ptr(&object->ave_rss, &tmp32, buffer);
 		unpackstr_ptr(&object->ave_vsize, &tmp32, buffer);
 		unpackstr_ptr(&object->exit_code, &tmp32, buffer);
 		unpackstr_ptr(&object->consumed_energy, &tmp32, buffer);
-		unpackstr_ptr(&object->cpus, &tmp32, buffer);
-		unpackstr_ptr(&object->id, &tmp32, buffer);
+		unpackstr_ptr(&tmp_char, &tmp32, buffer);
+		object->tres_alloc_str = xstrdup_printf(
+			"%d=%s", TRES_CPU, tmp_char);
+		unpackstr_ptr(&object->job_db_inx, &tmp32, buffer);
 		unpackstr_ptr(&object->kill_requid, &tmp32, buffer);
+		unpackstr_ptr(&object->max_disk_read, &tmp32, buffer);
+		unpackstr_ptr(&object->max_disk_read_node, &tmp32, buffer);
+		unpackstr_ptr(&object->max_disk_read_task, &tmp32, buffer);
+		unpackstr_ptr(&object->max_disk_write, &tmp32, buffer);
+		unpackstr_ptr(&object->max_disk_write_node, &tmp32, buffer);
+		unpackstr_ptr(&object->max_disk_write_task, &tmp32, buffer);
 		unpackstr_ptr(&object->max_pages, &tmp32, buffer);
 		unpackstr_ptr(&object->max_pages_node, &tmp32, buffer);
 		unpackstr_ptr(&object->max_pages_task, &tmp32, buffer);
@@ -795,6 +1205,7 @@ static int _unpack_local_step(local_step_t *object,
 		unpackstr_ptr(&object->period_end, &tmp32, buffer);
 		unpackstr_ptr(&object->period_start, &tmp32, buffer);
 		unpackstr_ptr(&object->period_suspended, &tmp32, buffer);
+		unpackstr_ptr(&object->req_cpufreq_max, &tmp32, buffer);
 		unpackstr_ptr(&object->state, &tmp32, buffer);
 		unpackstr_ptr(&object->stepid, &tmp32, buffer);
 		unpackstr_ptr(&object->sys_sec, &tmp32, buffer);
@@ -803,52 +1214,21 @@ static int _unpack_local_step(local_step_t *object,
 		unpackstr_ptr(&object->task_dist, &tmp32, buffer);
 		unpackstr_ptr(&object->user_sec, &tmp32, buffer);
 		unpackstr_ptr(&object->user_usec, &tmp32, buffer);
-	} else if (rpc_version >= SLURMDBD_VERSION_MIN) {
-		unpackstr_ptr(&object->ave_cpu, &tmp32, buffer);
-		unpackstr_ptr(&object->ave_pages, &tmp32, buffer);
-		unpackstr_ptr(&object->ave_rss, &tmp32, buffer);
-		unpackstr_ptr(&object->ave_vsize, &tmp32, buffer);
-		unpackstr_ptr(&object->exit_code, &tmp32, buffer);
-		unpackstr_ptr(&object->cpus, &tmp32, buffer);
-		unpackstr_ptr(&object->id, &tmp32, buffer);
-		unpackstr_ptr(&object->kill_requid, &tmp32, buffer);
-		unpackstr_ptr(&object->max_pages, &tmp32, buffer);
-		unpackstr_ptr(&object->max_pages_node, &tmp32, buffer);
-		unpackstr_ptr(&object->max_pages_task, &tmp32, buffer);
-		unpackstr_ptr(&object->max_rss, &tmp32, buffer);
-		unpackstr_ptr(&object->max_rss_node, &tmp32, buffer);
-		unpackstr_ptr(&object->max_rss_task, &tmp32, buffer);
-		unpackstr_ptr(&object->max_vsize, &tmp32, buffer);
-		unpackstr_ptr(&object->max_vsize_node, &tmp32, buffer);
-		unpackstr_ptr(&object->max_vsize_task, &tmp32, buffer);
-		unpackstr_ptr(&object->min_cpu, &tmp32, buffer);
-		unpackstr_ptr(&object->min_cpu_node, &tmp32, buffer);
-		unpackstr_ptr(&object->min_cpu_task, &tmp32, buffer);
-		unpackstr_ptr(&object->name, &tmp32, buffer);
-		unpackstr_ptr(&object->nodelist, &tmp32, buffer);
-		unpackstr_ptr(&object->nodes, &tmp32, buffer);
-		unpackstr_ptr(&object->node_inx, &tmp32, buffer);
-		unpackstr_ptr(&object->period_end, &tmp32, buffer);
-		unpackstr_ptr(&object->period_start, &tmp32, buffer);
-		unpackstr_ptr(&object->period_suspended, &tmp32, buffer);
-		unpackstr_ptr(&object->state, &tmp32, buffer);
-		unpackstr_ptr(&object->stepid, &tmp32, buffer);
-		unpackstr_ptr(&object->sys_sec, &tmp32, buffer);
-		unpackstr_ptr(&object->sys_usec, &tmp32, buffer);
-		unpackstr_ptr(&object->tasks, &tmp32, buffer);
-		unpackstr_ptr(&object->task_dist, &tmp32, buffer);
-		unpackstr_ptr(&object->user_sec, &tmp32, buffer);
-		unpackstr_ptr(&object->user_usec, &tmp32, buffer);
+	} else {
+		goto unpack_error;
 	}
 
 	return SLURM_SUCCESS;
+
+unpack_error:
+	return SLURM_ERROR;
 }
 
 static void _pack_local_suspend(local_suspend_t *object,
 				uint16_t rpc_version, Buf buffer)
 {
 	packstr(object->associd, buffer);
-	packstr(object->id, buffer);
+	packstr(object->job_db_inx, buffer);
 	packstr(object->period_end, buffer);
 	packstr(object->period_start, buffer);
 }
@@ -861,14 +1241,101 @@ static int _unpack_local_suspend(local_suspend_t *object,
 	uint32_t tmp32;
 
 	unpackstr_ptr(&object->associd, &tmp32, buffer);
-	unpackstr_ptr(&object->id, &tmp32, buffer);
+	unpackstr_ptr(&object->job_db_inx, &tmp32, buffer);
 	unpackstr_ptr(&object->period_end, &tmp32, buffer);
 	unpackstr_ptr(&object->period_start, &tmp32, buffer);
 
 	return SLURM_SUCCESS;
 }
 
-static int _process_old_sql_line(const char *data_in, char **data_full_out)
+static void _pack_local_txn(local_txn_t *object,
+			    uint16_t rpc_version, Buf buffer)
+{
+	packstr(object->id, buffer);
+	packstr(object->timestamp, buffer);
+	packstr(object->action, buffer);
+	packstr(object->name, buffer);
+	packstr(object->actor, buffer);
+	packstr(object->info, buffer);
+	packstr(object->cluster, buffer);
+}
+
+/* this needs to be allocated before calling, and since we aren't
+ * doing any copying it needs to be used before destroying buffer */
+static int _unpack_local_txn(local_txn_t *object,
+			     uint16_t rpc_version, Buf buffer)
+{
+	uint32_t tmp32;
+
+	unpackstr_ptr(&object->id, &tmp32, buffer);
+	unpackstr_ptr(&object->timestamp, &tmp32, buffer);
+	unpackstr_ptr(&object->action, &tmp32, buffer);
+	unpackstr_ptr(&object->name, &tmp32, buffer);
+	unpackstr_ptr(&object->actor, &tmp32, buffer);
+	unpackstr_ptr(&object->info, &tmp32, buffer);
+	unpackstr_ptr(&object->cluster, &tmp32, buffer);
+
+	return SLURM_SUCCESS;
+}
+
+static void _pack_local_usage(local_usage_t *object,
+			      uint16_t rpc_version, Buf buffer)
+{
+	packstr(object->id, buffer);
+	packstr(object->tres_id, buffer);
+	packstr(object->time_start, buffer);
+	packstr(object->alloc_secs, buffer);
+}
+
+/* this needs to be allocated before calling, and since we aren't
+ * doing any copying it needs to be used before destroying buffer */
+static int _unpack_local_usage(local_usage_t *object,
+			     uint16_t rpc_version, Buf buffer)
+{
+	uint32_t tmp32;
+
+	unpackstr_ptr(&object->id, &tmp32, buffer);
+	unpackstr_ptr(&object->tres_id, &tmp32, buffer);
+	unpackstr_ptr(&object->time_start, &tmp32, buffer);
+	unpackstr_ptr(&object->alloc_secs, &tmp32, buffer);
+
+	return SLURM_SUCCESS;
+}
+
+static void _pack_local_cluster_usage(local_cluster_usage_t *object,
+				      uint16_t rpc_version, Buf buffer)
+{
+	packstr(object->tres_id, buffer);
+	packstr(object->time_start, buffer);
+	packstr(object->tres_cnt, buffer);
+	packstr(object->alloc_secs, buffer);
+	packstr(object->down_secs, buffer);
+	packstr(object->idle_secs, buffer);
+	packstr(object->resv_secs, buffer);
+	packstr(object->over_secs, buffer);
+}
+
+/* this needs to be allocated before calling, and since we aren't
+ * doing any copying it needs to be used before destroying buffer */
+static int _unpack_local_cluster_usage(local_cluster_usage_t *object,
+				       uint16_t rpc_version, Buf buffer)
+{
+	uint32_t tmp32;
+
+	unpackstr_ptr(&object->tres_id, &tmp32, buffer);
+	unpackstr_ptr(&object->time_start, &tmp32, buffer);
+	unpackstr_ptr(&object->tres_cnt, &tmp32, buffer);
+	unpackstr_ptr(&object->alloc_secs, &tmp32, buffer);
+	unpackstr_ptr(&object->down_secs, &tmp32, buffer);
+	unpackstr_ptr(&object->idle_secs, &tmp32, buffer);
+	unpackstr_ptr(&object->resv_secs, &tmp32, buffer);
+	unpackstr_ptr(&object->over_secs, &tmp32, buffer);
+
+	return SLURM_SUCCESS;
+}
+
+static int _process_old_sql_line(const char *data_in,
+				 char **cluster_name, char **data_full_out)
 {
 	int start = 0, i = 0;
 	char *beginning = NULL;
@@ -879,30 +1346,29 @@ static int _process_old_sql_line(const char *data_in, char **data_full_out)
 	char *new_vals = NULL;
 	char *vals = NULL;
 	char *new_cluster_name = NULL;
-	char *cluster_name = NULL;
 	int rc = SLURM_SUCCESS;
 	int cnt = 0, cluster_inx = -1, ending_start = 0, ending_end = 0;
 	bool delete = 0;
 	bool new_cluster = 0;
 
 	while (data_in[i]) {
-		if (!strncmp("insert into ", data_in+i, 12)) {
+		if (!xstrncmp("insert into ", data_in+i, 12)) {
 			beginning = xstrndup(data_in+i, 11);
 			i+=12;
 			break;
-		} else if (!strncmp("delete from ", data_in+i, 12)) {
+		} else if (!xstrncmp("delete from ", data_in+i, 12)) {
 			beginning = xstrndup(data_in+i, 11);
 			i+=12;
 			delete = 1;
 			break;
-		} else if (!strncmp("drop table ", data_in+i, 11)) {
+		} else if (!xstrncmp("drop table ", data_in+i, 11)) {
 			start = i;
 			i+=11;
 			while (data_in[i] && data_in[i-1] != ';')
 				i++;
 			xstrncat(data_out, data_in+start, i-start);
 			goto end_it;
-		} else if (!strncmp("truncate table ", data_in+i, 15)) {
+		} else if (!xstrncmp("truncate table ", data_in+i, 15)) {
 			start = i;
 			i+=15;
 			while (data_in[i] && data_in[i-1] != ';')
@@ -918,36 +1384,48 @@ static int _process_old_sql_line(const char *data_in, char **data_full_out)
 
 	//info("processing %s", data_in);
 	/* get table name */
-	if (!strncmp("cluster_event_table", data_in+i, 19)) {
+	if (!xstrncmp("cluster_event_table", data_in+i, 19)) {
 		i+=19;
 		table = event_table;
-	} else if (!strncmp("job_table", data_in+i, 9)) {
+	} else if (!xstrncmp("job_table", data_in+i, 9)) {
 		i+=9;
 		table = job_table;
-	} else if (!strncmp("step_table", data_in+i, 10)) {
+	} else if (!xstrncmp("step_table", data_in+i, 10)) {
 		i+=10;
 		table = step_table;
-	} else if (!strncmp("suspend_table", data_in+i, 13)) {
+	} else if (!xstrncmp("suspend_table", data_in+i, 13)) {
 		i+=13;
 		table = suspend_table;
-	} else if (!strncmp("cluster_day_usage_table", data_in+i, 23)) {
+	} else if (!xstrncmp("txn_table", data_in+i, 9)) {
+		i+=9;
+		table = txn_table;
+	} else if (!xstrncmp("cluster_day_usage_table", data_in+i, 23)) {
 		i+=23;
 		table = cluster_day_table;
-	} else if (!strncmp("cluster_hour_usage_table", data_in+i, 24)) {
+	} else if (!xstrncmp("cluster_hour_usage_table", data_in+i, 24)) {
 		i+=24;
 		table = cluster_hour_table;
-	} else if (!strncmp("cluster_month_usage_table", data_in+i, 25)) {
+	} else if (!xstrncmp("cluster_month_usage_table", data_in+i, 25)) {
 		i+=25;
 		table = cluster_month_table;
-	} else if (!strncmp("assoc_day_usage_table", data_in+i, 21)) {
+	} else if (!xstrncmp("assoc_day_usage_table", data_in+i, 21)) {
 		i+=21;
 		table = assoc_day_table;
-	} else if (!strncmp("assoc_hour_usage_table", data_in+i, 22)) {
+	} else if (!xstrncmp("assoc_hour_usage_table", data_in+i, 22)) {
 		i+=22;
 		table = assoc_hour_table;
-	} else if (!strncmp("assoc_month_usage_table", data_in+i, 23)) {
+	} else if (!xstrncmp("assoc_month_usage_table", data_in+i, 23)) {
 		i+=23;
 		table = assoc_month_table;
+	} else if (!xstrncmp("wckey_day_usage_table", data_in+i, 21)) {
+		i+=21;
+		table = wckey_day_table;
+	} else if (!xstrncmp("wckey_hour_usage_table", data_in+i, 22)) {
+		i+=22;
+		table = wckey_hour_table;
+	} else if (!xstrncmp("wckey_month_usage_table", data_in+i, 23)) {
+		i+=23;
+		table = wckey_month_table;
 	} else {
 		error("unknown table in sql '%s'", data_in);
 		rc = SLURM_ERROR;
@@ -962,73 +1440,108 @@ static int _process_old_sql_line(const char *data_in, char **data_full_out)
 			i++;
 	//info("table is %s '%s'", table, data_in+i);
 	while (data_in[i] && data_in[i] != ')') {
-		if (delete && !strncmp("where ", data_in+i, 6)) {
+		if (delete && !xstrncmp("where ", data_in+i, 6)) {
 			i+=6;
 			continue;
-		} else if (!strncmp("period_start", data_in+i, 12)) {
+		} else if (!xstrncmp("period_start", data_in+i, 12)) {
 			xstrcat(fields, "time_start");
 			i+=12;
-		} else if (!strncmp("period_end", data_in+i, 10)) {
+		} else if (!xstrncmp("period_end", data_in+i, 10)) {
 			xstrcat(fields, "time_end");
 			i+=10;
-		} else if (!strncmp("jobid", data_in+i, 5)) {
+		} else if (!xstrncmp("cpu_count", data_in+i, 9)) {
+			xstrcat(fields, "count");
+			i+=9;
+		} else if (!xstrncmp("jobid", data_in+i, 5)) {
 			xstrcat(fields, "id_job");
 			i+=5;
-		} else if (!strncmp("stepid", data_in+i, 6)) {
+		} else if (!xstrncmp("stepid", data_in+i, 6)) {
 			xstrcat(fields, "id_step");
 			i+=6;
-		} else if (!strncmp("associd", data_in+i, 7)) {
+		} else if (!xstrncmp("associd", data_in+i, 7)) {
 			xstrcat(fields, "id_assoc");
 			i+=7;
-		} else if (!strncmp("blockid", data_in+i, 7)) {
+		} else if (!xstrncmp("blockid", data_in+i, 7)) {
 			xstrcat(fields, "id_block");
 			i+=7;
-		} else if (!strncmp("wckeyid", data_in+i, 7)) {
+		} else if (!xstrncmp("wckeyid", data_in+i, 7)) {
 			xstrcat(fields, "id_wckey");
 			i+=7;
-		} else if (!strncmp("qos", data_in+i, 3)) {
+		} else if (!xstrncmp("qos", data_in+i, 3)) {
 			xstrcat(fields, "id_qos");
 			i+=3;
-		} else if (!strncmp("uid", data_in+i, 3)) {
+		} else if (!xstrncmp("uid", data_in+i, 3)) {
 			xstrcat(fields, "id_user");
 			i+=3;
-		} else if (!strncmp("gid", data_in+i, 3)) {
+		} else if (!xstrncmp("gid", data_in+i, 3)) {
 			xstrcat(fields, "id_group");
 			i+=3;
-		} else if (!strncmp("submit", data_in+i, 6)) {
+		} else if (!xstrncmp("submit", data_in+i, 6)) {
 			xstrcat(fields, "time_submit");
 			i+=6;
-		} else if (!strncmp("eligible", data_in+i, 8)) {
+		} else if (!xstrncmp("eligible", data_in+i, 8)) {
 			xstrcat(fields, "time_eligible");
 			i+=8;
-		} else if (!strncmp("start", data_in+i, 5)) {
+		} else if (!xstrncmp("start", data_in+i, 5)) {
 			xstrcat(fields, "time_start");
 			i+=5;
-		} else if (!strncmp("suspended", data_in+i, 9)) {
+		} else if (!xstrncmp("suspended", data_in+i, 9)) {
 			xstrcat(fields, "time_suspended");
 			i+=9;
-		} else if (!strncmp("end", data_in+i, 3)) {
+		} else if (!xstrncmp("end", data_in+i, 3)) {
 			xstrcat(fields, "time_end");
 			i+=3;
-		} else if (!strncmp("comp_code", data_in+i, 9)) {
+		} else if (!xstrncmp("comp_code", data_in+i, 9)) {
 			xstrcat(fields, "exit_code");
 			i+=9;
-		} else if (!strncmp("alloc_cpus", data_in+i, 10)) {
+		} else if (!xstrncmp("alloc_cpus", data_in+i, 10)) {
 			xstrcat(fields, "cpus_alloc");
 			i+=10;
-		} else if (!strncmp("req_cpus", data_in+i, 8)) {
+		} else if (!xstrncmp("req_cpus", data_in+i, 8)) {
 			xstrcat(fields, "cpus_req");
 			i+=8;
-		} else if (!strncmp("alloc_nodes", data_in+i, 11)) {
-			xstrcat(fields, "nodes_alloc");
+		} else if (!xstrncmp("alloc_nodes", data_in+i, 11)) {
 			i+=11;
-		} else if (!strncmp("name", data_in+i, 4)) {
+			if (!delete) {
+				xstrcat(fields, "nodes_alloc");
+			} else {
+				char *nodes =  NULL;
+				while (data_in[i] && data_in[i-1] != '\'')
+					i++;
+				start = i;
+				while (data_in[i] && data_in[i] != '\'')
+					i++;
+				if (!data_in[i]) {
+					error("returning here nodes_alloc");
+					rc = SLURM_ERROR;
+					goto end_it;
+				}
+				xstrncat(nodes, data_in+start, (i-start));
+				if (!fields)
+					xstrcat(fields, "where ");
+				xstrfmtcat(fields, "nodes_alloc='%s'", nodes);
+				xfree(nodes);
+				i++;
+			}
+		} else if (!xstrncmp("name", data_in+i, 4)) {
 			if (table == job_table)
 				xstrcat(fields, "job_name");
 			else if (table == step_table)
 				xstrcat(fields, "step_name");
 			i+=4;
-		} else if (!strncmp("id", data_in+i, 2)) {
+		} else if (!xstrncmp("tres_id", data_in+i, 7)) {
+			start = i;
+			while (data_in[i]
+			       && data_in[i] != ',' && data_in[i] != ')') {
+				i++;
+			}
+			if (!data_in[i]) {
+				error("returning here end");
+				rc = SLURM_ERROR;
+				goto end_it;
+			}
+			xstrncat(fields, data_in+start, (i-start));
+		} else if (!xstrncmp("id", data_in+i, 2)) {
 			i+=2;
 			if ((table == assoc_day_table)
 			    || (table == assoc_hour_table)
@@ -1063,12 +1576,12 @@ static int _process_old_sql_line(const char *data_in, char **data_full_out)
 				xfree(id_assoc);
 			} else
 				xstrcat(fields, "job_db_inx");
-		} else if (!strncmp("cluster_nodes", data_in+i, 13)) {
+		} else if (!xstrncmp("cluster_nodes", data_in+i, 13)) {
 			/* this is here just to make it easier to
 			   handle the cluster field. */
 			xstrcat(fields, "cluster_nodes");
 			i+=13;
-		} else if (!strncmp("cluster", data_in+i, 7)) {
+		} else if (!xstrncmp("cluster", data_in+i, 7)) {
 			i+=7;
 			if (!delete) {
 				cluster_inx = cnt;
@@ -1085,9 +1598,9 @@ static int _process_old_sql_line(const char *data_in, char **data_full_out)
 					rc = SLURM_ERROR;
 					goto end_it;
 				}
-
-				cluster_name = xstrndup(data_in+start,
-							(i-start));
+				xfree(*cluster_name);
+				*cluster_name = xstrndup(data_in+start,
+							 (i-start));
 				i++;
 			}
 		} else {
@@ -1106,7 +1619,8 @@ static int _process_old_sql_line(const char *data_in, char **data_full_out)
 		if (data_in[i]) {
 			if (!delete || ((table != assoc_day_table)
 					&& (table != assoc_hour_table)
-					&& (table != assoc_month_table))) {
+					&& (table != assoc_month_table)
+					&& (table != job_table))) {
 				if (data_in[i] == ',')
 					xstrcat(fields, ", ");
 				else if (data_in[i] == ')'
@@ -1132,92 +1646,92 @@ static int _process_old_sql_line(const char *data_in, char **data_full_out)
 		ending_end = i;
 		ending_start = 0;
 		while (data_in[ending_end] && data_in[ending_end-1] != ';') {
-			if (!strncmp(data_in+ending_end,
+			if (!xstrncmp(data_in+ending_end,
 				     "on duplicate key", 16)) {
 				ending_start = ending_end;
 			}
 			if (ending_start) {
-				if (!strncmp("period_start",
-					     data_in+ending_end, 12)) {
+				if (!xstrncmp("period_start",
+					      data_in+ending_end, 12)) {
 					xstrcat(ending, "time_start");
 					ending_end+=12;
-				} else if (!strncmp("period_end",
-						    data_in+ending_end, 10)) {
+				} else if (!xstrncmp("period_end",
+						     data_in+ending_end, 10)) {
 					xstrcat(ending, "time_end");
 					ending_end+=10;
-				} else if (!strncmp("jobid",
-						    data_in+ending_end, 5)) {
+				} else if (!xstrncmp("jobid",
+						     data_in+ending_end, 5)) {
 					xstrcat(ending, "id_job");
 					ending_end+=5;
-				} else if (!strncmp("stepid",
-						    data_in+ending_end, 6)) {
+				} else if (!xstrncmp("stepid",
+						     data_in+ending_end, 6)) {
 					xstrcat(ending, "id_step");
 					ending_end+=6;
-				} else if (!strncmp("associd",
-						    data_in+ending_end, 7)) {
+				} else if (!xstrncmp("associd",
+						     data_in+ending_end, 7)) {
 					xstrcat(ending, "id_assoc");
 					ending_end+=7;
-				} else if (!strncmp("blockid",
-						    data_in+ending_end, 7)) {
+				} else if (!xstrncmp("blockid",
+						     data_in+ending_end, 7)) {
 					xstrcat(ending, "id_block");
 					ending_end+=7;
-				} else if (!strncmp("wckeyid",
-						    data_in+ending_end, 7)) {
+				} else if (!xstrncmp("wckeyid",
+						     data_in+ending_end, 7)) {
 					xstrcat(ending, "id_wckey");
 					ending_end+=7;
-				} else if (!strncmp("uid",
-						    data_in+ending_end, 3)) {
+				} else if (!xstrncmp("uid",
+						     data_in+ending_end, 3)) {
 					xstrcat(ending, "id_user");
 					ending_end+=3;
-				} else if (!strncmp("gid",
-						    data_in+ending_end, 3)) {
+				} else if (!xstrncmp("gid",
+						     data_in+ending_end, 3)) {
 					xstrcat(ending, "id_group");
 					ending_end+=3;
-				} else if (!strncmp("submit",
-						    data_in+ending_end, 6)) {
+				} else if (!xstrncmp("submit",
+						     data_in+ending_end, 6)) {
 					xstrcat(ending, "time_submit");
 					ending_end+=6;
-				} else if (!strncmp("eligible",
-						    data_in+ending_end, 8)) {
+				} else if (!xstrncmp("eligible",
+						     data_in+ending_end, 8)) {
 					xstrcat(ending, "time_eligible");
 					ending_end+=8;
-				} else if (!strncmp("start",
-						    data_in+ending_end, 5)) {
+				} else if (!xstrncmp("start",
+						     data_in+ending_end, 5)) {
 					xstrcat(ending, "time_start");
 					ending_end+=5;
-				} else if (!strncmp("suspended",
-						    data_in+ending_end, 9)) {
+				} else if (!xstrncmp("suspended",
+						     data_in+ending_end, 9)) {
 					xstrcat(ending, "time_suspended");
 					ending_end+=9;
-				} else if (!strncmp("end",
-						    data_in+ending_end, 3)) {
+				} else if (!xstrncmp("end",
+						     data_in+ending_end, 3)) {
 					xstrcat(ending, "time_end");
 					ending_end+=3;
-				} else if (!strncmp("comp_code",
-						    data_in+ending_end, 9)) {
+				} else if (!xstrncmp("comp_code",
+						     data_in+ending_end, 9)) {
 					xstrcat(ending, "exit_code");
 					ending_end+=9;
-				} else if (!strncmp("alloc_cpus",
-						    data_in+ending_end, 10)) {
+				} else if (!xstrncmp("alloc_cpus",
+						     data_in+ending_end, 10)) {
 					xstrcat(ending, "cpus_alloc");
 					ending_end+=10;
-				} else if (!strncmp("req_cpus",
-						    data_in+ending_end, 8)) {
+				} else if (!xstrncmp("req_cpus",
+						     data_in+ending_end, 8)) {
 					xstrcat(ending, "cpus_req");
 					ending_end+=8;
-				} else if (!strncmp("alloc_nodes",
-						    data_in+ending_end, 11)) {
+				} else if (!xstrncmp("alloc_nodes",
+						     data_in+ending_end, 11)) {
 					xstrcat(ending, "nodes_alloc");
 					ending_end+=11;
-				} else if (!strncmp("name",
-						    data_in+ending_end, 4)) {
+				} else if (!xstrncmp("name",
+						     data_in+ending_end, 4)) {
 					if (table == job_table)
 						xstrcat(ending, "job_name");
 					else if (table == step_table)
 						xstrcat(ending, "step_name");
 					ending_end+=4;
-				} else if (!strncmp("id",
-						    data_in+ending_end, 2)) {
+				} else if (!xstrncmp("id",
+						     data_in+ending_end, 2)) {
 					if ((table == assoc_day_table)
 					    || (table == assoc_hour_table)
 					    || (table == assoc_month_table))
@@ -1235,7 +1749,7 @@ static int _process_old_sql_line(const char *data_in, char **data_full_out)
 		}
 
 		/* get values */
-		while ((i < ending_start) && i < ending_start) {
+		while (i < ending_start) {
 			/* get to the start of the values */
 			while ((i < ending_start) && data_in[i-1] != '(')
 				i++;
@@ -1244,9 +1758,11 @@ static int _process_old_sql_line(const char *data_in, char **data_full_out)
 			cnt = 0;
 			while ((i < ending_start) && data_in[i] != ')') {
 				start = i;
-				while ((i < ending_start)
-				       && data_in[i] != ','
-				       && data_in[i] != ')') {
+				while (i < ending_start) {
+					if (data_in[i] == ',' ||
+					    (data_in[i] == ')' &&
+					     data_in[i-1] != '('))
+						break;
 					i++;
 				}
 				if (!data_in[i]) {
@@ -1258,19 +1774,22 @@ static int _process_old_sql_line(const char *data_in, char **data_full_out)
 					   ticks */
 					xstrncat(new_cluster_name,
 						 data_in+start+1, (i-start-2));
-					if (cluster_name) {
-						if (strcmp(cluster_name,
-							   new_cluster_name))
+					if (*cluster_name) {
+						if (xstrcmp(*cluster_name,
+							    new_cluster_name))
 							new_cluster = 1;
 						else
 							xfree(new_cluster_name);
 					} else {
-						cluster_name = new_cluster_name;
+						xfree(*cluster_name);
+						*cluster_name =
+							new_cluster_name;
 						new_cluster_name = NULL;
 					}
 				} else {
 					xstrncat(new_vals, data_in+start,
 						 (i-start));
+
 					if (data_in[i]) {
 						if (data_in[i] == ',')
 							xstrcat(new_vals, ", ");
@@ -1299,12 +1818,12 @@ static int _process_old_sql_line(const char *data_in, char **data_full_out)
 				/*      fields, vals, ending); */
 				xstrfmtcat(data_out,
 					   "%s \"%s_%s\" (%s) values %s %s",
-					   beginning, cluster_name,
+					   beginning, *cluster_name,
 					   table, fields, vals, ending);
 				new_cluster = 0;
 				xfree(vals);
-				xfree(cluster_name);
-				cluster_name = new_cluster_name;
+				xfree(*cluster_name);
+				*cluster_name = new_cluster_name;
 				new_cluster_name = NULL;
 			}
 
@@ -1319,7 +1838,7 @@ static int _process_old_sql_line(const char *data_in, char **data_full_out)
 		i = ending_end;
 	}
 
-	if (!cluster_name) {
+	if (!*cluster_name) {
 		error("No cluster given for %s", table);
 		goto end_it;
 	}
@@ -1328,24 +1847,23 @@ static int _process_old_sql_line(const char *data_in, char **data_full_out)
 		/* info("adding insert\n%s \"%s_%s\" (%s) values %s %s",
 		   beginning, cluster_name, table, fields, vals, ending); */
 		xstrfmtcat(data_out, "%s \"%s_%s\" (%s) values %s %s",
-			   beginning, cluster_name, table, fields,
+			   beginning, *cluster_name, table, fields,
 			   vals, ending);
 	} else {
 		if (fields) {
 			/* info("adding delete\n%s \"%s_%s\" %s", */
 			/*      beginning, cluster_name, table, fields); */
 			xstrfmtcat(data_out, "%s \"%s_%s\" %s",
-				   beginning, cluster_name, table, fields);
+				   beginning, *cluster_name, table, fields);
 		} else {
 			/* info("adding drop\ndrop table \"%s_%s\";", */
 			/*      cluster_name, table); */
 			xstrfmtcat(data_out, "drop table \"%s_%s\";",
-				   cluster_name, table);
+				   *cluster_name, table);
 		}
 	}
 
 end_it:
-	xfree(cluster_name);
 	xfree(beginning);
 	xfree(ending);
 	xfree(fields);
@@ -1363,14 +1881,16 @@ static int _process_old_sql(char **data)
 	char *data_in = *data;
 	char *data_out = NULL;
 	int rc = SLURM_SUCCESS;
+	char *cluster_name = NULL;
 
 	while (data_in[i]) {
-		if ((rc = _process_old_sql_line(data_in+i, &data_out)) == -1)
+		if ((rc = _process_old_sql_line(
+			     data_in+i, &cluster_name, &data_out)) == -1)
 			break;
 		i += rc;
 	}
 	//rc = -1;
-
+	xfree(cluster_name);
 	xfree(data_in);
 	if (rc == -1)
 		xfree(data_out);
@@ -1379,46 +1899,68 @@ static int _process_old_sql(char **data)
 	return rc;
 }
 
-/* returns count of events archived or SLURM_ERROR on error */
-static uint32_t _archive_events(mysql_conn_t *mysql_conn, char *cluster_name,
-				time_t period_end, char *arch_dir,
-				uint32_t archive_period)
+static char *_get_archive_columns(purge_type_t type)
 {
-	MYSQL_RES *result = NULL;
+	char **cols = NULL;
+	char *tmp = NULL;
+	int col_count = 0, i = 0;
+
+	xfree(cols);
+
+	switch (type) {
+	case PURGE_EVENT:
+		cols      = event_req_inx;
+		col_count = EVENT_REQ_COUNT;
+		break;
+	case PURGE_SUSPEND:
+		cols      = suspend_req_inx;
+		col_count = SUSPEND_REQ_COUNT;
+		break;
+	case PURGE_RESV:
+		cols      = resv_req_inx;
+		col_count = RESV_REQ_COUNT;
+		break;
+	case PURGE_JOB:
+		cols      = job_req_inx;
+		col_count = JOB_REQ_COUNT;
+		break;
+	case PURGE_STEP:
+		cols      = step_req_inx;
+		col_count = STEP_REQ_COUNT;
+		break;
+	case PURGE_TXN:
+		cols      = txn_req_inx;
+		col_count = TXN_REQ_COUNT;
+		break;
+	case PURGE_USAGE:
+		cols      = usage_req_inx;
+		col_count = USAGE_COUNT;
+		break;
+	case PURGE_CLUSTER_USAGE:
+		cols      = cluster_req_inx;
+		col_count = CLUSTER_COUNT;
+		break;
+	default:
+		xassert(0);
+		return NULL;
+	}
+
+	xstrfmtcat(tmp, "%s", cols[0]);
+	for (i=1; i<col_count; i++) {
+		xstrfmtcat(tmp, ", %s", cols[i]);
+	}
+
+	return tmp;
+}
+
+
+static Buf _pack_archive_events(MYSQL_RES *result, char *cluster_name,
+				uint32_t cnt, uint32_t usage_info,
+				time_t *period_start)
+{
 	MYSQL_ROW row;
-	char *tmp = NULL, *query = NULL;
-	time_t period_start = 0;
-	uint32_t cnt = 0;
-	local_event_t event;
 	Buf buffer;
-	int error_code = 0, i = 0;
-
-	xfree(tmp);
-	xstrfmtcat(tmp, "%s", event_req_inx[0]);
-	for(i=1; i<EVENT_REQ_COUNT; i++) {
-		xstrfmtcat(tmp, ", %s", event_req_inx[i]);
-	}
-
-	/* get all the events started before this time listed */
-	query = xstrdup_printf("select %s from \"%s_%s\" where "
-			       "time_start <= %ld "
-			       "&& time_end != 0 order by time_start asc",
-			       tmp, cluster_name, event_table, period_end);
-	xfree(tmp);
-
-//	START_TIMER;
-	debug3("%d(%s:%d) query\n%s",
-	       mysql_conn->conn, THIS_FILE, __LINE__, query);
-	if (!(result = mysql_db_query_ret(mysql_conn, query, 0))) {
-		xfree(query);
-		return SLURM_ERROR;
-	}
-	xfree(query);
-
-	if (!(cnt = mysql_num_rows(result))) {
-		mysql_free_result(result);
-		return 0;
-	}
+	local_event_t event;
 
 	buffer = init_buf(high_buffer_size);
 	pack16(SLURM_PROTOCOL_VERSION, buffer);
@@ -1428,36 +1970,24 @@ static uint32_t _archive_events(mysql_conn_t *mysql_conn, char *cluster_name,
 	pack32(cnt, buffer);
 
 	while ((row = mysql_fetch_row(result))) {
-		if (!period_start)
-			period_start = slurm_atoul(row[EVENT_REQ_START]);
+		if (period_start && !*period_start)
+			*period_start = slurm_atoul(row[EVENT_REQ_START]);
 
 		memset(&event, 0, sizeof(local_event_t));
 
 		event.cluster_nodes = row[EVENT_REQ_CNODES];
-		event.cpu_count = row[EVENT_REQ_CPU];
 		event.node_name = row[EVENT_REQ_NODE];
 		event.period_end = row[EVENT_REQ_END];
 		event.period_start = row[EVENT_REQ_START];
 		event.reason = row[EVENT_REQ_REASON];
 		event.reason_uid = row[EVENT_REQ_REASON_UID];
 		event.state = row[EVENT_REQ_STATE];
+		event.tres_str = row[EVENT_REQ_TRES];
 
 		_pack_local_event(&event, SLURM_PROTOCOL_VERSION, buffer);
 	}
-	mysql_free_result(result);
 
-//	END_TIMER2("step query");
-//	info("event query took %s", TIME_STR);
-
-	error_code = archive_write_file(buffer, cluster_name,
-					period_start, period_end,
-					arch_dir, "event", archive_period);
-	free_buf(buffer);
-
-	if (error_code != SLURM_SUCCESS)
-		return error_code;
-
-	return cnt;
+	return buffer;
 }
 
 /* returns sql statement from archived data or NULL on error */
@@ -1477,8 +2007,9 @@ _load_events(uint16_t rpc_version, Buf buffer, char *cluster_name,
 		xstrcat(format, ", '%s'");
 	}
 	xstrcat(insert, ") values ");
-	xstrcat(format, ")");
-	for(i=0; i<rec_cnt; i++) {
+	xstrcat(format, ");");
+
+	for (i=0; i<rec_cnt; i++) {
 		memset(&object, 0, sizeof(local_event_t));
 		if (_unpack_local_event(&object, rpc_version, buffer)
 		    != SLURM_SUCCESS) {
@@ -1487,19 +2018,22 @@ _load_events(uint16_t rpc_version, Buf buffer, char *cluster_name,
 			xfree(insert);
 			break;
 		}
+
 		if (i)
 			xstrcat(insert, ", ");
 
 		xstrfmtcat(insert, format,
-			   object.cluster_nodes,
-			   object.cpu_count,
-			   object.node_name,
-			   object.period_end,
 			   object.period_start,
+			   object.period_end,
+			   object.node_name,
+			   object.cluster_nodes,
 			   object.reason,
 			   object.reason_uid,
-			   object.state);
+			   object.state,
+			   object.tres_str);
 
+		if (rpc_version < SLURM_15_08_PROTOCOL_VERSION)
+			xfree(object.tres_str);
 	}
 //	END_TIMER2("step query");
 //	info("event query took %s", TIME_STR);
@@ -1508,46 +2042,13 @@ _load_events(uint16_t rpc_version, Buf buffer, char *cluster_name,
 	return insert;
 }
 
-/* returns count of jobs archived or SLURM_ERROR on error */
-static uint32_t _archive_jobs(mysql_conn_t *mysql_conn, char *cluster_name,
-			      time_t period_end, char *arch_dir,
-			      uint32_t archive_period)
+static Buf _pack_archive_jobs(MYSQL_RES *result, char *cluster_name,
+			      uint32_t cnt, uint32_t usage_info,
+			      time_t *period_start)
 {
-	MYSQL_RES *result = NULL;
 	MYSQL_ROW row;
-	char *tmp = NULL, *query = NULL;
-	time_t period_start = 0;
-	uint32_t cnt = 0;
-	local_job_t job;
 	Buf buffer;
-	int error_code = 0, i = 0;
-
-	xfree(tmp);
-	xstrfmtcat(tmp, "%s", job_req_inx[0]);
-	for(i=1; i<JOB_REQ_COUNT; i++) {
-		xstrfmtcat(tmp, ", %s", job_req_inx[i]);
-	}
-
-	/* get all the events started before this time listed */
-	query = xstrdup_printf("select %s from \"%s_%s\" where "
-			       "time_submit < %ld && time_end != 0 && !deleted "
-			       "order by time_submit asc",
-			       tmp, cluster_name, job_table, period_end);
-	xfree(tmp);
-
-//	START_TIMER;
-	debug3("%d(%s:%d) query\n%s",
-	       mysql_conn->conn, THIS_FILE, __LINE__, query);
-	if (!(result = mysql_db_query_ret(mysql_conn, query, 0))) {
-		xfree(query);
-		return SLURM_ERROR;
-	}
-	xfree(query);
-
-	if (!(cnt = mysql_num_rows(result))) {
-		mysql_free_result(result);
-		return 0;
-	}
+	local_job_t job;
 
 	buffer = init_buf(high_buffer_size);
 	pack16(SLURM_PROTOCOL_VERSION, buffer);
@@ -1557,15 +2058,17 @@ static uint32_t _archive_jobs(mysql_conn_t *mysql_conn, char *cluster_name,
 	pack32(cnt, buffer);
 
 	while ((row = mysql_fetch_row(result))) {
-		if (!period_start)
-			period_start = slurm_atoul(row[JOB_REQ_SUBMIT]);
+		if (period_start && !*period_start)
+			*period_start = slurm_atoul(row[JOB_REQ_SUBMIT]);
 
 		memset(&job, 0, sizeof(local_job_t));
 
 		job.account = row[JOB_REQ_ACCOUNT];
-		job.alloc_cpus = row[JOB_REQ_ALLOC_CPUS];
 		job.alloc_nodes = row[JOB_REQ_ALLOC_NODES];
 		job.associd = row[JOB_REQ_ASSOCID];
+		job.array_jobid = row[JOB_REQ_ARRAYJOBID];
+		job.array_max_tasks = row[JOB_REQ_ARRAY_MAX];
+		job.array_taskid = row[JOB_REQ_ARRAYTASKID];
 		job.blockid = row[JOB_REQ_BLOCKID];
 		job.derived_ec = row[JOB_REQ_DERIVED_EC];
 		job.derived_es = row[JOB_REQ_DERIVED_ES];
@@ -1574,9 +2077,10 @@ static uint32_t _archive_jobs(mysql_conn_t *mysql_conn, char *cluster_name,
 		job.eligible = row[JOB_REQ_ELIGIBLE];
 		job.end = row[JOB_REQ_END];
 		job.gid = row[JOB_REQ_GID];
-		job.id = row[JOB_REQ_ID];
+		job.job_db_inx = row[JOB_REQ_DB_INX];
 		job.jobid = row[JOB_REQ_JOBID];
 		job.kill_requid = row[JOB_REQ_KILL_REQUID];
+		job.mcs_label = row[JOB_REQ_MCS_LABEL];
 		job.name = row[JOB_REQ_NAME];
 		job.nodelist = row[JOB_REQ_NODELIST];
 		job.node_inx = row[JOB_REQ_NODE_INX];
@@ -1591,26 +2095,17 @@ static uint32_t _archive_jobs(mysql_conn_t *mysql_conn, char *cluster_name,
 		job.submit = row[JOB_REQ_SUBMIT];
 		job.suspended = row[JOB_REQ_SUSPENDED];
 		job.track_steps = row[JOB_REQ_TRACKSTEPS];
+		job.tres_alloc_str = row[JOB_REQ_TRESA];
+		job.tres_req_str = row[JOB_REQ_TRESR];
 		job.uid = row[JOB_REQ_UID];
 		job.wckey = row[JOB_REQ_WCKEY];
 		job.wckey_id = row[JOB_REQ_WCKEYID];
+		job.work_dir = row[JOB_REQ_WORK_DIR];
 
 		_pack_local_job(&job, SLURM_PROTOCOL_VERSION, buffer);
 	}
-	mysql_free_result(result);
 
-//	END_TIMER2("step query");
-//	info("event query took %s", TIME_STR);
-
-	error_code = archive_write_file(buffer, cluster_name,
-					period_start, period_end,
-					arch_dir, "job", archive_period);
-	free_buf(buffer);
-
-	if (error_code != SLURM_SUCCESS)
-		return error_code;
-
-	return cnt;
+	return buffer;
 }
 
 /* returns sql statement from archived data or NULL on error */
@@ -1630,8 +2125,8 @@ static char *_load_jobs(uint16_t rpc_version, Buf buffer,
 	}
 	xstrcat(insert, ") values ");
 	xstrcat(format, ")");
-	for(i=0; i<rec_cnt; i++) {
-		memset(&object, 0, sizeof(local_job_t));
+	for(i = 0; i < rec_cnt; i++) {
+
 		if (_unpack_local_job(&object, rpc_version, buffer)
 		    != SLURM_SUCCESS) {
 			error("issue unpacking");
@@ -1639,14 +2134,17 @@ static char *_load_jobs(uint16_t rpc_version, Buf buffer,
 			xfree(insert);
 			break;
 		}
+
 		if (i)
 			xstrcat(insert, ", ");
 
 		xstrfmtcat(insert, format,
 			   object.account,
-			   object.alloc_cpus,
+			   object.array_max_tasks,
 			   object.alloc_nodes,
 			   object.associd,
+			   object.array_jobid,
+			   object.array_taskid,
 			   object.blockid,
 			   object.derived_ec,
 			   object.derived_es,
@@ -1655,9 +2153,10 @@ static char *_load_jobs(uint16_t rpc_version, Buf buffer,
 			   object.eligible,
 			   object.end,
 			   object.gid,
-			   object.id,
+			   object.job_db_inx,
 			   object.jobid,
 			   object.kill_requid,
+			   object.mcs_label,
 			   object.name,
 			   object.nodelist,
 			   object.node_inx,
@@ -1674,8 +2173,15 @@ static char *_load_jobs(uint16_t rpc_version, Buf buffer,
 			   object.track_steps,
 			   object.uid,
 			   object.wckey,
-			   object.wckey_id);
+			   object.wckey_id,
+			   object.work_dir,
+			   object.tres_alloc_str,
+			   object.tres_req_str);
 
+		if (rpc_version < SLURM_15_08_PROTOCOL_VERSION) {
+			xfree(object.tres_alloc_str);
+			xfree(object.tres_req_str);
+		}
 	}
 //	END_TIMER2("step query");
 //	info("job query took %s", TIME_STR);
@@ -1684,46 +2190,13 @@ static char *_load_jobs(uint16_t rpc_version, Buf buffer,
 	return insert;
 }
 
-/* returns count of resvations archived or SLURM_ERROR on error */
-static uint32_t _archive_resvs(mysql_conn_t *mysql_conn, char *cluster_name,
-			       time_t period_end, char *arch_dir,
-			       uint32_t archive_period)
+static Buf _pack_archive_resvs(MYSQL_RES *result, char *cluster_name,
+			       uint32_t cnt, uint32_t usage_info,
+			       time_t *period_start)
 {
-	MYSQL_RES *result = NULL;
 	MYSQL_ROW row;
-	char *tmp = NULL, *query = NULL;
-	time_t period_start = 0;
-	uint32_t cnt = 0;
-	local_resv_t resv;
 	Buf buffer;
-	int error_code = 0, i = 0;
-
-	xfree(tmp);
-	xstrfmtcat(tmp, "%s", resv_req_inx[0]);
-	for(i=1; i<RESV_REQ_COUNT; i++) {
-		xstrfmtcat(tmp, ", %s", resv_req_inx[i]);
-	}
-
-	/* get all the events started before this time listed */
-	query = xstrdup_printf("select %s from \"%s_%s\" where "
-			       "time_start <= %ld "
-			       "&& time_end != 0 order by time_start asc",
-			       tmp, cluster_name, resv_table, period_end);
-	xfree(tmp);
-
-//	START_TIMER;
-	debug3("%d(%s:%d) query\n%s",
-	       mysql_conn->conn, THIS_FILE, __LINE__, query);
-	if (!(result = mysql_db_query_ret(mysql_conn, query, 0))) {
-		xfree(query);
-		return SLURM_ERROR;
-	}
-	xfree(query);
-
-	if (!(cnt = mysql_num_rows(result))) {
-		mysql_free_result(result);
-		return 0;
-	}
+	local_resv_t resv;
 
 	buffer = init_buf(high_buffer_size);
 	pack16(SLURM_PROTOCOL_VERSION, buffer);
@@ -1733,13 +2206,12 @@ static uint32_t _archive_resvs(mysql_conn_t *mysql_conn, char *cluster_name,
 	pack32(cnt, buffer);
 
 	while ((row = mysql_fetch_row(result))) {
-		if (!period_start)
-			period_start = slurm_atoul(row[RESV_REQ_START]);
+		if (period_start && !*period_start)
+			*period_start = slurm_atoul(row[RESV_REQ_START]);
 
 		memset(&resv, 0, sizeof(local_resv_t));
 
 		resv.assocs = row[RESV_REQ_ASSOCS];
-		resv.cpus = row[RESV_REQ_CPUS];
 		resv.flags = row[RESV_REQ_FLAGS];
 		resv.id = row[RESV_REQ_ID];
 		resv.name = row[RESV_REQ_NAME];
@@ -1747,23 +2219,13 @@ static uint32_t _archive_resvs(mysql_conn_t *mysql_conn, char *cluster_name,
 		resv.node_inx = row[RESV_REQ_NODE_INX];
 		resv.time_end = row[RESV_REQ_END];
 		resv.time_start = row[RESV_REQ_START];
+		resv.tres_str = row[RESV_REQ_TRES];
+		resv.unused_wall = row[RESV_REQ_UNUSED];
 
 		_pack_local_resv(&resv, SLURM_PROTOCOL_VERSION, buffer);
 	}
-	mysql_free_result(result);
 
-//	END_TIMER2("step query");
-//	info("event query took %s", TIME_STR);
-
-	error_code = archive_write_file(buffer, cluster_name,
-					period_start, period_end,
-					arch_dir, "resv", archive_period);
-	free_buf(buffer);
-
-	if (error_code != SLURM_SUCCESS)
-		return error_code;
-
-	return cnt;
+	return buffer;
 }
 
 /* returns sql statement from archived data or NULL on error */
@@ -1792,19 +2254,24 @@ static char *_load_resvs(uint16_t rpc_version, Buf buffer,
 			xfree(insert);
 			break;
 		}
+
 		if (i)
 			xstrcat(insert, ", ");
 
 		xstrfmtcat(insert, format,
-			   object.assocs,
-			   object.cpus,
-			   object.flags,
 			   object.id,
-			   object.name,
+			   object.assocs,
+			   object.flags,
+			   object.tres_str,
 			   object.nodes,
 			   object.node_inx,
+			   object.name,
+			   object.time_start,
 			   object.time_end,
-			   object.time_start);
+			   object.unused_wall);
+
+		if (rpc_version < SLURM_15_08_PROTOCOL_VERSION)
+			xfree(object.tres_str);
 	}
 //	END_TIMER2("step query");
 //	info("resv query took %s", TIME_STR);
@@ -1813,46 +2280,13 @@ static char *_load_resvs(uint16_t rpc_version, Buf buffer,
 	return insert;
 }
 
-/* returns count of steps archived or SLURM_ERROR on error */
-static uint32_t _archive_steps(mysql_conn_t *mysql_conn, char *cluster_name,
-			       time_t period_end, char *arch_dir,
-			       uint32_t archive_period)
+static Buf _pack_archive_steps(MYSQL_RES *result, char *cluster_name,
+			       uint32_t cnt, uint32_t usage_info,
+			       time_t *period_start)
 {
-	MYSQL_RES *result = NULL;
 	MYSQL_ROW row;
-	char *tmp = NULL, *query = NULL;
-	time_t period_start = 0;
-	uint32_t cnt = 0;
-	local_step_t step;
 	Buf buffer;
-	int error_code = 0, i = 0;
-
-	xfree(tmp);
-	xstrfmtcat(tmp, "%s", step_req_inx[0]);
-	for(i=1; i<STEP_REQ_COUNT; i++) {
-		xstrfmtcat(tmp, ", %s", step_req_inx[i]);
-	}
-
-	/* get all the events started before this time listed */
-	query = xstrdup_printf("select %s from \"%s_%s\" where "
-			       "time_start <= %ld && time_end != 0 "
-			       "&& !deleted order by time_start asc",
-			       tmp, cluster_name, step_table, period_end);
-	xfree(tmp);
-
-//	START_TIMER;
-	debug3("%d(%s:%d) query\n%s",
-	       mysql_conn->conn, THIS_FILE, __LINE__, query);
-	if (!(result = mysql_db_query_ret(mysql_conn, query, 0))) {
-		xfree(query);
-		return SLURM_ERROR;
-	}
-	xfree(query);
-
-	if (!(cnt = mysql_num_rows(result))) {
-		mysql_free_result(result);
-		return 0;
-	}
+	local_step_t step;
 
 	buffer = init_buf(high_buffer_size);
 	pack16(SLURM_PROTOCOL_VERSION, buffer);
@@ -1862,8 +2296,8 @@ static uint32_t _archive_steps(mysql_conn_t *mysql_conn, char *cluster_name,
 	pack32(cnt, buffer);
 
 	while ((row = mysql_fetch_row(result))) {
-		if (!period_start)
-			period_start = slurm_atoul(row[STEP_REQ_START]);
+		if (period_start && !*period_start)
+			*period_start = slurm_atoul(row[STEP_REQ_START]);
 
 		memset(&step, 0, sizeof(local_step_t));
 
@@ -1876,8 +2310,7 @@ static uint32_t _archive_steps(mysql_conn_t *mysql_conn, char *cluster_name,
 		step.ave_rss = row[STEP_REQ_AVE_RSS];
 		step.ave_vsize = row[STEP_REQ_AVE_VSIZE];
 		step.exit_code = row[STEP_REQ_EXIT_CODE];
-		step.cpus = row[STEP_REQ_CPUS];
-		step.id = row[STEP_REQ_ID];
+		step.job_db_inx = row[STEP_REQ_DB_INX];
 		step.kill_requid = row[STEP_REQ_KILL_REQUID];
 		step.max_disk_read = row[STEP_REQ_MAX_DISK_READ];
 		step.max_disk_read_node = row[STEP_REQ_MAX_DISK_READ_NODE];
@@ -1904,32 +2337,23 @@ static uint32_t _archive_steps(mysql_conn_t *mysql_conn, char *cluster_name,
 		step.period_end = row[STEP_REQ_END];
 		step.period_start = row[STEP_REQ_START];
 		step.period_suspended = row[STEP_REQ_SUSPENDED];
-		step.req_cpufreq = row[STEP_REQ_REQ_CPUFREQ];
+		step.req_cpufreq_min = row[STEP_REQ_REQ_CPUFREQ_MIN];
+		step.req_cpufreq_max = row[STEP_REQ_REQ_CPUFREQ_MAX];
+		step.req_cpufreq_gov = row[STEP_REQ_REQ_CPUFREQ_GOV];
 		step.state = row[STEP_REQ_STATE];
 		step.stepid = row[STEP_REQ_STEPID];
 		step.sys_sec = row[STEP_REQ_SYS_SEC];
 		step.sys_usec = row[STEP_REQ_SYS_USEC];
 		step.tasks = row[STEP_REQ_TASKS];
 		step.task_dist = row[STEP_REQ_TASKDIST];
+		step.tres_alloc_str = row[STEP_REQ_TRES];
 		step.user_sec = row[STEP_REQ_USER_SEC];
 		step.user_usec = row[STEP_REQ_USER_USEC];
 
 		_pack_local_step(&step, SLURM_PROTOCOL_VERSION, buffer);
 	}
-	mysql_free_result(result);
 
-//	END_TIMER2("step query");
-//	info("event query took %s", TIME_STR);
-
-	error_code = archive_write_file(buffer, cluster_name,
-					period_start, period_end,
-					arch_dir, "step", archive_period);
-	free_buf(buffer);
-
-	if (error_code != SLURM_SUCCESS)
-		return error_code;
-
-	return cnt;
+	return buffer;
 }
 
 /* returns sql statement from archived data or NULL on error */
@@ -1938,18 +2362,18 @@ static char *_load_steps(uint16_t rpc_version, Buf buffer,
 {
 	char *insert = NULL, *format = NULL;
 	local_step_t object;
-	int i = 0;
+	int i;
 
 	xstrfmtcat(insert, "insert into \"%s_%s\" (%s",
 		   cluster_name, step_table, step_req_inx[0]);
 	xstrcat(format, "('%s'");
-	for(i=1; i<STEP_REQ_COUNT; i++) {
+	for (i=1; i<STEP_REQ_COUNT; i++) {
 		xstrfmtcat(insert, ", %s", step_req_inx[i]);
 		xstrcat(format, ", '%s'");
 	}
 	xstrcat(insert, ") values ");
 	xstrcat(format, ")");
-	for(i=0; i<rec_cnt; i++) {
+	for (i=0; i<rec_cnt; i++) {
 		memset(&object, 0, sizeof(local_step_t));
 		if (_unpack_local_step(&object, rpc_version, buffer)
 		    != SLURM_SUCCESS) {
@@ -1958,57 +2382,62 @@ static char *_load_steps(uint16_t rpc_version, Buf buffer,
 			xfree(insert);
 			break;
 		}
+
 		if (i)
 			xstrcat(insert, ", ");
 
 		xstrfmtcat(insert, format,
-			   object.ave_cpu,
-			   object.act_cpufreq,
-			   object.consumed_energy,
-			   object.ave_disk_read,
-			   object.ave_disk_write,
-			   object.ave_pages,
-			   object.ave_rss,
-			   object.ave_vsize,
-			   object.exit_code,
-			   object.cpus,
-			   object.id,
-			   object.kill_requid,
-			   object.max_disk_read,
-			   object.max_disk_read_node,
-			   object.max_disk_read_task,
-			   object.max_disk_write,
-			   object.max_disk_write_node,
-			   object.max_disk_write_task,
-			   object.max_pages,
-			   object.max_pages_node,
-			   object.max_pages_task,
-			   object.max_rss,
-			   object.max_rss_node,
-			   object.max_rss_task,
-			   object.max_vsize,
-			   object.max_vsize_node,
-			   object.max_vsize_task,
-			   object.min_cpu,
-			   object.min_cpu_node,
-			   object.min_cpu_task,
+			   object.job_db_inx,
+			   object.stepid,
+			   object.period_start,
+			   object.period_end,
+			   object.period_suspended,
 			   object.name,
 			   object.nodelist,
-			   object.nodes,
 			   object.node_inx,
-			   object.period_end,
-			   object.period_start,
-			   object.period_suspended,
-			   object.req_cpufreq,
 			   object.state,
-			   object.stepid,
-			   object.sys_sec,
-			   object.sys_usec,
+			   object.kill_requid,
+			   object.exit_code,
+			   object.nodes,
 			   object.tasks,
 			   object.task_dist,
 			   object.user_sec,
-			   object.user_usec);
+			   object.user_usec,
+			   object.sys_sec,
+			   object.sys_usec,
+			   object.max_vsize,
+			   object.max_vsize_task,
+			   object.max_vsize_node,
+			   object.ave_vsize,
+			   object.max_rss,
+			   object.max_rss_task,
+			   object.max_rss_node,
+			   object.ave_rss,
+			   object.max_pages,
+			   object.max_pages_task,
+			   object.max_pages_node,
+			   object.ave_pages,
+			   object.min_cpu,
+			   object.min_cpu_task,
+			   object.min_cpu_node,
+			   object.ave_cpu,
+			   object.act_cpufreq,
+			   object.consumed_energy,
+			   object.req_cpufreq_max,
+			   object.max_disk_read,
+			   object.max_disk_read_task,
+			   object.max_disk_read_node,
+			   object.ave_disk_read,
+			   object.max_disk_write,
+			   object.max_disk_write_task,
+			   object.max_disk_write_node,
+			   object.ave_disk_write,
+			   object.req_cpufreq_min,
+			   object.req_cpufreq_gov,
+			   object.tres_alloc_str);
 
+		if (rpc_version < SLURM_15_08_PROTOCOL_VERSION)
+			xfree(object.tres_alloc_str);
 	}
 //	END_TIMER2("step query");
 //	info("step query took %s", TIME_STR);
@@ -2017,46 +2446,13 @@ static char *_load_steps(uint16_t rpc_version, Buf buffer,
 	return insert;
 }
 
-/* returns count of events archived or SLURM_ERROR on error */
-static uint32_t _archive_suspend(mysql_conn_t *mysql_conn, char *cluster_name,
-				 time_t period_end, char *arch_dir,
-				 uint32_t archive_period)
+static Buf _pack_archive_suspends(MYSQL_RES *result, char *cluster_name,
+				  uint32_t cnt, uint32_t usage_info,
+				  time_t *period_start)
 {
-	MYSQL_RES *result = NULL;
 	MYSQL_ROW row;
-	char *tmp = NULL, *query = NULL;
-	time_t period_start = 0;
-	uint32_t cnt = 0;
-	local_suspend_t suspend;
 	Buf buffer;
-	int error_code = 0, i = 0;
-
-	xfree(tmp);
-	xstrfmtcat(tmp, "%s", suspend_req_inx[0]);
-	for(i=1; i<SUSPEND_REQ_COUNT; i++) {
-		xstrfmtcat(tmp, ", %s", suspend_req_inx[i]);
-	}
-
-	/* get all the events started before this time listed */
-	query = xstrdup_printf("select %s from \"%s_%s\" where "
-			       "time_start <= %ld && time_end != 0 "
-			       "order by time_start asc",
-			       tmp, cluster_name, suspend_table, period_end);
-	xfree(tmp);
-
-//	START_TIMER;
-	debug3("%d(%s:%d) query\n%s",
-	       mysql_conn->conn, THIS_FILE, __LINE__, query);
-	if (!(result = mysql_db_query_ret(mysql_conn, query, 0))) {
-		xfree(query);
-		return SLURM_ERROR;
-	}
-	xfree(query);
-
-	if (!(cnt = mysql_num_rows(result))) {
-		mysql_free_result(result);
-		return 0;
-	}
+	local_suspend_t suspend;
 
 	buffer = init_buf(high_buffer_size);
 	pack16(SLURM_PROTOCOL_VERSION, buffer);
@@ -2066,33 +2462,22 @@ static uint32_t _archive_suspend(mysql_conn_t *mysql_conn, char *cluster_name,
 	pack32(cnt, buffer);
 
 	while ((row = mysql_fetch_row(result))) {
-		if (!period_start)
-			period_start = slurm_atoul(row[SUSPEND_REQ_START]);
+		if (period_start && !*period_start)
+			*period_start = slurm_atoul(row[SUSPEND_REQ_START]);
 
 		memset(&suspend, 0, sizeof(local_suspend_t));
 
-		suspend.id = row[SUSPEND_REQ_ID];
+		suspend.job_db_inx = row[SUSPEND_REQ_DB_INX];
 		suspend.associd = row[SUSPEND_REQ_ASSOCID];
 		suspend.period_start = row[SUSPEND_REQ_START];
 		suspend.period_end = row[SUSPEND_REQ_END];
 
 		_pack_local_suspend(&suspend, SLURM_PROTOCOL_VERSION, buffer);
 	}
-	mysql_free_result(result);
 
-//	END_TIMER2("step query");
-//	info("event query took %s", TIME_STR);
-
-	error_code = archive_write_file(buffer, cluster_name,
-					period_start, period_end,
-					arch_dir, "suspend", archive_period);
-	free_buf(buffer);
-
-	if (error_code != SLURM_SUCCESS)
-		return error_code;
-
-	return cnt;
+	return buffer;
 }
+
 
 /* returns sql statement from archived data or NULL on error */
 static char *_load_suspend(uint16_t rpc_version, Buf buffer,
@@ -2120,15 +2505,15 @@ static char *_load_suspend(uint16_t rpc_version, Buf buffer,
 			xfree(insert);
 			break;
 		}
+
 		if (i)
 			xstrcat(insert, ", ");
 
 		xstrfmtcat(insert, format,
+			   object.job_db_inx,
 			   object.associd,
-			   object.id,
-			   object.period_end,
-			   object.period_start);
-
+			   object.period_start,
+			   object.period_end);
 	}
 //	END_TIMER2("suspend query");
 //	info("suspend query took %s", TIME_STR);
@@ -2137,13 +2522,731 @@ static char *_load_suspend(uint16_t rpc_version, Buf buffer,
 	return insert;
 }
 
+static Buf _pack_archive_txns(MYSQL_RES *result, char *cluster_name,
+			      uint32_t cnt, uint32_t usage_info,
+			      time_t *period_start)
+{
+	MYSQL_ROW row;
+	Buf buffer;
+	local_txn_t txn;
+
+	buffer = init_buf(high_buffer_size);
+	pack16(SLURM_PROTOCOL_VERSION, buffer);
+	pack_time(time(NULL), buffer);
+	pack16(DBD_GOT_TXN, buffer);
+	packstr(cluster_name, buffer);
+	pack32(cnt, buffer);
+
+	while ((row = mysql_fetch_row(result))) {
+		if (period_start && !*period_start)
+			*period_start = slurm_atoul(row[TXN_REQ_TS]);
+
+		memset(&txn, 0, sizeof(local_txn_t));
+
+		txn.id = row[TXN_REQ_ID];
+		txn.timestamp = row[TXN_REQ_TS];
+		txn.action = row[TXN_REQ_ACTION];
+		txn.name = row[TXN_REQ_NAME];
+		txn.actor = row[TXN_REQ_ACTOR];
+		txn.info = row[TXN_REQ_INFO];
+		txn.cluster = row[TXN_REQ_CLUSTER];
+
+		_pack_local_txn(&txn, SLURM_PROTOCOL_VERSION, buffer);
+	}
+
+	return buffer;
+}
+
+
+/* returns sql statement from archived data or NULL on error */
+static char *_load_txn(uint16_t rpc_version, Buf buffer,
+		       char *cluster_name, uint32_t rec_cnt)
+{
+	char *insert = NULL, *format = NULL;
+	local_txn_t object;
+	char *tmp = NULL;
+	int i = 0;
+
+	xstrfmtcat(insert, "insert into \"%s\" (%s",
+		   txn_table, txn_req_inx[0]);
+	xstrcat(format, "('%s'");
+	for(i=1; i<TXN_REQ_COUNT; i++) {
+		xstrfmtcat(insert, ", %s", txn_req_inx[i]);
+		xstrcat(format, ", '%s'");
+	}
+	xstrcat(insert, ") values ");
+	xstrcat(format, ")");
+	for(i=0; i<rec_cnt; i++) {
+		memset(&object, 0, sizeof(local_txn_t));
+		if (_unpack_local_txn(&object, rpc_version, buffer)
+		    != SLURM_SUCCESS) {
+			error("issue unpacking");
+			xfree(format);
+			xfree(insert);
+			break;
+		}
+
+		if (i)
+			xstrcat(insert, ", ");
+
+		/* object.info has a bunch of "'" in it */
+		tmp = slurm_add_slash_to_quotes(object.info);
+		xstrfmtcat(insert, format,
+			   object.id,
+			   object.timestamp,
+			   object.action,
+			   object.name,
+			   object.actor,
+			   tmp,
+			   object.cluster);
+		xfree(tmp);
+	}
+//	END_TIMER2("txn query");
+//	info("txn query took %s", TIME_STR);
+	xfree(format);
+
+	return insert;
+}
+
+static Buf _pack_archive_usage(MYSQL_RES *result, char *cluster_name,
+			       uint32_t cnt, uint32_t usage_info,
+			       time_t *period_start)
+{
+	MYSQL_ROW row;
+	Buf buffer;
+	local_usage_t usage;
+	uint16_t type = usage_info & 0x0000ffff;
+	uint16_t period = usage_info >> 16;
+
+	buffer = init_buf(high_buffer_size);
+	pack16(SLURM_PROTOCOL_VERSION, buffer);
+	pack_time(time(NULL), buffer);
+	pack16(type, buffer);
+	packstr(cluster_name, buffer);
+	pack32(cnt, buffer);
+	pack16(period, buffer);
+
+	while ((row = mysql_fetch_row(result))) {
+		if (period_start && !*period_start)
+			*period_start = slurm_atoul(row[USAGE_START]);
+
+		memset(&usage, 0, sizeof(local_usage_t));
+
+		usage.id = row[USAGE_ID];
+		usage.tres_id = row[USAGE_TRES];
+		usage.time_start = row[USAGE_START];
+		usage.alloc_secs = row[USAGE_ALLOC];
+
+		_pack_local_usage(&usage, SLURM_PROTOCOL_VERSION, buffer);
+	}
+
+	return buffer;
+}
+
+/* returns sql statement from archived data or NULL on error */
+static char *_load_usage(uint16_t rpc_version, Buf buffer,
+			 char *cluster_name, uint16_t type, uint16_t period,
+			 uint32_t rec_cnt)
+{
+	char *insert = NULL, *format = NULL, *my_usage_table = NULL;
+	local_usage_t object;
+	int i = 0;
+
+	switch (type) {
+	case DBD_GOT_ASSOC_USAGE:
+		switch (period) {
+		case ROLLUP_HOUR:
+			my_usage_table = assoc_hour_table;
+			break;
+		case ROLLUP_DAY:
+			my_usage_table = assoc_day_table;
+			break;
+		case ROLLUP_MONTH:
+			my_usage_table = assoc_month_table;
+			break;
+		default:
+			error("Unknown period");
+			return NULL;
+			break;
+		}
+		break;
+	case DBD_GOT_WCKEY_USAGE:
+		switch (period) {
+		case ROLLUP_HOUR:
+			my_usage_table = wckey_hour_table;
+			break;
+		case ROLLUP_DAY:
+			my_usage_table = wckey_day_table;
+			break;
+		case ROLLUP_MONTH:
+			my_usage_table = wckey_month_table;
+			break;
+		default:
+			error("Unknown period");
+			return NULL;
+			break;
+		}
+		break;
+	default:
+		error("Unknown usage type %d", type);
+		return NULL;
+		break;
+	}
+
+	xstrfmtcat(insert, "insert into \"%s_%s\" (%s",
+		   cluster_name, my_usage_table, usage_req_inx[0]);
+	xstrcat(format, "('%s'");
+	for(i=1; i<USAGE_COUNT; i++) {
+		xstrfmtcat(insert, ", %s", usage_req_inx[i]);
+		xstrcat(format, ", '%s'");
+	}
+	xstrcat(insert, ") values ");
+	xstrcat(format, ")");
+	for(i=0; i<rec_cnt; i++) {
+		memset(&object, 0, sizeof(local_usage_t));
+		if (_unpack_local_usage(&object, rpc_version, buffer)
+		    != SLURM_SUCCESS) {
+			error("issue unpacking");
+			xfree(format);
+			xfree(insert);
+			break;
+		}
+
+		if (i)
+			xstrcat(insert, ", ");
+
+		xstrfmtcat(insert, format,
+			   object.id,
+			   object.tres_id,
+			   object.time_start,
+			   object.alloc_secs);
+	}
+//	END_TIMER2("usage query");
+//	info("usage query took %s", TIME_STR);
+	xfree(format);
+
+	return insert;
+}
+
+static Buf _pack_archive_cluster_usage(MYSQL_RES *result, char *cluster_name,
+				       uint32_t cnt, uint32_t usage_info,
+				       time_t *period_start)
+{
+	MYSQL_ROW row;
+	Buf buffer;
+	local_cluster_usage_t usage;
+	uint16_t period = usage_info >> 16;
+
+	buffer = init_buf(high_buffer_size);
+	pack16(SLURM_PROTOCOL_VERSION, buffer);
+	pack_time(time(NULL), buffer);
+	pack16(DBD_GOT_CLUSTER_USAGE, buffer);
+	packstr(cluster_name, buffer);
+	pack32(cnt, buffer);
+	pack16(period, buffer);
+
+	while ((row = mysql_fetch_row(result))) {
+		if (period_start && !*period_start)
+			*period_start = slurm_atoul(row[CLUSTER_START]);
+
+		memset(&usage, 0, sizeof(local_cluster_usage_t));
+
+		usage.tres_id = row[CLUSTER_TRES];
+		usage.time_start = row[CLUSTER_START];
+		usage.tres_cnt = row[CLUSTER_CNT];
+		usage.alloc_secs = row[CLUSTER_ACPU];
+		usage.down_secs = row[CLUSTER_DCPU];
+		usage.pdown_secs = row[CLUSTER_PDCPU];
+		usage.idle_secs = row[CLUSTER_ICPU];
+		usage.resv_secs = row[CLUSTER_RCPU];
+		usage.over_secs = row[CLUSTER_OCPU];
+
+		_pack_local_cluster_usage(
+			&usage, SLURM_PROTOCOL_VERSION, buffer);
+	}
+
+	return buffer;
+}
+
+/* returns sql statement from archived data or NULL on error */
+static char *_load_cluster_usage(uint16_t rpc_version, Buf buffer,
+				 char *cluster_name, uint16_t period,
+				 uint32_t rec_cnt)
+{
+	char *insert = NULL, *format = NULL, *my_usage_table = NULL;
+	local_cluster_usage_t object;
+	int i = 0;
+
+	switch (period) {
+	case ROLLUP_HOUR:
+		my_usage_table = cluster_hour_table;
+		break;
+	case ROLLUP_DAY:
+		my_usage_table = cluster_day_table;
+		break;
+	case ROLLUP_MONTH:
+		my_usage_table = cluster_month_table;
+		break;
+	default:
+		error("Unknown period");
+		return NULL;
+		break;
+	}
+
+	xstrfmtcat(insert, "insert into \"%s_%s\" (%s",
+		   cluster_name, my_usage_table, cluster_req_inx[0]);
+	xstrcat(format, "('%s'");
+	for(i=1; i<CLUSTER_COUNT; i++) {
+		xstrfmtcat(insert, ", %s", cluster_req_inx[i]);
+		xstrcat(format, ", '%s'");
+	}
+	xstrcat(insert, ") values ");
+	xstrcat(format, ")");
+	for(i=0; i<rec_cnt; i++) {
+		memset(&object, 0, sizeof(local_cluster_usage_t));
+		if (_unpack_local_cluster_usage(&object, rpc_version, buffer)
+		    != SLURM_SUCCESS) {
+			error("issue unpacking");
+			xfree(format);
+			xfree(insert);
+			break;
+		}
+
+		if (i)
+			xstrcat(insert, ", ");
+
+		xstrfmtcat(insert, format,
+			   object.tres_id,
+			   object.time_start,
+			   object.tres_cnt,
+			   object.alloc_secs,
+			   object.down_secs,
+			   object.pdown_secs,
+			   object.idle_secs,
+			   object.resv_secs,
+			   object.over_secs);
+	}
+//	END_TIMER2("usage query");
+//	info("usage query took %s", TIME_STR);
+	xfree(format);
+
+	return insert;
+}
+
+/* returns count of events archived or SLURM_ERROR on error */
+static uint32_t _archive_table(purge_type_t type, mysql_conn_t *mysql_conn,
+			       char *cluster_name, time_t period_end,
+			       char *arch_dir, uint32_t archive_period,
+			       char *sql_table, uint32_t usage_info)
+{
+	MYSQL_RES *result = NULL;
+	char *cols = NULL, *query = NULL;
+	time_t period_start = 0;
+	uint32_t cnt = 0;
+	Buf buffer;
+	int error_code = 0;
+	Buf (*pack_func)(MYSQL_RES *result, char *cluster_name,
+			 uint32_t cnt, uint32_t usage_info,
+			 time_t *period_start);
+
+	cols = _get_archive_columns(type);
+
+	switch (type) {
+	case PURGE_EVENT:
+		pack_func = &_pack_archive_events;
+		break;
+	case PURGE_SUSPEND:
+		pack_func = &_pack_archive_suspends;
+		break;
+	case PURGE_RESV:
+		pack_func = &_pack_archive_resvs;
+		break;
+	case PURGE_JOB:
+		pack_func = &_pack_archive_jobs;
+		break;
+	case PURGE_STEP:
+		pack_func = &_pack_archive_steps;
+		break;
+	case PURGE_TXN:
+		pack_func = &_pack_archive_txns;
+		break;
+	case PURGE_USAGE:
+		pack_func = &_pack_archive_usage;
+		break;
+	case PURGE_CLUSTER_USAGE:
+		pack_func = &_pack_archive_cluster_usage;
+		break;
+	default:
+		fatal("Unknown purge type: %d", type);
+		return SLURM_ERROR;
+	}
+
+	switch (type) {
+	case PURGE_TXN:
+		query = xstrdup_printf("select %s from \"%s\" where "
+				       "timestamp <= %ld && cluster='%s' "
+				       "order by timestamp asc for update",
+				       cols, sql_table,
+				       period_end, cluster_name);
+		break;
+	case PURGE_USAGE:
+	case PURGE_CLUSTER_USAGE:
+		query = xstrdup_printf("select %s from \"%s_%s\" where "
+				       "time_start <= %ld "
+				       "order by time_start asc for update",
+				       cols, cluster_name, sql_table,
+				       period_end);
+		break;
+	case PURGE_JOB:
+		query = xstrdup_printf("select %s from \"%s_%s\" where "
+				       "time_submit < %ld && time_end != 0 "
+				       "order by time_submit asc for update",
+				       cols, cluster_name, job_table,
+				       period_end);
+		break;
+	default:
+		query = xstrdup_printf("select %s from \"%s_%s\" where "
+				       "time_start <= %ld && time_end != 0 "
+				       "order by time_start asc for update",
+				       cols, cluster_name, sql_table,
+				       period_end);
+		break;
+	}
+
+	xfree(cols);
+
+	if (debug_flags & DEBUG_FLAG_DB_ARCHIVE)
+		DB_DEBUG(mysql_conn->conn, "query\n%s", query);
+	if (!(result = mysql_db_query_ret(mysql_conn, query, 0))) {
+		xfree(query);
+		return SLURM_ERROR;
+	}
+	xfree(query);
+
+	if (!(cnt = mysql_num_rows(result))) {
+		mysql_free_result(result);
+		return 0;
+	}
+
+	buffer = (*pack_func)(result, cluster_name, cnt, usage_info,
+			      &period_start);
+	mysql_free_result(result);
+
+	error_code = archive_write_file(buffer, cluster_name,
+					period_start, period_end,
+					arch_dir, sql_table,
+					archive_period);
+	free_buf(buffer);
+
+	if (error_code != SLURM_SUCCESS)
+		return error_code;
+
+	return cnt;
+}
+
+uint32_t _get_begin_next_month(time_t start)
+{
+	struct tm parts;
+
+	slurm_localtime_r(&start, &parts);
+
+	parts.tm_mon++;
+	parts.tm_mday  = 1;
+	parts.tm_hour  = 0;
+	parts.tm_min   = 0;
+	parts.tm_sec   = 0;
+	parts.tm_isdst = -1;
+
+	if (parts.tm_mon > 11) {
+		parts.tm_year++;
+		parts.tm_mon = 0;
+	}
+
+	return slurm_mktime(&parts);
+}
+
+/* Get the oldest purge'able record.
+ * Returns SLURM_ERROR for mysql error, 0 no purge'able records found,
+ * 1 found purgeable record.
+ */
+static int _get_oldest_record(mysql_conn_t *mysql_conn, char *cluster,
+			      char *table, purge_type_t type, char *col_name,
+			      time_t period_end, time_t *record_start)
+{
+	MYSQL_RES *result = NULL;
+	MYSQL_ROW row;
+	char *query = NULL;
+
+	if (record_start == NULL)
+		return SLURM_ERROR;
+
+	/* get oldest record */
+	switch (type) {
+	case PURGE_TXN:
+		query = xstrdup_printf(
+			"select %s from \"%s\" where %s <= %ld "
+			"&& cluster='%s' order by %s asc LIMIT 1",
+			col_name, table, col_name, period_end, cluster,
+			col_name);
+		break;
+	case PURGE_USAGE:
+	case PURGE_CLUSTER_USAGE:
+		query = xstrdup_printf(
+			"select %s from \"%s_%s\" where %s <= %ld "
+			"order by %s asc LIMIT 1",
+			col_name, cluster, table, col_name, period_end,
+			col_name);
+		break;
+	default:
+		query = xstrdup_printf(
+			"select %s from \"%s_%s\" where %s <= %ld "
+			"&& time_end != 0 order by %s asc LIMIT 1",
+			col_name, cluster, table, col_name, period_end,
+			col_name);
+		break;
+	}
+
+	if (debug_flags & DEBUG_FLAG_DB_ARCHIVE)
+		DB_DEBUG(mysql_conn->conn, "query\n%s", query);
+	if (!(result = mysql_db_query_ret(mysql_conn, query, 0))) {
+		xfree(query);
+		return SLURM_ERROR;
+	}
+	xfree(query);
+
+	if (!(mysql_num_rows(result))) {
+		mysql_free_result(result);
+		return 0;
+	}
+	row = mysql_fetch_row(result);
+	*record_start = slurm_atoul(row[0]);
+	mysql_free_result(result);
+
+	return 1; /* found one record */
+}
+
+/* Archive and purge a table.
+ *
+ * Returns SLURM_ERROR on error and SLURM_SUCCESS on success.
+ */
+static int _archive_purge_table(purge_type_t purge_type, uint32_t usage_info,
+				mysql_conn_t *mysql_conn, char *cluster_name,
+				slurmdb_archive_cond_t *arch_cond)
+{
+	int      rc          = SLURM_SUCCESS;
+	uint32_t purge_attr  = 0;
+	uint16_t type, period;
+	time_t   last_submit = time(NULL);
+	time_t   curr_end    = 0, tmp_end = 0, record_start = 0;
+	char    *query = NULL, *sql_table = NULL,
+		*col_name = NULL;
+	uint32_t tmp_archive_period;
+
+	switch (purge_type) {
+	case PURGE_EVENT:
+		purge_attr = arch_cond->purge_event;
+		sql_table  = event_table;
+		col_name   = event_req_inx[EVENT_REQ_START];
+		break;
+	case PURGE_SUSPEND:
+		purge_attr = arch_cond->purge_suspend;
+		sql_table  = suspend_table;
+		col_name   = suspend_req_inx[SUSPEND_REQ_START];
+		break;
+	case PURGE_RESV:
+		purge_attr = arch_cond->purge_resv;
+		sql_table  = resv_table;
+		col_name   = step_req_inx[STEP_REQ_START];
+		break;
+	case PURGE_JOB:
+		purge_attr = arch_cond->purge_job;
+		sql_table  = job_table;
+		col_name   = job_req_inx[JOB_REQ_SUBMIT];
+		break;
+	case PURGE_STEP:
+		purge_attr = arch_cond->purge_step;
+		sql_table  = step_table;
+		col_name   = step_req_inx[STEP_REQ_START];
+		break;
+	case PURGE_TXN:
+		purge_attr = arch_cond->purge_txn;
+		sql_table  = txn_table;
+		col_name   = txn_req_inx[TXN_REQ_TS];
+		break;
+	case PURGE_USAGE:
+		type = usage_info & 0x0000ffff;
+		period = usage_info >> 16;
+
+		switch (type) {
+		case DBD_GOT_ASSOC_USAGE:
+			switch (period) {
+			case ROLLUP_HOUR:
+				sql_table = assoc_hour_table;
+				break;
+			case ROLLUP_DAY:
+				sql_table = assoc_day_table;
+				break;
+			case ROLLUP_MONTH:
+				sql_table = assoc_month_table;
+				break;
+			default:
+				error("Unknown period");
+				return SLURM_ERROR;
+				break;
+			}
+			break;
+		case DBD_GOT_WCKEY_USAGE:
+			switch (period) {
+			case ROLLUP_HOUR:
+				sql_table = wckey_hour_table;
+				break;
+			case ROLLUP_DAY:
+				sql_table = wckey_day_table;
+				break;
+			case ROLLUP_MONTH:
+				sql_table = wckey_month_table;
+				break;
+			default:
+				error("Unknown period");
+				return SLURM_ERROR;
+				break;
+			}
+			break;
+		default:
+			error("Unknown usage type %d", type);
+			return SLURM_ERROR;
+			break;
+		}
+
+		purge_attr = arch_cond->purge_usage;
+		col_name   = usage_req_inx[USAGE_START];
+		break;
+	case PURGE_CLUSTER_USAGE:
+		period = usage_info >> 16;
+
+		switch (period) {
+		case ROLLUP_HOUR:
+			sql_table = cluster_hour_table;
+			break;
+		case ROLLUP_DAY:
+			sql_table = cluster_day_table;
+			break;
+		case ROLLUP_MONTH:
+			sql_table = cluster_month_table;
+			break;
+		default:
+			error("Unknown period");
+			return SLURM_ERROR;
+			break;
+		}
+
+		purge_attr = arch_cond->purge_usage;
+		col_name   = cluster_req_inx[CLUSTER_START];
+		break;
+	default:
+		fatal("Unknown purge type: %d", purge_type);
+		return SLURM_ERROR;
+	}
+
+	if (!(curr_end = archive_setup_end_time(last_submit, purge_attr))) {
+		error("Parsing purge %s_%s", cluster_name, sql_table);
+		return SLURM_ERROR;
+	}
+
+	do {
+		rc = _get_oldest_record(mysql_conn, cluster_name, sql_table,
+					purge_type, col_name,
+					curr_end, &record_start);
+		if (!rc) /* no purgeable records found */
+			break;
+		else if (rc == SLURM_ERROR)
+			return rc;
+
+		tmp_archive_period = purge_attr;
+
+		if (curr_end - record_start > MAX_ARCHIVE_AGE) {
+			time_t begin_next = _get_begin_next_month(record_start);
+			/* old stuff, catch up by archiving by month */
+			tmp_archive_period = SLURMDB_PURGE_MONTHS;
+			tmp_end = MIN(curr_end, begin_next);
+		} else
+			tmp_end = curr_end;
+
+		if (debug_flags & DEBUG_FLAG_DB_ARCHIVE)
+			debug("Purging %s_%s before %ld",
+			      cluster_name, sql_table, tmp_end);
+
+		if (SLURMDB_PURGE_ARCHIVE_SET(purge_attr)) {
+			rc = _archive_table(purge_type, mysql_conn,
+					    cluster_name, tmp_end,
+					    arch_cond->archive_dir,
+					    tmp_archive_period,
+					    sql_table, usage_info);
+			if (!rc) /* no records archived */
+				continue;
+			else if (rc == SLURM_ERROR)
+				return rc;
+		}
+
+		switch (purge_type) {
+		case PURGE_TXN:
+			query = xstrdup_printf(
+				"delete from \"%s\" where "
+				"%s <= %ld && cluster='%s' LIMIT %d",
+				sql_table, col_name,
+				tmp_end, cluster_name, MAX_PURGE_LIMIT);
+			break;
+		case PURGE_USAGE:
+		case PURGE_CLUSTER_USAGE:
+			query = xstrdup_printf(
+				"delete from \"%s_%s\" where "
+				"%s <= %ld LIMIT %d",
+				cluster_name, sql_table, col_name,
+				tmp_end, MAX_PURGE_LIMIT);
+			break;
+		default:
+			query = xstrdup_printf(
+				"delete from \"%s_%s\" where "
+				"%s <= %ld && time_end != 0 LIMIT %d",
+				cluster_name, sql_table, col_name,
+				tmp_end, MAX_PURGE_LIMIT);
+			break;
+		}
+		if (debug_flags & DEBUG_FLAG_DB_ARCHIVE)
+			DB_DEBUG(mysql_conn->conn, "query\n%s", query);
+
+		while ((rc = mysql_db_delete_affected_rows(
+				mysql_conn, query)) > 0) {
+			/* Commit here every time since this could create a huge
+			 * transaction.
+			 */
+			if (mysql_db_commit(mysql_conn)) {
+				error("Couldn't commit cluster (%s) purge",
+				      cluster_name);
+				break;
+			}
+		}
+
+		xfree(query);
+		if (rc != SLURM_SUCCESS) {
+			error("Couldn't remove old data from %s table",
+			      sql_table);
+			return SLURM_ERROR;
+		} else if (mysql_db_commit(mysql_conn)) {
+			error("Couldn't commit cluster (%s) purge",
+			      cluster_name);
+			break;
+		}
+	} while (tmp_end < curr_end);
+
+	return SLURM_SUCCESS;
+}
+
 static int _execute_archive(mysql_conn_t *mysql_conn,
 			    char *cluster_name,
 			    slurmdb_archive_cond_t *arch_cond)
 {
 	int rc = SLURM_SUCCESS;
-	char *query = NULL;
-	time_t curr_end;
 	time_t last_submit = time(NULL);
 
 	if (arch_cond->archive_script)
@@ -2154,191 +3257,65 @@ static int _execute_archive(mysql_conn_t *mysql_conn,
 	}
 
 	if (arch_cond->purge_event != NO_VAL) {
-		/* remove all data from event table that was older than
-		 * period_start * arch_cond->purge_event.
-		 */
-		if (!(curr_end = archive_setup_end_time(
-			      last_submit, arch_cond->purge_event))) {
-			error("Parsing purge event");
-			return SLURM_ERROR;
-		}
-
-		debug4("Purging event entries before %ld for %s",
-		       curr_end, cluster_name);
-
-		if (SLURMDB_PURGE_ARCHIVE_SET(arch_cond->purge_event)) {
-			rc = _archive_events(mysql_conn, cluster_name,
-					     curr_end, arch_cond->archive_dir,
-					     arch_cond->purge_event);
-			if (!rc)
-				goto exit_events;
-			else if (rc == SLURM_ERROR)
-				return rc;
-		}
-		query = xstrdup_printf("delete from \"%s_%s\" where "
-				       "time_start <= %ld && time_end != 0",
-				       cluster_name, event_table, curr_end);
-		debug3("%d(%s:%d) query\n%s",
-		       mysql_conn->conn, THIS_FILE, __LINE__, query);
-		rc = mysql_db_query(mysql_conn, query);
-		xfree(query);
-		if (rc != SLURM_SUCCESS) {
-			error("Couldn't remove old event data");
-			return SLURM_ERROR;
-		}
+		if ((rc = _archive_purge_table(PURGE_EVENT, 0, mysql_conn,
+					       cluster_name, arch_cond)))
+			return rc;
 	}
-
-exit_events:
 
 	if (arch_cond->purge_suspend != NO_VAL) {
-		/* remove all data from suspend table that was older than
-		 * period_start * arch_cond->purge_suspend.
-		 */
-		if (!(curr_end = archive_setup_end_time(
-			      last_submit, arch_cond->purge_suspend))) {
-			error("Parsing purge suspend");
-			return SLURM_ERROR;
-		}
-
-		debug4("Purging suspend entries before %ld for %s",
-		       curr_end, cluster_name);
-
-		if (SLURMDB_PURGE_ARCHIVE_SET(arch_cond->purge_suspend)) {
-			rc = _archive_suspend(mysql_conn, cluster_name,
-					      curr_end, arch_cond->archive_dir,
-					      arch_cond->purge_suspend);
-			if (!rc)
-				goto exit_suspend;
-			else if (rc == SLURM_ERROR)
-				return rc;
-		}
-		query = xstrdup_printf("delete from \"%s_%s\" where "
-				       "time_start <= %ld && time_end != 0",
-				       cluster_name, suspend_table, curr_end);
-		debug3("%d(%s:%d) query\n%s",
-		       mysql_conn->conn, THIS_FILE, __LINE__, query);
-		rc = mysql_db_query(mysql_conn, query);
-		xfree(query);
-		if (rc != SLURM_SUCCESS) {
-			error("Couldn't remove old suspend data");
-			return SLURM_ERROR;
-		}
+		if ((rc = _archive_purge_table(PURGE_SUSPEND, 0, mysql_conn,
+					       cluster_name, arch_cond)))
+			return rc;
 	}
-
-exit_suspend:
 
 	if (arch_cond->purge_step != NO_VAL) {
-		/* remove all data from step table that was older than
-		 * start * arch_cond->purge_step.
-		 */
-		if (!(curr_end = archive_setup_end_time(
-			      last_submit, arch_cond->purge_step))) {
-			error("Parsing purge step");
-			return SLURM_ERROR;
-		}
-
-		debug4("Purging step entries before %ld for %s",
-		       curr_end, cluster_name);
-
-		if (SLURMDB_PURGE_ARCHIVE_SET(arch_cond->purge_step)) {
-			rc = _archive_steps(mysql_conn, cluster_name,
-					    curr_end, arch_cond->archive_dir,
-					    arch_cond->purge_step);
-			if (!rc)
-				goto exit_steps;
-			else if (rc == SLURM_ERROR)
-				return rc;
-		}
-
-		query = xstrdup_printf("delete from \"%s_%s\" where "
-				       "time_start <= %ld && time_end != 0",
-				       cluster_name, step_table, curr_end);
-		debug3("%d(%s:%d) query\n%s",
-		       mysql_conn->conn, THIS_FILE, __LINE__, query);
-		rc = mysql_db_query(mysql_conn, query);
-		xfree(query);
-		if (rc != SLURM_SUCCESS) {
-			error("Couldn't remove old step data");
-			return SLURM_ERROR;
-		}
+		if ((rc = _archive_purge_table(PURGE_STEP, 0, mysql_conn,
+					       cluster_name, arch_cond)))
+			return rc;
 	}
-exit_steps:
 
 	if (arch_cond->purge_job != NO_VAL) {
-		/* remove all data from job table that was older than
-		 * last_submit * arch_cond->purge_job.
-		 */
-		if (!(curr_end = archive_setup_end_time(
-			      last_submit, arch_cond->purge_job))) {
-			error("Parsing purge job");
-			return SLURM_ERROR;
-		}
-
-		debug4("Purging job entires before %ld for %s",
-		       curr_end, cluster_name);
-
-		if (SLURMDB_PURGE_ARCHIVE_SET(arch_cond->purge_job)) {
-			rc = _archive_jobs(mysql_conn, cluster_name,
-					   curr_end, arch_cond->archive_dir,
-					   arch_cond->purge_job);
-			if (!rc)
-				goto exit_jobs;
-			else if (rc == SLURM_ERROR)
-				return rc;
-		}
-
-		query = xstrdup_printf("delete from \"%s_%s\" "
-				       "where time_submit <= %ld "
-				       "&& time_end != 0",
-				       cluster_name, job_table, curr_end);
-		debug3("%d(%s:%d) query\n%s",
-		       mysql_conn->conn, THIS_FILE, __LINE__, query);
-		rc = mysql_db_query(mysql_conn, query);
-		xfree(query);
-		if (rc != SLURM_SUCCESS) {
-			error("Couldn't remove old job data");
-			return SLURM_ERROR;
-		}
+		if ((rc = _archive_purge_table(PURGE_JOB, 0, mysql_conn,
+					       cluster_name, arch_cond)))
+			return rc;
 	}
-exit_jobs:
 
 	if (arch_cond->purge_resv != NO_VAL) {
-		/* remove all data from resv table that was older than
-		 * last_submit * arch_cond->purge_resv.
-		 */
-		if (!(curr_end = archive_setup_end_time(
-			      last_submit, arch_cond->purge_resv))) {
-			error("Parsing purge resv");
-			return SLURM_ERROR;
-		}
+		if ((rc = _archive_purge_table(PURGE_RESV, 0, mysql_conn,
+					       cluster_name, arch_cond)))
+			return rc;
+	}
 
-		debug4("Purging resv entires before %ld for %s",
-		       curr_end, cluster_name);
+	if (arch_cond->purge_txn != NO_VAL) {
+		if ((rc = _archive_purge_table(PURGE_TXN, 0, mysql_conn,
+					       cluster_name, arch_cond)))
+			return rc;
+	}
 
-		if (SLURMDB_PURGE_ARCHIVE_SET(arch_cond->purge_resv)) {
-			rc = _archive_resvs(mysql_conn, cluster_name,
-					   curr_end, arch_cond->archive_dir,
-					   arch_cond->purge_resv);
-			if (!rc)
-				goto exit_resvs;
-			else if (rc == SLURM_ERROR)
-				return rc;
-		}
+	if (arch_cond->purge_usage != NO_VAL) {
+		int i;
+		for (i = 0; i < ROLLUP_COUNT; i++) {
+			uint32_t usage_info = i << 16;
+			if ((rc = _archive_purge_table(
+				     PURGE_USAGE,
+				     usage_info + DBD_GOT_ASSOC_USAGE,
+				     mysql_conn, cluster_name, arch_cond)))
+			return rc;
 
-		query = xstrdup_printf("delete from \"%s_%s\" "
-				       "where time_start <= %ld "
-				       "&& time_end != 0",
-				       cluster_name, resv_table, curr_end);
-		debug3("%d(%s:%d) query\n%s",
-		       mysql_conn->conn, THIS_FILE, __LINE__, query);
-		rc = mysql_db_query(mysql_conn, query);
-		xfree(query);
-		if (rc != SLURM_SUCCESS) {
-			error("Couldn't remove old resv data");
-			return SLURM_ERROR;
+			if ((rc = _archive_purge_table(
+				     PURGE_USAGE,
+				     usage_info + DBD_GOT_WCKEY_USAGE,
+				     mysql_conn, cluster_name, arch_cond)))
+			return rc;
+
+			if ((rc = _archive_purge_table(
+				     PURGE_CLUSTER_USAGE,
+				     usage_info + DBD_GOT_CLUSTER_USAGE,
+				     mysql_conn, cluster_name, arch_cond)))
+			return rc;
 		}
 	}
-exit_resvs:
+
 	return SLURM_SUCCESS;
 }
 
@@ -2347,10 +3324,9 @@ extern int as_mysql_jobacct_process_archive(mysql_conn_t *mysql_conn,
 {
 	int rc = SLURM_SUCCESS;
 	char *cluster_name = NULL;
-	List use_cluster_list = as_mysql_cluster_list;
+	List use_cluster_list;
+	bool new_cluster_list = false;
 	ListIterator itr = NULL;
-
-//	DEF_TIMERS;
 
 	if (!arch_cond) {
 		error("No arch_cond was given to archive from.  returning");
@@ -2358,10 +3334,23 @@ extern int as_mysql_jobacct_process_archive(mysql_conn_t *mysql_conn,
 	}
 
 	if (arch_cond->job_cond && arch_cond->job_cond->cluster_list
-	    && list_count(arch_cond->job_cond->cluster_list))
+	    && list_count(arch_cond->job_cond->cluster_list)) {
 		use_cluster_list = arch_cond->job_cond->cluster_list;
-	else
+	} else {
+		/* execute_archive may take a long time to run, so
+		 * don't keep the as_mysql_cluster_list_lock locked
+		 * the whole time, just copy the list and work off
+		 * that.
+		 */
+		new_cluster_list = true;
+		use_cluster_list = list_create(slurm_destroy_char);
 		slurm_mutex_lock(&as_mysql_cluster_list_lock);
+		itr = list_iterator_create(as_mysql_cluster_list);
+		while ((cluster_name = list_next(itr)))
+			list_append(use_cluster_list, xstrdup(cluster_name));
+		list_iterator_destroy(itr);
+		slurm_mutex_unlock(&as_mysql_cluster_list_lock);
+	}
 
 	itr = list_iterator_create(use_cluster_list);
 	while ((cluster_name = list_next(itr))) {
@@ -2370,8 +3359,9 @@ extern int as_mysql_jobacct_process_archive(mysql_conn_t *mysql_conn,
 			break;
 	}
 	list_iterator_destroy(itr);
-	if (use_cluster_list == as_mysql_cluster_list)
-		slurm_mutex_unlock(&as_mysql_cluster_list_lock);
+
+	if (new_cluster_list)
+		FREE_NULL_LIST(use_cluster_list);
 
 	return rc;
 }
@@ -2381,9 +3371,9 @@ extern int as_mysql_jobacct_process_archive_load(
 {
 	char *data = NULL, *cluster_name = NULL;
 	int error_code = SLURM_SUCCESS;
-	Buf buffer;
+	Buf buffer = NULL;
 	time_t buf_time;
-	uint16_t type = 0, ver = 0;
+	uint16_t type = 0, ver = 0, period = 0;
 	uint32_t data_size = 0, rec_cnt = 0, tmp32 = 0;
 
 	if (!arch_rec) {
@@ -2401,12 +3391,13 @@ extern int as_mysql_jobacct_process_archive_load(
 			     arch_rec->archive_file);
 			error_code = ENOENT;
 		} else {
-			data_allocated = BUF_SIZE;
-			data = xmalloc(data_allocated);
+			data_allocated = BUF_SIZE + 1;
+			data = xmalloc_nz(data_allocated);
 			while (1) {
 				data_read = read(state_fd, &data[data_size],
 						 BUF_SIZE);
 				if (data_read < 0) {
+					data[data_size] = '\0';
 					if (errno == EINTR)
 						continue;
 					else {
@@ -2414,11 +3405,13 @@ extern int as_mysql_jobacct_process_archive_load(
 						      arch_rec->archive_file);
 						break;
 					}
-				} else if (data_read == 0)	/* eof */
+				}
+				data[data_size + data_read] = '\0';
+				if (data_read == 0)	/* eof */
 					break;
 				data_size      += data_read;
 				data_allocated += data_read;
-				xrealloc(data, data_allocated);
+				xrealloc_nz(data, data_allocated);
 			}
 			close(state_fd);
 		}
@@ -2429,6 +3422,7 @@ extern int as_mysql_jobacct_process_archive_load(
 	} else {
 		error("Nothing was set in your "
 		      "slurmdb_archive_rec so I am unable to process.");
+		xfree(data);
 		return SLURM_ERROR;
 	}
 
@@ -2437,28 +3431,38 @@ extern int as_mysql_jobacct_process_archive_load(
 		return SLURM_ERROR;
 	}
 
-	/* this is the old version of an archive file where the file
-	   was straight sql. */
+	/*
+	 * this is the old version of an archive file where the file
+	 * was straight sql.
+	 */
 	if ((strlen(data) >= 12)
-	    && (!strncmp("insert into ", data, 12)
-		|| !strncmp("delete from ", data, 12)
-		|| !strncmp("drop table ", data, 11)
-		|| !strncmp("truncate table ", data, 15))) {
+	    && (!xstrncmp("insert into ", data, 12)
+		|| !xstrncmp("delete from ", data, 12)
+		|| !xstrncmp("drop table ", data, 11)
+		|| !xstrncmp("truncate table ", data, 15))) {
 		_process_old_sql(&data);
 		goto got_sql;
 	}
 
 	buffer = create_buf(data, data_size);
+	data = NULL;	/* Moved to "buffer" */
 
 	safe_unpack16(&ver, buffer);
-	debug3("Version in assoc_mgr_state header is %u", ver);
-	if (ver <= SLURM_PROTOCOL_VERSION || ver < SLURMDBD_VERSION_MIN) {
+	if (debug_flags & DEBUG_FLAG_DB_ARCHIVE)
+		DB_DEBUG(mysql_conn->conn,
+			 "Version in archive header is %u", ver);
+	/*
+	 * Don't verify the lower limit as we should be keeping all
+	 * older versions around here just to support super old
+	 * archive files since they don't get regenerated all the time.
+	 */
+	if (ver > SLURM_PROTOCOL_VERSION) {
 		error("***********************************************");
 		error("Can not recover archive file, incompatible version, "
-		      "got %u need > %u <= %u", ver,
-		      SLURMDBD_VERSION_MIN, SLURM_PROTOCOL_VERSION);
+		      "got %u need <= %u", ver,
+		      SLURM_PROTOCOL_VERSION);
 		error("***********************************************");
-		free_buf(buffer);
+		FREE_NULL_BUFFER(buffer);
 		return EFAULT;
 	}
 	safe_unpack_time(&buf_time, buffer);
@@ -2469,11 +3473,11 @@ extern int as_mysql_jobacct_process_archive_load(
 	if (!rec_cnt) {
 		error("we didn't get any records from this file of type '%s'",
 		      slurmdbd_msg_type_2_str(type, 0));
-		free_buf(buffer);
+		FREE_NULL_BUFFER(buffer);
 		goto got_sql;
 	}
 
-	switch(type) {
+	switch (type) {
 	case DBD_GOT_EVENTS:
 		data = _load_events(ver, buffer, cluster_name, rec_cnt);
 		break;
@@ -2489,24 +3493,39 @@ extern int as_mysql_jobacct_process_archive_load(
 	case DBD_JOB_SUSPEND:
 		data = _load_suspend(ver, buffer, cluster_name, rec_cnt);
 		break;
+	case DBD_GOT_TXN:
+		data = _load_txn(ver, buffer, cluster_name, rec_cnt);
+		break;
+	case DBD_GOT_ASSOC_USAGE:
+	case DBD_GOT_WCKEY_USAGE:
+		safe_unpack16(&period, buffer);
+		data = _load_usage(ver, buffer, cluster_name, type, period,
+				   rec_cnt);
+		break;
+	case DBD_GOT_CLUSTER_USAGE:
+		safe_unpack16(&period, buffer);
+		data = _load_cluster_usage(ver, buffer, cluster_name, period,
+					   rec_cnt);
+		break;
 	default:
 		error("Unknown type '%u' to load from archive", type);
 		break;
 	}
-	free_buf(buffer);
+	FREE_NULL_BUFFER(buffer);
 
 got_sql:
 	if (!data) {
 		error("No data to load");
 		return SLURM_ERROR;
 	}
-	debug3("%d(%s:%d) query\n%s",
-	       mysql_conn->conn, THIS_FILE, __LINE__, data);
+	if (debug_flags & DEBUG_FLAG_DB_ARCHIVE)
+		DB_DEBUG(mysql_conn->conn, "query\n%s", data);
 	error_code = mysql_db_query_check_after(mysql_conn, data);
 	xfree(data);
 	if (error_code != SLURM_SUCCESS) {
-	unpack_error:
+unpack_error:
 		error("Couldn't load old data");
+		FREE_NULL_BUFFER(buffer);
 		return SLURM_ERROR;
 	}
 

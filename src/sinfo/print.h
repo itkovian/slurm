@@ -3,13 +3,13 @@
  *****************************************************************************
  *  Copyright (C) 2002-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
- *  Portions Copyright (C) 2010-2011 SchedMD <http://www.schedmd.com>.
+ *  Portions Copyright (C) 2010-2017 SchedMD <https://www.schedmd.com>.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Joey Ekstrom <ekstrom1@llnl.gov>
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -88,6 +88,8 @@ void print_sinfo_reservation(reserve_info_msg_t *resv_ptr);
 	format_add_function(list,wid,right,suffix,_print_disk)
 #define format_add_features(list,wid,right,suffix) \
 	format_add_function(list,wid,right,suffix,_print_features)
+#define format_add_features_act(list,wid,right,suffix) \
+	format_add_function(list,wid,right,suffix,_print_features_act)
 #define format_add_groups(list,wid,right,suffix) \
 	format_add_function(list,wid,right,suffix,_print_groups)
 #define format_add_gres(list,wid,right,suffix) \
@@ -110,18 +112,22 @@ void print_sinfo_reservation(reserve_info_msg_t *resv_ptr);
 	format_add_function(list,wid,right,suffix,_print_partition)
 #define format_add_partition_name(list,wid,right,suffix) \
 	format_add_function(list,wid,right,suffix,_print_partition_name)
+#define format_add_port(list, wid, right, suffix) \
+	format_add_function(list, wid, right, suffix, _print_port)
 #define format_add_prefix(list,wid,right,suffix) \
 	format_add_function(list,wid,right,suffix,_print_prefix)
 #define format_add_preempt_mode(list,wid,right,suffix) \
 	format_add_function(list,wid,right,suffix,_print_preempt_mode)
-#define format_add_priority(list,wid,right,suffix) \
-	format_add_function(list,wid,right,suffix,_print_priority)
+#define format_add_priority_job_factor(list,wid,right,suffix) \
+	format_add_function(list,wid,right,suffix,_print_priority_job_factor)
+#define format_add_priority_tier(list,wid,right,suffix) \
+	format_add_function(list,wid,right,suffix,_print_priority_tier)
 #define format_add_reason(list,wid,right,suffix) \
 	format_add_function(list,wid,right,suffix,_print_reason)
 #define format_add_root(list,wid,right,prefix) \
 	format_add_function(list,wid,right,prefix,_print_root)
-#define format_add_share(list,wid,right,suffix) \
-	format_add_function(list,wid,right,suffix,_print_share)
+#define format_add_oversubscribe(list,wid,right,suffix) \
+	format_add_function(list,wid,right,suffix,_print_oversubscribe)
 #define format_add_size(list,wid,right,suffix) \
 	format_add_function(list,wid,right,suffix,_print_size)
 #define format_add_state_compact(list,wid,right,suffix) \
@@ -146,10 +152,16 @@ void print_sinfo_reservation(reserve_info_msg_t *resv_ptr);
 	format_add_function(list,wid,right,suffix,_print_com_invalid)
 #define format_add_cpu_load(list,wid,right,suffix) \
 	format_add_function(list,wid,right,suffix,_print_cpu_load)
+#define format_add_free_mem(list,wid,right,suffix) \
+	format_add_function(list,wid,right,suffix,_print_free_mem)
 #define format_add_max_cpus_per_node(list,wid,right,suffix) \
 	format_add_function(list,wid,right,suffix,_print_max_cpus_per_node)
 #define format_add_version(list,wid,right,suffix) \
 	format_add_function(list,wid,right,suffix,_print_version)
+#define format_add_alloc_mem(list,wid,right,suffix) \
+	format_add_function(list,wid,right,suffix,_print_alloc_mem)
+#define format_add_cluster_name(list,wid,right,suffix) \
+	format_add_function(list,wid,right,suffix,_print_cluster_name)
 
 /*****************************************************************************
  * Print Field Functions
@@ -173,6 +185,8 @@ int _print_disk(sinfo_data_t * sinfo_data, int width,
 			bool right_justify, char *suffix);
 int _print_features(sinfo_data_t * sinfo_data, int width,
 			bool right_justify, char *suffix);
+int _print_features_act(sinfo_data_t * sinfo_data, int width,
+			bool right_justify, char *suffix);
 int _print_groups(sinfo_data_t * sinfo_data, int width,
 			bool right_justify, char *suffix);
 int _print_gres(sinfo_data_t * sinfo_data, int width,
@@ -191,21 +205,25 @@ int _print_nodes_ai(sinfo_data_t * sinfo_data, int width,
 			bool right_justify, char *suffix);
 int _print_nodes_aiot(sinfo_data_t * sinfo_data, int width,
 			bool right_justify, char *suffix);
+int _print_oversubscribe(sinfo_data_t * sinfo_data, int width,
+			bool right_justify, char *suffix);
 int _print_partition(sinfo_data_t * sinfo_data, int width,
 			bool right_justify, char *suffix);
 int _print_partition_name(sinfo_data_t * sinfo_data, int width,
+			bool right_justify, char *suffix);
+int _print_port(sinfo_data_t *sinfo_data, int width,
 			bool right_justify, char *suffix);
 int _print_prefix(sinfo_data_t * sinfo_data, int width,
 			bool right_justify, char *suffix);
 int _print_preempt_mode(sinfo_data_t * sinfo_data, int width,
 			bool right_justify, char *suffix);
-int _print_priority(sinfo_data_t * sinfo_data, int width,
+int _print_priority_job_factor(sinfo_data_t * sinfo_data, int width,
+			bool right_justify, char *suffix);
+int _print_priority_tier(sinfo_data_t * sinfo_data, int width,
 			bool right_justify, char *suffix);
 int _print_reason(sinfo_data_t * sinfo_data, int width,
 			bool right_justify, char *suffix);
 int _print_root(sinfo_data_t * sinfo_data, int width,
-			bool right_justify, char *suffix);
-int _print_share(sinfo_data_t * sinfo_data, int width,
 			bool right_justify, char *suffix);
 int _print_size(sinfo_data_t * sinfo_data, int width,
 			bool right_justify, char *suffix);
@@ -231,8 +249,14 @@ int _print_com_invalid(sinfo_data_t * sinfo_data, int width,
 		       bool right_justify, char *suffix);
 int _print_cpu_load(sinfo_data_t * node_ptr, int width,
 		    bool right_justify, char *suffix);
+int _print_free_mem(sinfo_data_t * node_ptr, int width,
+		    bool right_justify, char *suffix);
 int _print_max_cpus_per_node(sinfo_data_t * sinfo_data, int width,
 			     bool right_justify, char *suffix);
 int _print_version(sinfo_data_t * sinfo_data, int width,
 		   bool right_justify, char *suffix);
+int _print_alloc_mem(sinfo_data_t * sinfo_data, int width,
+		     bool right_justify, char *suffix);
+int _print_cluster_name(sinfo_data_t *sinfo_data, int width,
+			bool right_justify, char *suffix);
 #endif

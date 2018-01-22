@@ -7,7 +7,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -36,21 +36,13 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#ifdef HAVE_CONFIG_H
-#  include "config.h"
-#endif
-
-#ifdef HAVE_SYS_SYSLOG_H
-#  include <sys/syslog.h>
-#endif
-
+#include <arpa/inet.h>
 #include <errno.h>
+#include <netinet/in.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
 #include <unistd.h>
 
 #include "slurm/slurm.h"
@@ -78,7 +70,8 @@ extern int slurm_load_topo(topo_info_response_msg_t **resp)
 	req_msg.msg_type = REQUEST_TOPO_INFO;
 	req_msg.data     = NULL;
 
-	if (slurm_send_recv_controller_msg(&req_msg, &resp_msg) < 0)
+	if (slurm_send_recv_controller_msg(&req_msg, &resp_msg,
+					   working_cluster_rec) < 0)
 		return SLURM_ERROR;
 
 	switch (resp_msg.msg_type) {
@@ -126,7 +119,21 @@ extern void slurm_print_topo_info_msg(
 }
 
 
+static int _print_topo_record(const char *print, const char* record,
+			       const int size, char **out_buf)
+{
+	int len = 0;
 
+	if (size <= 0)
+		return 0;
+	if (print && print[0]) {
+		char tmp_line[size];
+		snprintf(tmp_line, size, "%s=%s ", record, print);
+		len = size - strlen(tmp_line);
+		xstrcat(*out_buf, tmp_line);
+	}
+	return len;
+}
 /*
  * slurm_print_topo_record - output information about a specific Slurm topology
  *	record based upon message as loaded using slurm_load_topo
@@ -140,24 +147,30 @@ extern void slurm_print_topo_record(FILE * out, topo_info_t *topo_ptr,
 				    int one_liner)
 {
 	char tmp_line[512];
+	char *buf;
 	char *out_buf = NULL;
+	int max_len = 0, len;
+
+	buf = getenv("SLURM_TOPO_LEN");
+	if (buf)
+		max_len = atoi(buf);
+	if (max_len <= 0)
+		max_len = 512;
+
+	if (max_len < sizeof(tmp_line))
+		len = max_len;
+	else
+		len =  sizeof(tmp_line);
 
 	/****** Line 1 ******/
-	snprintf(tmp_line, sizeof(tmp_line),
+	snprintf(tmp_line, len,
 		"SwitchName=%s Level=%u LinkSpeed=%u ",
 		topo_ptr->name, topo_ptr->level, topo_ptr->link_speed);
 	xstrcat(out_buf, tmp_line);
+	len = max_len - strlen(tmp_line);
 
-	if (topo_ptr->nodes && topo_ptr->nodes[0]) {
-		snprintf(tmp_line, sizeof(tmp_line),
-			 "Nodes=%s ", topo_ptr->nodes);
-		xstrcat(out_buf, tmp_line);
-	}
-	if (topo_ptr->switches && topo_ptr->switches[0]) {
-		snprintf(tmp_line, sizeof(tmp_line),
-			 "Switches=%s ", topo_ptr->switches);
-		xstrcat(out_buf, tmp_line);
-	}
+	len = _print_topo_record(topo_ptr->nodes, "Nodes", len, &out_buf);
+	(void)_print_topo_record(topo_ptr->switches, "Switches", len, &out_buf);
 
 	xstrcat(out_buf, "\n");
 	fprintf(out, "%s", out_buf);

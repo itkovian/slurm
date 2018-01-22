@@ -5,7 +5,7 @@
  *  Written by Alejandro Lucero <alucero@bsc.es>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -34,23 +34,18 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#ifdef HAVE_CONFIG_H
-#  include "config.h"
-#endif
-
 #include <ctype.h>
 #include <errno.h>
 #include <stdio.h>
 
 #include "src/slurmctld/agent.h"
 #include "src/slurmctld/slurmctld.h"
+#include "src/common/list.h"
 #include "src/common/pack.h"
 #include "src/common/xstring.h"
-#include "src/common/list.h"
+#include "src/common/slurmdbd_defs.h"
 
 extern int retry_list_size(void);
-
-extern time_t last_proc_req_start;
 
 /* Pack all scheduling statistics */
 extern void pack_all_stat(int resp, char **buffer_ptr, int *buffer_size,
@@ -60,13 +55,75 @@ extern void pack_all_stat(int resp, char **buffer_ptr, int *buffer_size,
 	int parts_packed;
 	int agent_queue_size;
 	time_t now = time(NULL);
+	uint32_t uint32_tmp;
 
 	buffer_ptr[0] = NULL;
 	*buffer_size = 0;
 
 	buffer = init_buf(BUF_SIZE);
+	if (protocol_version >= SLURM_17_11_PROTOCOL_VERSION) {
+		parts_packed = resp;
+		pack32(parts_packed, buffer);
 
-	if (protocol_version >= SLURM_2_5_PROTOCOL_VERSION) {
+		if (resp) {
+			pack_time(now, buffer);
+			debug3("pack_all_stat: time = %u",
+			       (uint32_t) last_proc_req_start);
+			pack_time(last_proc_req_start, buffer);
+
+			debug3("pack_all_stat: server_thread_count = %u",
+			       slurmctld_config.server_thread_count);
+			pack32(slurmctld_config.server_thread_count, buffer);
+
+			agent_queue_size = retry_list_size();
+			pack32(agent_queue_size, buffer);
+			pack32(slurmdbd_agent_queue_count(), buffer);
+
+			pack32(slurmctld_diag_stats.jobs_submitted, buffer);
+			pack32(slurmctld_diag_stats.jobs_started, buffer);
+			pack32(slurmctld_diag_stats.jobs_completed, buffer);
+			pack32(slurmctld_diag_stats.jobs_canceled, buffer);
+			pack32(slurmctld_diag_stats.jobs_failed, buffer);
+
+			pack32(slurmctld_running_job_count, buffer);
+			pack_time(slurmctld_running_job_count_ts, buffer);
+
+			pack32(slurmctld_diag_stats.schedule_cycle_max,
+			       buffer);
+			pack32(slurmctld_diag_stats.schedule_cycle_last,
+			       buffer);
+			pack32(slurmctld_diag_stats.schedule_cycle_sum,
+			       buffer);
+			pack32(slurmctld_diag_stats.schedule_cycle_counter,
+			       buffer);
+			pack32(slurmctld_diag_stats.schedule_cycle_depth,
+			       buffer);
+			pack32(slurmctld_diag_stats.schedule_queue_len, buffer);
+
+			pack32(slurmctld_diag_stats.backfilled_jobs, buffer);
+			pack32(slurmctld_diag_stats.last_backfilled_jobs,
+			       buffer);
+			pack32(slurmctld_diag_stats.bf_cycle_counter, buffer);
+			pack64(slurmctld_diag_stats.bf_cycle_sum, buffer);
+			pack32(slurmctld_diag_stats.bf_cycle_last, buffer);
+			pack32(slurmctld_diag_stats.bf_last_depth, buffer);
+			pack32(slurmctld_diag_stats.bf_last_depth_try, buffer);
+
+			pack32(slurmctld_diag_stats.bf_queue_len, buffer);
+			pack32(slurmctld_diag_stats.bf_cycle_max, buffer);
+			pack_time(slurmctld_diag_stats.bf_when_last_cycle,
+				  buffer);
+			pack32(slurmctld_diag_stats.bf_depth_sum, buffer);
+			pack32(slurmctld_diag_stats.bf_depth_try_sum, buffer);
+			pack32(slurmctld_diag_stats.bf_queue_len_sum, buffer);
+
+			/* FIXME: Pack as 2 fields in v18.08 */
+			uint32_tmp = slurmctld_diag_stats.backfilled_pack_jobs;
+			if (slurmctld_diag_stats.bf_active)
+				uint32_tmp |= 0x80000000;
+			pack32(uint32_tmp,	 buffer);
+		}
+	} else if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
 		parts_packed = resp;
 		pack32(parts_packed, buffer);
 
@@ -105,7 +162,7 @@ extern void pack_all_stat(int resp, char **buffer_ptr, int *buffer_size,
 			pack32(slurmctld_diag_stats.last_backfilled_jobs,
 			       buffer);
 			pack32(slurmctld_diag_stats.bf_cycle_counter, buffer);
-			pack32(slurmctld_diag_stats.bf_cycle_sum, buffer);
+			pack64(slurmctld_diag_stats.bf_cycle_sum, buffer);
 			pack32(slurmctld_diag_stats.bf_cycle_last, buffer);
 			pack32(slurmctld_diag_stats.bf_last_depth, buffer);
 			pack32(slurmctld_diag_stats.bf_last_depth_try, buffer);
@@ -146,6 +203,7 @@ extern void reset_stats(int level)
 		slurmctld_diag_stats.backfilled_jobs = 0;
 
 	slurmctld_diag_stats.last_backfilled_jobs = 0;
+	slurmctld_diag_stats.backfilled_pack_jobs = 0;
 	slurmctld_diag_stats.bf_cycle_counter = 0;
 	slurmctld_diag_stats.bf_cycle_sum = 0;
 	slurmctld_diag_stats.bf_cycle_last = 0;

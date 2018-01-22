@@ -2,23 +2,23 @@
 
 <h1>High Throughput Computing Administration Guide</h1>
 
-<p>This document contains SLURM administrator information specifically
+<p>This document contains Slurm administrator information specifically
 for high throughput computing, namely the execution of many short jobs.
 Getting optimal performance for high throughput computing does require
 some tuning and this document should help you off to a good start.
-A working knowledge of SLURM should be considered a prerequisite
+A working knowledge of Slurm should be considered a prerequisite
 for this material.</p>
 
 <h2>Performance Results</h2>
 
-<p>SLURM has also been validated to execute 500 simple batch jobs per second
+<p>Slurm has also been validated to execute 500 simple batch jobs per second
 on a sustained basis with short bursts of activity at a much higher level.
 Actual performance depends upon the jobs to be executed plus the hardware and
 configuration used.</p>
 
 <h2>System configuration</h2>
 
-<p>Three system configuration parameters must be set to support a large number
+<p>Several system configuration parameters may require modification to support a large number
 of open files and TCP connections with large bursts of messages. Changes can
 be made using the <b>/etc/rc.d/rc.local</b> or <b>/etc/sysctl.conf</b> 
 script to preserve changes after reboot. In either case, you can write values
@@ -29,15 +29,36 @@ directly into these files
 The maximum number of concurrently open files.
 We recommend a limit of at least 32,832.</li>
 <li><b>/proc/sys/net/ipv4/tcp_max_syn_backlog</b>:
-Maximum number of remembered connection requests, which are still did not
-receive an acknowledgment from connecting client.
+The maximum number of SYN requests to keep in memory that we have yet to get
+the third packet in a 3-way handshake from.
+The tcp_max_syn_backlog variable is overridden by the tcp_syncookies variable,
+which needs to be turned on for this variable to have any effect. 
 The default value is 1024 for systems with more than 128Mb of memory, and 128
 for low memory machines. If server suffers of overload, try to increase this
 number.</li>
+<li><b>/proc/sys/net/ipv4/tcp_syncookies</b>:
+Used to send out <i>syncookies</i> to hosts when the kernels syn backlog queue
+for a specific socket is overflowed.
+The default value is 0, which disables this functionality.
+Set the value to 1.
+<li><b>/proc/sys/net/ipv4/tcp_synack_retries</b>:
+How many times to retransmit the SYN,ACK reply to an SYN request.
+In other words, this tells the system how many times to try to establish a
+passive TCP connection that was started by another host.
+This variable takes an integer value, but should under no circumstances be
+larger than 255.
+Each retransmission will take aproximately 30 to 40 seconds.
+The default value of 5, which results in a timeout of passive TCP connections
+of aproximately 180 seconds and is generally satisfactory.
 <li><b>/proc/sys/net/core/somaxconn</b>:
 Limit of socket listen() backlog, known in userspace as SOMAXCONN. Defaults to
 128. The value should be raised substantially to support bursts of request.
 For example, to support a burst of 1024 requests, set somaxconn to 1024.</li>
+<li><b>/proc/sys/net/ipv4/ip_local_port_range</b>:
+Identify the ephermeral ports available, which are used for many Slurm
+communcations. The value may be raised to support a high volume of communcations.
+For example, write the value "32768 65535" into the ip_local_port_range file
+in order to make that range of ports available.</li>
 </ul>
 
 <p>The transmit queue length (<b>txqueuelen</b>) may also need to be modified
@@ -48,7 +69,7 @@ site with a very large cluster
 <h2>Munge configuration</h2>
 
 <p>By default the Munge daemon runs with two threads, but a higher thread count
-can improve its throughput. We suggest startint the Munge daemon with ten
+can improve its throughput. We suggest starting the Munge daemon with ten
 threads for high throughput support (e.g. <i>"munged --num-threads 10"</i>).</p>
 
 <h2>User limits</h2>
@@ -56,20 +77,19 @@ threads for high throughput support (e.g. <i>"munged --num-threads 10"</i>).</p>
 <p>The <b>ulimit</b> values in effect for the <b>slurmctld</b> daemon should
 be set quite high for memory size, open file count and stack size.</p>
 
-<h2>SLURM Configuration</h2>
+<h2>Slurm Configuration</h2>
 
-<p>NOTE: Substantial changes were made in SLURM version 2.4 to support higher
-throughput rates. Version 2.5 includes more enhancements.</p>
-
-<p>Several SLURM configuration parameters should be adjusted to
+<p>Several Slurm configuration parameters should be adjusted to
 reflect the needs of high throughput computing. The changes described below
 will not be possible in all environments, but these are the configuration
 options that you may want to consider for higher throughput.</p>
 
 <ul>
 <li><b>AccountingStorageType</b>:
-Disabling accounting will improve job throughput. Disable storing of
-accounting by using the <i>accounting_storage/none</i> plugin.</li>
+Disabling storing of accounting by using the <i>accounting_storage/none</i>
+plugin. Turning accounting off provides minimal improvement in performance.
+If using the SlurmDBD increased speedup can be achieved by setting the
+CommitDelay option in the <a href=slurmdbd.conf.html>slurmdbd.conf</a></li>
 <li><b>JobAcctGatherType</b>:
 Disabling the collection of job accounting information will improve job
 throughput. Disable collection of accounting by using the
@@ -95,9 +115,6 @@ The default value is 300 seconds. The value should be reduced to a few
 seconds if possible. Use of accounting records for older jobs can increase
 the job throughput rate compared with retaining old jobs in the memory of
 the slurmctld daemon.</li>
-<li><b>ProctrackType</b>:
-Avoid using <i>proctrack/cgroup</i> it is considerably slower than
-other alternatives. <i>proctrack/pgid</i> (the default) is advised.</li>
 <li><b>PriorityType</b>:
 The <i>priority/builtin</i> is considerably faster than other options, but
 schedules jobs only on a First In First Out (FIFO) basis.</li>
@@ -115,11 +132,18 @@ scheduling multiple jobs simultaneously may be possible.
 This option may improve system responsiveness when large numbers of jobs
 (many hundreds) are submitted at the same time, but it will delay the
 initiation time of individual jobs.</li>
-<li>A variation of <b>defer</b> would be to configure <b>default_queue_depth</b>
-to a relatively small number to avoid attempting to schedule large numbers of
-jobs every time some job completes or another routine action occurs. (NOTE:
-the default value of <b>default_queue_depth</b> should be fine in most
-cases).</li>
+<li><b>sched_min_interval</b> is yet another configuration parameter to control
+how frequently the scheduling logic runs. It can still be triggered on each
+job submit, job terminiation, or other state change which could permit a new
+job to be started. However that triggering does not cause the scheduling logic
+to be started immediately, but only within the configured <b>sched_interval</b>.
+For example, if sched_min_interval=2000000 (microseconds) and 100 jobs are submitted
+within a 2 second time window, then the scheduling logic will be executed one time
+rather than 100 times if sched_min_interval was set to 0 (no delay).</li>
+<li>Besides controlling how frequently the scheduling logic is executed, the
+<b>default_queue_depth</b> configuration parameter controls how many jobs are
+considered to be started in each scheduler iteration. The default value of
+default_queue_depth is 100 (jobs), which should be fine in most cases.</li>
 <li>The <i>sched/backfill</i> plugin has relatively high overhead if used with
 large numbers of job. Configuring <b>bf_max_job_test</b> to a modest size (say 100
 jobs or less) and <b>bf_interval</b> to 30 seconds or more will limit the
@@ -161,14 +185,34 @@ will increase the number of message by a factor of about 3.</li>
 <li><b>SlurmdLogFile</b>:
 Writing to local storage is recommended.</li>
 <li><b>TaskPlugin</b>:
-Avoid using <i>task/cgroup</i> it is slower than other
-alternatives. It is not as heavy as the cgroup proctrack
-plugin, but still added overhead.  On the same note <i>task/affinity</i> does
-not appear to add any measurable overhead.</li>
+Avoid using <i>task/cgroup</i> with the combination of <i>ConstrainRAMSpace</i>
+it is slower than other alternatives.  On the same note <i>task/affinity</i>
+does not appear to add any measurable overhead.  Using task/affinity for
+affinity is advised in any case.</li>
 <li><b>Other</b>: Configure logging, accounting and other overhead to a minimum
 appropriate for your environment.</li>
 </ul>
 
-<p style="text-align:center;">Last modified 25 April 2014</p>
+<h2>SlurmDBD Configuration</h2>
+
+<p>Turning accounting off provides a minimal improvement in performance.
+  If using SlurmDBD increased speedup can be achieved by setting the CommitDelay
+  option in the <a href=slurmdbd.conf.html>slurmdbd.conf</a></p>
+
+<p>You might also consider setting the '<i>Purge*</i>' options in your
+  slurmdbd.conf to clear out old Data.  A Typical configuration would
+  look like this...</p>
+<ul>
+<li><b>PurgeEventAfter</b>=12months</li>
+<li><b>PurgeJobAfter</b>=12months</li>
+<li><b>PurgeResvAfter</b>=2months</li>
+<li><b>PurgeStepAfter</b>=2months</li>
+<li><b>PurgeSuspendAfter</b>=1month</li>
+<li><b>PurgeTXNAfter</b>=12months</li>
+<li><b>PurgeUsageAfter</b>=12months</li>
+
+</ul>
+
+<p style="text-align:center;">Last modified 15 November 2017</p>
 
 <!--#include virtual="footer.txt"-->

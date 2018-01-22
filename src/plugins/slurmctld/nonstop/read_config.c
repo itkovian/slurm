@@ -5,7 +5,7 @@
  *  Written by Morris Jette <jette@schedmd.com>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://www.schedmd.com/slurmdocs/>.
+ *  For details, see <https://slurm.schedmd.com>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -33,10 +33,6 @@
  *  with SLURM; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
-
-#ifdef HAVE_CONFIG_H
-#  include "config.h"
-#endif
 
 #include <stdlib.h>
 #include <string.h>
@@ -155,7 +151,7 @@ static spare_node_resv_t *_xlate_hot_spares(char *spare_str, int *spare_cnt)
 	struct part_record *part_ptr = NULL;
 	/* Locks: Read partition */
 	slurmctld_lock_t part_read_lock =
-	    { NO_LOCK, NO_LOCK, NO_LOCK, READ_LOCK };
+	    { NO_LOCK, NO_LOCK, NO_LOCK, READ_LOCK, NO_LOCK };
 
 	*spare_cnt = 0;
 	if ((spare_str == NULL) || (spare_str[0] == '\0'))
@@ -172,6 +168,12 @@ static spare_node_resv_t *_xlate_hot_spares(char *spare_str, int *spare_cnt)
 			node_cnt = atoi(sep + 1);
 			sep[0] = '\0';
 			part_ptr = find_part_record(part);
+			if ((*spare_cnt > 0) && (spare_ptr == NULL)) {
+				/* Avoid CLANG error */
+				fatal("%s: spare array is NULL with size=%d",
+				      __func__, *spare_cnt);
+				return spare_ptr;
+			}
 			for (i = 0; i < *spare_cnt; i++) {
 				if (spare_ptr[i].part_ptr != part_ptr)
 					continue;
@@ -223,7 +225,7 @@ static uid_t *_xlate_users(char *user_str, int *user_cnt)
 	tok = strtok_r(tmp_str, ",", &save_ptr);
 	while (tok) {
 		int rc = 0;
-		if (!strcasecmp(tok, "ALL"))
+		if (!xstrcasecmp(tok, "ALL"))
 			uid = NO_VAL;
 		else
 			rc = uid_from_string(tok, &uid);
@@ -250,7 +252,7 @@ static void _validate_config(void)
 	if (user_drain_deny) {
 		if (!user_drain_allow_str)
 			user_drain_allow_str = xstrdup("ALL");
-		if (strcasecmp(user_drain_allow_str, "ALL"))
+		if (xstrcasecmp(user_drain_allow_str, "ALL"))
 			fatal("nonstop.conf: Bad UserDrainAllow/Deny values");
 	}
 	user_drain_allow = _xlate_users(user_drain_allow_str,
@@ -336,7 +338,7 @@ extern void create_hot_spare_resv(void)
 	struct part_record *part_ptr;
 	/* Locks: Read partition */
 	slurmctld_lock_t part_read_lock =
-	    { NO_LOCK, NO_LOCK, NO_LOCK, READ_LOCK };
+	    { NO_LOCK, NO_LOCK, NO_LOCK, READ_LOCK, NO_LOCK };
 	reservation_name_msg_t delete_resv_msg;
 	resv_desc_msg_t resv_msg;
 	time_t now = time(NULL);
@@ -359,7 +361,7 @@ extern void create_hot_spare_resv(void)
 						  RESERVE_FLAG_IGN_JOBS;
 			resv_msg.name		= resv_name;
 			resv_msg.node_cnt	= node_cnt;
-			resv_msg.partition	= part_ptr->name;
+			resv_msg.partition	= xstrdup(part_ptr->name);
 			resv_msg.start_time	= now;
 			resv_msg.users		= xstrdup("root");
 			if (find_resv_name(resv_name)) {
@@ -371,6 +373,7 @@ extern void create_hot_spare_resv(void)
 				     resv_name);
 				(void) create_resv(&resv_msg);
 			}
+			xfree(resv_msg.partition);
 			xfree(resv_msg.users);
 			break;
 		}

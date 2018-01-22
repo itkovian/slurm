@@ -1,13 +1,12 @@
 /*****************************************************************************\
  *  cray_config.h
- *
  *****************************************************************************
- *  Copyright (C) 2011 SchedMD LLC <http://www.schedmd.com>.
+ *  Copyright (C) 2011 SchedMD LLC <https://www.schedmd.com>.
  *  Supported by the Oak Ridge National Laboratory Extreme Scale Systems Center
  *  Written by Danny Auble <da@schedmd.com>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -39,17 +38,13 @@
 #ifndef _CRAY_CONFIG_H_
 #define _CRAY_CONFIG_H_
 
-#if HAVE_CONFIG_H
-#  include "config.h"
-#endif
-
 #include "slurm/slurm.h"
 
 /* Location of ALPS apbasil executable (supported on XT/XE CNL) */
 #define DEFAULT_APBASIL           "/usr/bin/apbasil"
 /* Default amount of time to wait for the apbasil command to finish.
- * (uint16_t) NO_VAL signifies no time out. */
-#define DEFAULT_APBASIL_TIMEOUT   (uint16_t) NO_VAL
+ * NO_VAL16 signifies no time out. */
+#define DEFAULT_APBASIL_TIMEOUT   NO_VAL16
 /* Location of ALPS apkill executable (supported on XT/XE CNL) */
 #define DEFAULT_APKILL            "/usr/bin/apkill"
 /* database name to use  */
@@ -77,6 +72,9 @@
  * @sdb_pass:	SDB database password
  * @sdb_port:	port number of SDB host
  * @slurm_debug_flags: see code for details
+ * @sub_alloc:  Only allocate requested node resources instead of the
+ *              whole node.  In both cases the user will be charged
+ *              for the entire node.  This is the Slurm <=2.5 behavior.
  * @sync_timeout: seconds to wait for ALPS and SLURM to sync without scheduling
  *                jobs
  */
@@ -85,13 +83,15 @@ typedef struct {
 	char		*apbasil;
 	uint16_t	apbasil_timeout;
 	char		*apkill;
+	bool             no_apid_signal_on_kill;
 
 	char		*sdb_host;
 	char		*sdb_db;
 	char		*sdb_user;
 	char		*sdb_pass;
 	uint32_t	sdb_port;
-	uint32_t	slurm_debug_flags;
+	uint64_t	slurm_debug_flags;
+	bool		sub_alloc;
 	uint32_t	sync_timeout;
 } cray_config_t;
 

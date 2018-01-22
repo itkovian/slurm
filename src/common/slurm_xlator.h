@@ -34,7 +34,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -66,16 +66,9 @@
 #ifndef __SLURM_XLATOR_H__
 #define __SLURM_XLATOR_H__
 
-#if HAVE_CONFIG_H
-#  include "config.h"
-#endif
+#include "config.h"
 
 #if USE_ALIAS
-
-/* arg_desc.[ch] functions*/
-#define	arg_count		slurm_arg_count
-#define	arg_idx_by_name		slurm_arg_idx_by_name
-#define	arg_name_by_inx		slurm_arg_name_by_inx
 
 /* bitstring.[ch] functions*/
 #define	bit_alloc		slurm_bit_alloc
@@ -84,6 +77,8 @@
 #define	bit_clear		slurm_bit_clear
 #define	bit_nclear		slurm_bit_nclear
 #define	bit_nset		slurm_bit_nset
+#define	bit_set_all		slurm_bit_set_all
+#define	bit_clear_all		slurm_bit_clear_all
 #define	bit_ffc			slurm_bit_ffc
 #define	bit_ffs			slurm_bit_ffs
 #define	bit_free		slurm_bit_free
@@ -96,7 +91,6 @@
 #define	bit_set_count_range	slurm_bit_set_count_range
 #define	bit_clear_count		slurm_bit_clear_count
 #define	bit_nset_max_count	slurm_bit_nset_max_count
-#define	bit_and_set_count	slurm_bit_and_set_count
 #define	bit_rotate_copy		slurm_bit_rotate_copy
 #define	bit_rotate		slurm_bit_rotate
 #define	bit_fmt			slurm_bit_fmt
@@ -167,6 +161,22 @@
 #define	hostset_shift_range	slurm_hostset_shift_range
 #define	hostset_within		slurm_hostset_within
 
+/* gres.[ch] functions */
+#define gres_gresid_to_gresname	slurm_gres_gresid_to_gresname
+#define gres_get_node_used	slurm_gres_get_node_used
+#define gres_get_system_cnt	slurm_gres_get_system_cnt
+#define gres_get_value_by_type	slurm_gres_get_value_by_type
+#define gres_get_job_info	slurm_gres_get_job_info
+#define gres_build_job_details	slurm_gres_build_job_details
+#define gres_get_step_info	slurm_gres_get_step_info
+#define gres_get_step_state	slurm_gres_get_step_state
+#define gres_get_job_state	slurm_gres_get_job_state
+#define gres_2_tres_str		slurm_gres_2_tres_str
+#define gres_set_job_tres_cnt	slurm_gres_set_job_tres_cnt
+#define gres_set_node_tres_cnt	slurm_gres_set_node_tres_cnt
+#define gres_device_major	slurm_gres_device_major
+#define destroy_gres_device	slurm_destroy_gres_device
+
 /* list.[ch] functions */
 #define	list_create		slurm_list_create
 #define	list_destroy		slurm_list_destroy
@@ -203,12 +213,6 @@
 #define	log_fp			slurm_log_fp
 #define	log_has_data		slurm_log_has_data
 #define	log_flush		slurm_log_flush
-#define	dump_cleanup_list	slurm_dump_cleanup_list
-#define	fatal_add_cleanup	slurm_fatal_add_cleanup
-#define	fatal_add_cleanup_job	slurm_fatal_add_cleanup_job
-#define	fatal_remove_cleanup	slurm_fatal_remove_cleanup
-#define	fatal_remove_cleanup_job slurm_fatal_remove_cleanup_job
-#define	fatal_cleanup		slurm_fatal_cleanup
 #define	fatal			slurm_fatal
 #define	error			slurm_error
 #define	info			slurm_info
@@ -225,7 +229,6 @@
 
 /* net.[ch] functions */
 #define net_stream_listen	slurm_net_stream_listen
-#define net_accept_stream	slurm_net_accept_stream
 #define net_set_low_water	slurm_net_set_low_water
 
 /* pack.[ch] functions */
@@ -238,6 +241,8 @@
 #define	unpack_time		slurm_unpack_time
 #define	packdouble		slurm_packdouble
 #define	unpackdouble		slurm_unpackdouble
+#define	packlongdouble		slurm_packlongdouble
+#define	unpacklongdouble	slurm_unpacklongdouble
 #define	pack64			slurm_pack64
 #define	unpack64		slurm_unpack64
 #define	pack32			slurm_pack32
@@ -258,6 +263,14 @@
 #define	packmem_array		slurm_packmem_array
 #define	unpackmem_array		slurm_unpackmem_array
 
+/* parse_time.[ch] functions */
+#define parse_time              slurm_parse_time
+#define time_str2mins           slurm_time_str2mins
+#define time_str2secs           slurm_time_str2secs
+#define secs2time_str           slurm_secs2time_str
+#define mins2time_str           slurm_mins2time_str
+#define mon_abbr                slurm_mon_abbr
+
 /* env.[ch] functions */
 #define	setenvf 		slurm_setenvpf
 #define	unsetenvp		slurm_unsetenvp
@@ -270,6 +283,7 @@
 #define env_array_append_fmt	slurm_env_array_append_fmt
 #define env_array_overwrite	slurm_env_array_overwrite
 #define env_array_overwrite_fmt slurm_env_array_overwrite_fmt
+#define env_array_overwrite_pack_fmt  slurm_env_array_overwrite_pack_fmt
 
 /* read_config.[ch] functions */
 #define destroy_config_key_pair	slurm_destroy_config_key_pair
@@ -318,9 +332,19 @@
 #define xstring_is_whitespace   slurm_xstring_is_whitespace
 #define	xstrtolower		slurm_xstrtolower
 #define xstrchr			slurm_xstrchr
+#define xstrrchr		slurm_xstrrchr
 #define xstrcmp			slurm_xstrcmp
+#define xstrncmp		slurm_xstrncmp
 #define xstrcasecmp		slurm_xstrcasecmp
+#define xstrncasecmp		slurm_xstrncasecmp
+#define xstrcasestr		slurm_xstrcasestr
 
+/* slurm_protocol_api.[ch] functions */
+#define convert_num_unit2       slurm_convert_num_unit2
+#define convert_num_unit        slurm_convert_num_unit
+#define revert_num_unit         slurm_revert_num_unit
+#define get_convert_unit_val    slurm_get_convert_unit_val
+#define get_unit_type           slurm_get_unit_type
 
 /* slurm_protocol_defs.[ch] functions */
 #define preempt_mode_string	slurm_preempt_mode_string
@@ -339,10 +363,11 @@
 #define reservation_flags_string slurm_reservation_flags_string
 
 /* slurmdbd_defs.[ch] functions */
-#define slurmdbd_free_list_msg	slurmdb_slurmdbd_free_list_msg
-#define slurmdbd_free_rc_msg    slurmdb_slurmdbd_free_rc_msg
-#define slurmdbd_free_usage_msg slurmdb_slurmdbd_free_usage_msg
-#define slurmdbd_free_id_rc_msg slurmdb_slurmdbd_free_id_rc_msg
+#define slurmdbd_defs_init      slurm_slurmdbd_defs_init
+#define slurmdbd_defs_fini      slurm_slurmdbd_defs_fini
+#define slurmdbd_free_list_msg	slurm_slurmdbd_free_list_msg
+#define slurmdbd_free_usage_msg slurm_slurmdbd_free_usage_msg
+#define slurmdbd_free_id_rc_msg slurm_slurmdbd_free_id_rc_msg
 
 /* plugin.[ch] functions */
 #define plugin_get_syms         slurm_plugin_get_syms
@@ -377,6 +402,7 @@
 #define s_p_get_long		slurm_s_p_get_long
 #define s_p_get_uint16		slurm_s_p_get_uint16
 #define s_p_get_uint32		slurm_s_p_get_uint32
+#define s_p_get_uint64		slurm_s_p_get_uint64
 #define s_p_get_pointer		slurm_s_p_get_pointer
 #define s_p_get_array		slurm_s_p_get_array
 #define s_p_get_boolean		slurm_s_p_get_boolean
@@ -387,13 +413,42 @@
 #define pack_slurm_step_layout          slurm_pack_slurm_step_layout
 #define unpack_slurm_step_layout        slurm_unpack_slurm_step_layout
 
+/* slurm_step_route.[ch] functions */
+#define route_split_hostlist_treewidth	slurm_route_split_hostlist_treewidth
+
+
+#define eio_handle_create		slurm_eio_handle_create
+#define eio_handle_destroy		slurm_eio_handle_destroy
+#define eio_handle_mainloop		slurm_eio_handle_mainloop
+#define eio_message_socket_accept	slurm_eio_message_socket_accept
+#define eio_message_socket_readable	slurm_eio_message_socket_readable
+#define eio_new_obj			slurm_eio_new_obj
+#define eio_new_initial_obj		slurm_eio_new_initial_obj
+#define eio_obj_create			slurm_eio_obj_create
+#define eio_obj_destroy			slurm_eio_obj_destroy
+#define eio_remove_obj			slurm_eio_remove_obj
+#define eio_signal_shutdown		slurm_eio_signal_shutdown
+#define eio_signal_wakeup		slurm_eio_signal_wakeup
+
+/* callerid.[ch] functions */
+#define callerid_get_own_netinfo	slurm_callerid_get_own_netinfo
+
+/* some stepd_api.[ch] functions */
+#define stepd_available			slurm_stepd_available
+#define stepd_connect			slurm_stepd_connect
+#define stepd_get_uid			slurm_stepd_get_uid
+#define stepd_add_extern_pid		slurm_stepd_add_extern_pid
+#define stepd_get_x11_display		slurm_stepd_get_x11_display
+
+
 #endif /* USE_ALIAS */
 
 /* Include the function definitions after redefining their names. */
-#include "src/common/arg_desc.h"
 #include "src/common/bitstring.h"
+#include "src/common/callerid.h"
+#include "src/common/eio.h"
+#include "src/common/env.h"
 #include "src/common/hostlist.h"
-#include "src/common/slurm_jobacct_gather.h"
 #include "src/common/list.h"
 #include "src/common/log.h"
 #include "src/common/macros.h"
@@ -401,15 +456,17 @@
 #include "src/common/pack.h"
 #include "src/common/parse_config.h"
 #include "src/common/read_config.h"
-#include "src/common/env.h"
 #include "src/common/slurm_auth.h"
+#include "src/common/slurm_jobacct_gather.h"
+#include "src/common/slurm_route.h"
+#include "src/common/slurm_step_layout.h"
 #include "src/common/strlcpy.h"
+#include "src/common/stepd_api.h"
 #include "src/common/switch.h"
 #include "src/common/working_cluster.h"
 #include "src/common/xassert.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xsignal.h"
 #include "src/common/xstring.h"
-#include "src/common/slurm_step_layout.h"
 
 #endif /*__SLURM_XLATOR_H__*/

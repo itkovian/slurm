@@ -7,7 +7,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -47,7 +47,7 @@
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/slurm_protocol_defs.h"
 #include "src/common/slurm_acct_gather_energy.h"
-#include "src/common/slurm_acct_gather_infiniband.h"
+#include "src/common/slurm_acct_gather_interconnect.h"
 #include "src/slurmd/common/proctrack.h"
 #include "../common/common_jag.h"
 
@@ -75,16 +75,12 @@
  * only load job completion logging plugins if the plugin_type string has a
  * prefix of "jobacct/".
  *
- * plugin_version - an unsigned 32-bit integer giving the version number
- * of the plugin.  If major and minor revisions are desired, the major
- * version number may be multiplied by a suitable magnitude constant such
- * as 100 or 1000.  Various SLURM versions will likely require a certain
- * minimum version for their plugins as the job accounting API
- * matures.
+ * plugin_version - an unsigned 32-bit integer containing the Slurm version
+ * (major.minor.micro combined into a single number).
  */
 const char plugin_name[] = "Job accounting gather LINUX plugin";
 const char plugin_type[] = "jobacct_gather/linux";
-const uint32_t plugin_version = 200;
+const uint32_t plugin_version = SLURM_VERSION_NUMBER;
 
 /*
  * _get_offspring_data() -- collect memory usage data for the offspring
@@ -155,7 +151,7 @@ extern int init (void)
 	if (_run_in_daemon()) {
 		jag_common_init(0);
 	}
-	verbose("%s loaded", plugin_name);
+	debug("%s loaded", plugin_name);
 
 	return SLURM_SUCCESS;
 }
@@ -189,7 +185,7 @@ extern int fini (void)
  *    wrong.
  */
 extern void jobacct_gather_p_poll_data(
-	List task_list, bool pgid_plugin, uint64_t cont_id)
+	List task_list, bool pgid_plugin, uint64_t cont_id, bool profile)
 {
 	static jag_callbacks_t callbacks;
 	static bool first = 1;
@@ -202,7 +198,8 @@ extern void jobacct_gather_p_poll_data(
 		callbacks.get_offspring_data = _get_offspring_data;
 	}
 
-	jag_common_poll_data(task_list, pgid_plugin, cont_id, &callbacks);
+	jag_common_poll_data(task_list, pgid_plugin, cont_id, &callbacks,
+			     profile);
 	return;
 }
 

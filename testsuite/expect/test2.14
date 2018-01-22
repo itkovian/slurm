@@ -1,4 +1,4 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Test of SLURM functionality
 #          Validate scontrol update size of running job.
@@ -14,7 +14,7 @@
 # CODE-OCEC-09-009. All rights reserved.
 #
 # This file is part of SLURM, a resource management program.
-# For details, see <http://slurm.schedmd.com/>.
+# For details, see <https://slurm.schedmd.com/>.
 # Please also read the included file: DISCLAIMER.
 #
 # SLURM is free software; you can redistribute it and/or modify it under
@@ -57,7 +57,7 @@ if { [test_xcpu] } {
 	exit 0
 }
 
-set available [available_nodes [default_partition]]
+set available [available_nodes $partition ""]
 if {$available < $node_cnt} {
     send_user "\nWARNING: not enough nodes currently available ($available avail, $node_cnt needed)\n"
     exit $exit_code
@@ -74,6 +74,7 @@ make_bash_script $file_in "
 	. slurm_job_\${SLURM_JOBID}_resize.sh
 	$scontrol show job \${SLURM_JOBID} >>${file_out2}
 	$srun -l $bin_id
+	echo SLURM_NNODES=\${SLURM_NNODES}
 	$bin_rm -f slurm_job_\${SLURM_JOBID}_resize.csh
 	$bin_rm -f slurm_job_\${SLURM_JOBID}_resize.sh"
 
@@ -108,20 +109,39 @@ if {[wait_for_file $file_out] != 0} {
 	exit 1
 }
 set task_count 0
+set node_count 0
 spawn $bin_cat $file_out
 expect {
+	-re "slurm_allocation_lookup" {
+		send_user "\nFAILURE: Couldn't look up the job correctly\n\n\n"
+		set exit_code 1
+	}
+	-re "No such file or directory" {
+		send_user "\nFAILURE: For some reason the resize script wasn't found\n\n\n"
+		set exit_code 1
+	}
 	-re "($number): *uid=" {
 		incr task_count
+		exp_continue
+	}
+	-re "SLURM_NNODES=($number)" {
+		set node_count $expect_out(1,string)
 		exp_continue
 	}
 	eof {
 		wait
 	}
 }
-if {$task_count != 3} {
-	send_user "\nFAILURE: Invalid task count ($task_count != 3)\n\n\n"
+set task_target [expr $node_cnt + 1]
+if {$task_count != $task_target} {
+	send_user "\nFAILURE: Invalid task count ($task_count != $task_target)\n\n\n"
 	set exit_code 1
-} else {
+}
+if {$node_count != 1} {
+	send_user "\nFAILURE: Invalid node count ($node_count != 1)\n\n\n"
+	set exit_code 1
+}
+if {$exit_code == 0} {
 	send_user "\nSo far, so good...\n\n\n"
 }
 

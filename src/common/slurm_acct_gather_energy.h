@@ -6,7 +6,7 @@
  *  Copyright (C) 2012 Bull-HN-PHX
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -38,19 +38,7 @@
 #ifndef __SLURM_ACCT_GATHER_ENERGY_H__
 #define __SLURM_ACCT_GATHER_ENERGY_H__
 
-#if HAVE_CONFIG_H
-#  include "config.h"
-#  if HAVE_INTTYPES_H
-#    include <inttypes.h>
-#  else
-#    if HAVE_STDINT_H
-#      include <stdint.h>
-#    endif
-#  endif			/* HAVE_INTTYPES_H */
-#else				/* !HAVE_CONFIG_H */
-#  include <inttypes.h>
-#endif				/*  HAVE_CONFIG_H */
-
+#include <inttypes.h>
 #include <sys/resource.h>
 #include <sys/types.h>
 #include <time.h>
@@ -75,12 +63,13 @@ typedef struct acct_energy_data {
 
 extern int acct_gather_energy_init(void); /* load the plugin */
 extern int acct_gather_energy_fini(void); /* unload the plugin */
-extern acct_gather_energy_t *acct_gather_energy_alloc(void);
+extern acct_gather_energy_t *acct_gather_energy_alloc(uint16_t cnt);
 extern void acct_gather_energy_destroy(acct_gather_energy_t *energy);
 extern void acct_gather_energy_pack(acct_gather_energy_t *energy, Buf buffer,
 				    uint16_t protocol_version);
 extern int acct_gather_energy_unpack(acct_gather_energy_t **energy, Buf buffer,
-				     uint16_t protocol_version);
+				     uint16_t protocol_version,
+				     bool need_alloc);
 
 extern int acct_gather_energy_g_update_node_energy(void);
 extern int acct_gather_energy_g_get_data(enum acct_energy_type data_type,

@@ -1,14 +1,14 @@
 <!--#include virtual="header.txt"-->
 
-<h1><a name="top">SLURM Accounting Storage Plugin API</a></h1>
+<h1><a name="top">Slurm Accounting Storage Plugin API</a></h1>
 
 <h2> Overview</h2>
-<p> This document describes SLURM Accounting Storage plugins and the API that
+<p> This document describes Slurm Accounting Storage plugins and the API that
 defines them. It is intended as a resource to programmers wishing to write
-their own SLURM Job Accounting Storage plugins. This is version 1 of the API.
+their own Slurm Job Accounting Storage plugins. This is version 1 of the API.
 
-<p>SLURM Accounting Storage plugins must conform to the
-SLURM Plugin API with the following specifications:
+<p>Slurm Accounting Storage plugins must conform to the
+Slurm Plugin API with the following specifications:
 
 <p><span class="commandline">const char
 plugin_name[]="<i>full&nbsp;text&nbsp;name</i>"</span>
@@ -22,16 +22,26 @@ The major type must be &quot;accounting_storage.&quot;
 The minor type can be any suitable name
 for the type of accounting package. We currently use
 <ul>
-<li><b>filetxt</b>&#151;Information written to a text file.
-<li><b>mysql</b>&#151; Store information in a mysql database (using
+<li><b>filetxt</b> &mdash; Information written to a text file.
+<li><b>mysql</b> &mdash; Store information in a mysql database (using
   the InnoDB storage engine).
-<li><b>slurmdbd</b>&#151; Send information to the Slurm Database
+<li><b>slurmdbd</b> &mdash; Send information to the Slurm Database
   Daemon (SlurmDBD).  Extra configuration is needed and described <a href="accounting.html">here</a>.
-<li><b>none</b>&#151; Information is not stored anywhere.
+<li><b>none</b> &mdash; Information is not stored anywhere.
 </ul>
+
+<p><span class="commandline">const uint32_t plugin_version</span><br>
+If specified, identifies the version of Slurm used to build this plugin and
+any attempt to load the plugin from a different version of Slurm will result
+in an error.
+If not specified, then the plugin may be loadeed by Slurm commands and
+daemons from any version, however this may result in difficult to diagnose
+failures due to changes in the arguments to plugin functions or changes
+in other Slurm functions used by the plugin.</p>
+
 <p>The programmer is urged to study
 <span class="commandline">src/plugins/accounting_storage/mysql</span>
-for a sample implementation of a SLURM Accounting Storage plugin.
+for a sample implementation of a Slurm Accounting Storage plugin.
 <p> The Accounting Storage plugin was written to be a interface
 to storage data collected by the Job Accounting Gather plugin.  When
 adding a new database you may want to add common functions in a common
@@ -43,10 +53,10 @@ information.
 
 <h2>API Functions</h2>
 
-The Job Accounting Storage API uses hooks in the slurmctld.
+<p>The Job Accounting Storage API uses hooks in the slurmctld.</p>
 
 <p>All of the following functions are required. Functions which are not
-implemented must be stubbed.
+implemented must be stubbed.</p>
 
 <p class="commandline"> int init (void)
 <p style="margin-left:.2in"><b>Description</b>:<br>
@@ -64,8 +74,8 @@ implemented must be stubbed.
 <p><b>Note</b>: These init and fini functions are not the same as those
 described in the <span class="commandline">dlopen (3)</span> system library.
 The C run-time system co-opts those symbols for its own initialization.
-The system <span class="commandline">_init()</span> is called before the SLURM
-<span class="commandline">init()</span>, and the SLURM
+The system <span class="commandline">_init()</span> is called before the Slurm
+<span class="commandline">init()</span>, and the Slurm
 <span class="commandline">fini()</span> is called before the system's
 <span class="commandline">_fini()</span>.</p>
 
@@ -179,15 +189,15 @@ acct_cluster_rec_t *'s containing information about the clusters to add. <br>
 <span class="commandline">SLURM_ERROR</span> on failure.
 
 <p class="commandline">
-int acct_storage_p_add_associations(void *db_conn, uint32_t uid, List association_list)
+int acct_storage_p_add_assocs(void *db_conn, uint32_t uid, List assoc_list)
 <p style="margin-left:.2in"><b>Description</b>:<br>
 Called to add associations to the storage type.
 <p style="margin-left:.2in"><b>Arguments</b>: <br>
 <span class="commandline">db_conn</span> (input) connection to
 the storage type. <br>
 <span class="commandline">uid</span> (input) uid of user calling the function.<br>
-<span class="commandline">association_list</span> (input) list of
-acct_association_rec_t *'s containing information about the
+<span class="commandline">assoc_list</span> (input) list of
+acct_assoc_rec_t *'s containing information about the
 associations to add. <br>
 <p style="margin-left:.2in"><b>Returns</b>: <br>
 <span class="commandline">SLURM_SUCCESS</span> on success, or<br>
@@ -301,8 +311,8 @@ modified on success, or<br>
 <span class="commandline">NULL</span> on failure.
 
 <p class="commandline">
-List acct_storage_p_modify_associations(void *db_conn, uint32_t uid,
-acct_association_cond_t *assoc_cond, acct_association_rec_t *assoc)
+List acct_storage_p_modify_assocs(void *db_conn, uint32_t uid,
+acct_assoc_cond_t *assoc_cond, acct_assoc_rec_t *assoc)
 <p style="margin-left:.2in"><b>Description</b>:<br>
 Used to modify existing associations in the storage type.  The condition
   could include very vague information about the association, so this
@@ -474,8 +484,8 @@ removed on success, or<br>
 <span class="commandline">NULL</span> on failure.
 
 <p class="commandline">
-List acct_storage_p_remove_associations(void *db_conn, uint32_t uid,
-acct_association_cond_t *assoc_cond)
+List acct_storage_p_remove_assocs(void *db_conn, uint32_t uid,
+acct_assoc_cond_t *assoc_cond)
 <p style="margin-left:.2in"><b>Description</b>:<br>
 Used to remove associations from the storage type.  You need to make
   sure no jobs are running with any association that is to be removed.
@@ -591,10 +601,10 @@ on success, or<br>
 <span class="commandline">NULL</span> on failure.
 
 <p class="commandline">
-List acct_storage_p_get_associations(void *db_conn, uint32_t uid,
-acct_association_cond_t *assoc_cond)
+List acct_storage_p_get_assocs(void *db_conn, uint32_t uid,
+acct_assoc_cond_t *assoc_cond)
 <p style="margin-left:.2in"><b>Description</b>:<br>
-Get a list of acct_association_rec_t *'s based on the conditional sent.
+Get a list of acct_assoc_rec_t *'s based on the conditional sent.
 <p style="margin-left:.2in"><b>Arguments</b>: <br>
 <span class="commandline">db_conn</span> (input) connection to
 the storage type. <br>
@@ -604,7 +614,7 @@ function.<br>
 which associations are to be returned.  Association names should not need to
 be stated.<br>
 <p style="margin-left:.2in"><b>Returns</b>: <br>
-<span class="commandline">List</span> containing acct_association_rec_t *'s
+<span class="commandline">List</span> containing acct_assoc_rec_t *'s
 on success, or<br>
 <span class="commandline">NULL</span> on failure.
 
@@ -690,7 +700,7 @@ the storage type.<br>
 <span class="commandline">uid</span> (input) uid of user calling the
 function.<br>
 <span class="commandline">in</span> (input/out) can be anything that
-gathers usage like acct_association_rec_t * or acct_wckey_rec_t *.<br>
+gathers usage like acct_assoc_rec_t * or acct_wckey_rec_t *.<br>
 <span class="commandline">type</span> (input) really
 slurmdbd_msg_type_t should let the plugin know what the structure is
 that was sent in some how.<br>
@@ -701,13 +711,17 @@ that was sent in some how.<br>
 <span class="commandline">SLURM_ERROR</span> on failure.
 
 <p class="commandline">
-int acct_storage_p_roll_usage(void *db_conn, time_t sent_start)
+int acct_storage_p_roll_usage(void *db_conn, time_t sent_start, time_t sent_end,
+uint16_t archive_data, rollup_stats_t *rollup_stats)
 <p style="margin-left:.2in"><b>Description</b>:<br>
 roll up association, cluster, and wckey usage in the storage.
 <p style="margin-left:.2in"><b>Arguments</b>: <br>
 <span class="commandline">db_conn</span> (input) connection to
 the storage type.<br>
-<span class="commandline">start</span> (input) start time of the rollup.<br>
+<span class="commandline">sent_start</span> (input) start time of the rollup.<br>
+<span class="commandline">sent_end</span> (input) end time of the rollup.<br>
+<span class="commandline">archive_data</span> (input) archive the results if not zero.<br>
+<span class="commandline">rollup_stats</span> (input/output) performance statistics.<br>
 <p style="margin-left:.2in"><b>Returns</b>: <br>
 <span class="commandline">SLURM_SUCCESS</span> on success, or<br>
 <span class="commandline">SLURM_ERROR</span> on failure.
@@ -973,6 +987,17 @@ apply end to.<br>
 <span class="commandline">SLURM_SUCCESS</span> on success, or<br>
 <span class="commandline">SLURM_ERROR</span> on failure.
 
+<p class="commandline">
+int acct_storage_p_reconfig(void *db_conn)
+<p style="margin-left:.2in"><b>Description</b>:<br>
+Reconfigure the plugin.
+<p style="margin-left:.2in"><b>Arguments</b>: <br>
+<span class="commandline">db_conn</span> (input) connection to
+the storage type.<br>
+<p style="margin-left:.2in"><b>Returns</b>: <br>
+<span class="commandline">SLURM_SUCCESS</span> on success, or<br>
+<span class="commandline">SLURM_ERROR</span> on failure.
+
 <p class="footer"><a href="#top">top</a>
 
 
@@ -1001,13 +1026,8 @@ database with.
   of those listed.
 </dl>
 
-<h2>Versioning</h2>
-<p> This document describes version 1 of the SLURM Accounting Storage API. Future
-releases of SLURM may revise this API. An Accounting Storage plugin conveys its
-ability to implement a particular API version using the mechanism outlined
-for SLURM plugins.
 <p class="footer"><a href="#top">top</a>
 
-<p style="text-align:center;">Last modified 8 May 2014</p>
+<p style="text-align:center;">Last modified 22 July 2016</p>
 
 <!--#include virtual="footer.txt"-->

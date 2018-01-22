@@ -8,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -37,32 +37,11 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#if HAVE_CONFIG_H
-#  include "config.h"
-#  if STDC_HEADERS
-#    include <string.h>
-#  endif
-#  if HAVE_SYS_TYPES_H
-#    include <sys/types.h>
-#  endif /* HAVE_SYS_TYPES_H */
-#  if HAVE_UNISTD_H
-#    include <unistd.h>
-#  endif
-#  if HAVE_INTTYPES_H
-#    include <inttypes.h>
-#  else /* ! HAVE_INTTYPES_H */
-#    if HAVE_STDINT_H
-#      include <stdint.h>
-#    endif
-#  endif /* HAVE_INTTYPES_H */
-#else /* ! HAVE_CONFIG_H */
-#  include <sys/types.h>
-#  include <unistd.h>
-#  include <stdint.h>
-#  include <string.h>
-#endif /* HAVE_CONFIG_H */
-
+#include <inttypes.h>
 #include <stdio.h>
+#include <string.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 #include "slurm/slurm_errno.h"
 #include "src/common/slurm_xlator.h"
@@ -89,14 +68,12 @@
  * only load authentication plugins if the plugin_type string has a prefix
  * of "auth/".
  *
- * plugin_version   - specifies the version number of the plugin.
- * min_plug_version - specifies the minumum version number of incoming
- *                    messages that this plugin can accept
+ * plugin_version - an unsigned 32-bit integer containing the Slurm version
+ * (major.minor.micro combined into a single number).
  */
 const char plugin_name[]       	= "Null authentication plugin";
 const char plugin_type[]       	= "auth/none";
-const uint32_t plugin_version   = 100;
-const uint32_t min_plug_version = 90;
+const uint32_t plugin_version   = SLURM_VERSION_NUMBER;
 
 /*
  * An opaque type representing authentication credentials.  This type can be
@@ -153,7 +130,7 @@ enum {
  */
 extern int init ( void )
 {
-	verbose("%s loaded", plugin_name);
+	debug("%s loaded", plugin_name);
 	return SLURM_SUCCESS;
 }
 
@@ -171,13 +148,10 @@ extern int fini ( void )
  * Allocate and initializes a credential.  This function should return
  * NULL if it cannot allocate a credential.
  */
-slurm_auth_credential_t *
-slurm_auth_create( void *argv[], char *auth_info )
+slurm_auth_credential_t *slurm_auth_create(char *auth_info)
 {
 	slurm_auth_credential_t *cred;
-
-	cred = ((slurm_auth_credential_t *)
-		xmalloc( sizeof( slurm_auth_credential_t ) ));
+	cred = xmalloc(sizeof(slurm_auth_credential_t));
 	cred->cr_errno = SLURM_SUCCESS;
 	cred->uid = geteuid();
 	cred->gid = getegid();
@@ -290,15 +264,13 @@ slurm_auth_unpack( Buf buf )
 	 */
 	safe_unpackmem_ptr( &tmpstr, &size, buf );
 	if (( tmpstr == NULL )
-	||  ( strcmp( tmpstr, plugin_type ) != 0 )) {
+	||  ( xstrcmp( tmpstr, plugin_type ) != 0 )) {
+		debug("slurm_auth_unpack error: packed by %s unpack by %s",
+		      tmpstr, plugin_type);
 		plugin_errno = SLURM_AUTH_MISMATCH;
 		return NULL;
 	}
 	safe_unpack32( &version, buf );
-	if ( version < min_plug_version ) {
-		plugin_errno = SLURM_AUTH_VERSION;
-		return NULL;
-	}
 
 	/* Allocate a new credential. */
 	cred = ((slurm_auth_credential_t *)

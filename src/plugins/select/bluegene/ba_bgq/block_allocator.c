@@ -1,7 +1,6 @@
 /*****************************************************************************\
  *  block_allocator.c - Assorted functions for layout of bgq blocks,
  *	 wiring, mapping for smap, etc.
- *  $Id$
  *****************************************************************************
  *  Copyright (C) 2004-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2011 Lawrence Livermore National Security.
@@ -10,7 +9,7 @@
  *  Written by Danny Auble <da@schedmd.com>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -39,13 +38,10 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#if HAVE_CONFIG_H
-#  include "config.h"
-#endif
-
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <math.h>
+
 #include "block_allocator.h"
 #include "src/common/uid.h"
 #include "src/common/timers.h"
@@ -264,7 +260,7 @@ extern void ba_create_system()
 					ba_setup_mp(ba_mp, true, false);
 					ba_mp->state = NODE_STATE_IDLE;
 					/* This might get changed
-					   later, but just incase set
+					   later, but just in case set
 					   it up here.
 					*/
 					ba_mp->index = i++;
@@ -366,7 +362,7 @@ extern int new_ba_request(select_ba_request_t* ba_request)
 
 	xfree(ba_request->save_name);
 
-	if (ba_request->geometry[0] != (uint16_t)NO_VAL) {
+	if (ba_request->geometry[0] != NO_VAL16) {
 		for (i=0; i<cluster_dims; i++){
 			if ((ba_request->geometry[i] < 1)
 			    || (ba_request->geometry[i] > DIM_SIZE[i])) {
@@ -386,7 +382,7 @@ extern int new_ba_request(select_ba_request_t* ba_request)
 
 	if (!(cluster_flags & CLUSTER_FLAG_BGQ)) {
 		if (ba_request->size
-		    && (ba_request->geometry[0] == (uint16_t)NO_VAL)) {
+		    && (ba_request->geometry[0] == NO_VAL16)) {
 			ba_request->geometry[0] = ba_request->size;
 		} else {
 			error("new_ba_request: "
@@ -396,7 +392,7 @@ extern int new_ba_request(select_ba_request_t* ba_request)
 		return 1;
 	}
 
-	if (ba_request->deny_pass == (uint16_t)NO_VAL)
+	if (ba_request->deny_pass == NO_VAL16)
 		ba_request->deny_pass = ba_deny_pass;
 
 	deny_pass = &ba_request->deny_pass;
@@ -734,7 +730,7 @@ extern char *set_bg_block(List results, select_ba_request_t* ba_request)
 	xassert(ba_initialized);
 
 	if (!ba_request->size) {
-		if (ba_request->geometry[0] == (uint16_t)NO_VAL) {
+		if (ba_request->geometry[0] == NO_VAL16) {
 			error("set_bg_block: No size or geometry given.");
 			return NULL;
 		}
@@ -764,7 +760,7 @@ extern char *set_bg_block(List results, select_ba_request_t* ba_request)
 		int scan_offset = 0, cnt = 0, i=0;
 		uint16_t start_loc[ba_main_geo_system->dim_count];
 
-		if (ba_request->geometry[0] != (uint16_t)NO_VAL) {
+		if (ba_request->geometry[0] != NO_VAL16) {
 			/* if we are requesting a specific geo, go directly to
 			   that geo_table. */
 			if (memcmp(ba_request->geometry, ba_geo_table->geometry,
@@ -788,7 +784,7 @@ extern char *set_bg_block(List results, select_ba_request_t* ba_request)
 				    ba_main_geo_system, deny_pass,
 				    start_loc, &scan_offset, false)
 		    != SLURM_SUCCESS) {
-			if (ba_request->geometry[0] != (uint16_t)NO_VAL) {
+			if (ba_request->geometry[0] != NO_VAL16) {
 				ba_geo_table = NULL;
 				break;
 			}
@@ -917,8 +913,7 @@ extern char *set_bg_block(List results, select_ba_request_t* ba_request)
 		/* handle failure */
 		if (!name)
 			_reset_altered_mps(main_mps, 0);
-		list_destroy(main_mps);
-		main_mps = NULL;
+		FREE_NULL_LIST(main_mps);
 	}
 	slurm_mutex_unlock(&ba_system_mutex);
 
@@ -1154,8 +1149,14 @@ try_again:
 		 * only used for sub-block jobs we only create it
 		 * when needed. */
 		if (!ba_mp->cnode_bitmap)
+		if (!ba_mp->cnode_bitmap) {
 			ba_mp->cnode_bitmap =
 				ba_create_ba_mp_cnode_bitmap(bg_record);
+			FREE_NULL_BITMAP(ba_mp->cnode_usable_bitmap);
+			ba_mp->cnode_usable_bitmap =
+				bit_copy(ba_mp->cnode_bitmap);
+		}
+
 		if (!ba_mp->cnode_err_bitmap)
 			ba_mp->cnode_err_bitmap =
 				bit_alloc(bg_conf->mp_cnode_cnt);
@@ -1445,10 +1446,15 @@ extern void ba_sync_job_to_block(bg_record_t *bg_record,
 			while ((ba_mp = list_next(ba_itr))) {
 				if (node_inx != ba_mp->index)
 					continue;
-				if (!ba_mp->cnode_bitmap)
+				if (!ba_mp->cnode_bitmap) {
 					ba_mp->cnode_bitmap =
 						ba_create_ba_mp_cnode_bitmap(
 							bg_record);
+					FREE_NULL_BITMAP(
+						ba_mp->cnode_usable_bitmap);
+					ba_mp->cnode_usable_bitmap =
+						bit_copy(ba_mp->cnode_bitmap);
+				}
 				if (!ba_mp->cnode_err_bitmap)
 					ba_mp->cnode_err_bitmap = bit_alloc(
 						bg_conf->mp_cnode_cnt);
@@ -1473,7 +1479,7 @@ extern void ba_sync_job_to_block(bg_record_t *bg_record,
 extern bitstr_t *ba_create_ba_mp_cnode_bitmap(bg_record_t *bg_record)
 {
 	int start, end, ionode_num;
-	char *tmp_char, *tmp_char2;
+	char *tmp_char = NULL, *tmp_char2;
 	bitstr_t *cnode_bitmap = bit_alloc(bg_conf->mp_cnode_cnt);
 
 	if (!bg_record->ionode_bitmap
@@ -1489,10 +1495,11 @@ extern bitstr_t *ba_create_ba_mp_cnode_bitmap(bg_record_t *bg_record)
 		nc_start = ionode_num * (int)bg_conf->nc_ratio;
 		nc_end = nc_start + (int)bg_conf->nc_ratio;
 		for (nc_num = nc_start; nc_num < nc_end; nc_num++)
-			ba_node_map_set_range(cnode_bitmap,
-					      g_nc_coords[nc_num].start,
-					      g_nc_coords[nc_num].end,
-					      ba_mp_geo_system);
+			/* this should always be true */
+			(void)ba_node_map_set_range(cnode_bitmap,
+						    g_nc_coords[nc_num].start,
+						    g_nc_coords[nc_num].end,
+						    ba_mp_geo_system);
 	}
 
 	if (ba_debug_flags & DEBUG_FLAG_BG_ALGO_DEEP)
@@ -1508,6 +1515,64 @@ extern bitstr_t *ba_create_ba_mp_cnode_bitmap(bg_record_t *bg_record)
 		     "this midplane leaving %s unusable", tmp_char, tmp_char2);
 		xfree(tmp_char);
 		xfree(tmp_char2);
+	}
+
+	return cnode_bitmap;
+}
+
+extern bitstr_t *ba_cnodelist2bitmap(char *cnodelist)
+{
+	char *cnode_name;
+	hostlist_t hl;
+	bitstr_t *cnode_bitmap = bit_alloc(bg_conf->mp_cnode_cnt);
+	int coord[ba_mp_geo_system->dim_count], dim = 0;
+
+	if (!cnodelist)
+		return cnode_bitmap;
+
+	if (!(hl = hostlist_create_dims(
+		      cnodelist, ba_mp_geo_system->dim_count))) {
+		FREE_NULL_BITMAP(cnode_bitmap);
+		error("ba_cnodelist2bitmap: couldn't create a hotlist from "
+		      "cnodelist given %s", cnodelist);
+		return NULL;
+	}
+
+	while ((cnode_name = hostlist_shift_dims(
+			hl, ba_mp_geo_system->dim_count))) {
+		for (dim = 0; dim < ba_mp_geo_system->dim_count; dim++) {
+			if (!cnode_name[dim])
+				break;
+			coord[dim] = select_char2coord(cnode_name[dim]);
+		}
+		free(cnode_name);
+
+		if (dim != ba_mp_geo_system->dim_count)
+			break;
+
+		if (ba_node_map_set_range(cnode_bitmap, coord, coord,
+					  ba_mp_geo_system) == -1) {
+			/* failure */
+			dim = 0;
+			break;
+		}
+	}
+	hostlist_destroy(hl);
+
+	if (dim != ba_mp_geo_system->dim_count) {
+		FREE_NULL_BITMAP(cnode_bitmap);
+		error("ba_cnodelist2bitmap: bad cnodelist given %s", cnodelist);
+		return NULL;
+	}
+
+	bit_not(cnode_bitmap);
+
+	if (ba_debug_flags & DEBUG_FLAG_BG_ALGO_DEEP) {
+		char *tmp_char = ba_node_map_ranged_hostlist(cnode_bitmap,
+							     ba_mp_geo_system);
+		info("ba_cnodelist2bitmap: %s translates to %s inverted",
+		     cnodelist, tmp_char);
+		xfree(tmp_char);
 	}
 
 	return cnode_bitmap;
@@ -1953,7 +2018,6 @@ static int _fill_in_wires(List mps, ba_mp_t *start_mp, int dim,
 		     ba_switch_usage_str(start_mp->axis_switch[dim].usage),
 		     ba_switch_usage_str(start_mp->alter_switch[dim].usage));
 
-	axis_switch = &start_mp->axis_switch[dim];
 	alter_switch = &start_mp->alter_switch[dim];
 
 	if (_mp_out_used(start_mp, dim))
@@ -2063,7 +2127,9 @@ static int _fill_in_wires(List mps, ba_mp_t *start_mp, int dim,
 			}
 		} else {
 			/* we can't use this so return with a nice 0 */
-			info("_fill_in_wires: we can't use this so return");
+			if (ba_debug_flags & DEBUG_FLAG_BG_ALGO_DEEP)
+				info("_fill_in_wires: we can't use this "
+				     "so return");
 			return 0;
 		}
 

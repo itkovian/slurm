@@ -10,7 +10,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -39,20 +39,17 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#if     HAVE_CONFIG_H
-#  include "config.h"
-#endif
-
 #include <stdlib.h>
 #include <fcntl.h>
-#include <signal.h>
-#include <sys/types.h>
 #include <regex.h>
+#include <signal.h>
 #include <stdlib.h>
+#include <sys/types.h>
 
 #include "slurm/slurm_errno.h"
 #include "src/common/slurm_xlator.h"
 #include "src/common/macros.h"
+#include "src/common/strlcpy.h"
 #include "src/plugins/switch/nrt/slurm_nrt.h"
 
 #define NRT_BUF_SIZE 4096
@@ -60,7 +57,7 @@
 char local_dir_path[1024];
 bool nrt_need_state_save = false;
 
-static void _spawn_state_save_thread(char *dir);
+static void *_state_save_thread(void *arg);
 static int  _switch_p_libstate_save(char * dir_name, bool free_flag);
 
 /* Type for error string table entries */
@@ -122,17 +119,15 @@ static slurm_errtab_t slurm_errtab[] = {
  * of how this plugin satisfies that application.  SLURM will only load
  * a switch plugin if the plugin_type string has a prefix of "switch/".
  *
- * plugin_version - an unsigned 32-bit integer giving the version number
- * of the plugin.  If major and minor revisions are desired, the major
- * version number may be multiplied by a suitable magnitude constant such
- * as 100 or 1000.  Various SLURM versions will likely require a certain
- * minimum version for their plugins as this API matures.
+ * plugin_version - an unsigned 32-bit integer containing the Slurm version
+ * (major.minor.micro combined into a single number).
  */
 const char plugin_name[]        = "switch NRT plugin";
 const char plugin_type[]        = "switch/nrt";
-const uint32_t plugin_version   = 110;
+const uint32_t plugin_version   = SLURM_VERSION_NUMBER;
+const uint32_t plugin_id	= SWITCH_PLUGIN_NRT;
 
-uint32_t debug_flags = 0;
+uint64_t debug_flags = 0;
 
 /*
  * init() is called when the plugin is loaded, before any other functions
@@ -140,7 +135,7 @@ uint32_t debug_flags = 0;
  */
 extern int init ( void )
 {
-	verbose("%s loaded", plugin_name);
+	debug("%s loaded", plugin_name);
 	debug_flags = slurm_get_debug_flags();
 
 	return SLURM_SUCCESS;
@@ -301,7 +296,8 @@ extern int switch_p_libstate_restore ( char * dir_name, bool recover )
 		START_TIMER;
 		info("switch_p_libstate_restore() starting");
 	}
-	_spawn_state_save_thread(xstrdup(dir_name));
+	slurm_thread_create_detached(NULL, _state_save_thread,
+				     xstrdup(dir_name));
 	if (!recover)   /* clean start, no recovery */
 		return nrt_init();
 
@@ -429,12 +425,16 @@ extern int switch_p_pack_node_info(switch_node_info_t *switch_node, Buf buffer,
 				 protocol_version);
 }
 
-extern int switch_p_unpack_node_info(switch_node_info_t *switch_node,
+extern int switch_p_unpack_node_info(switch_node_info_t **switch_node,
 				     Buf buffer, uint16_t protocol_version)
 {
 	if (debug_flags & DEBUG_FLAG_SWITCH)
 		info("switch_p_unpack_node_info()");
-	return nrt_unpack_nodeinfo((slurm_nrt_nodeinfo_t *)switch_node,
+
+	if (switch_p_alloc_node_info(switch_node))
+		return SLURM_ERROR;
+
+	return nrt_unpack_nodeinfo((slurm_nrt_nodeinfo_t *) *switch_node,
 				   buffer, protocol_version);
 }
 
@@ -501,7 +501,7 @@ extern int switch_p_build_jobinfo(switch_jobinfo_t *switch_job,
 	}
 	while (token) {
 		/* bulk_xfer options */
-		if (!strncasecmp(token, "bulk_xfer=", 10)) {
+		if (!xstrncasecmp(token, "bulk_xfer=", 10)) {
 			long int resources;
 			char *end_ptr = NULL;
 			bulk_xfer = true;
@@ -518,20 +518,20 @@ extern int switch_p_build_jobinfo(switch_jobinfo_t *switch_job,
 				info("switch/nrt: invalid option: %s", token);
 				err = SLURM_ERROR;
 			}
-		} else if (!strcasecmp(token, "bulk_xfer")) {
+		} else if (!xstrcasecmp(token, "bulk_xfer")) {
 			bulk_xfer = true;
 
 		/* device name options */
-		} else if (!strncasecmp(token, "devname=", 8)) {
+		} else if (!xstrncasecmp(token, "devname=", 8)) {
 			char *name_ptr = token + 8;
 			if (nrt_adapter_name_check(name_ptr, list)) {
 				debug("switch/nrt: Found adapter %s in "
 				      "network string", token);
 				adapter_name = xstrdup(name_ptr);
 				sn_all = false;
-			} else if (!strcasecmp(name_ptr, "sn_all")) {
+			} else if (!xstrcasecmp(name_ptr, "sn_all")) {
 				sn_all = true;
-			} else if (!strcasecmp(name_ptr, "sn_single")) {
+			} else if (!xstrcasecmp(name_ptr, "sn_single")) {
 				sn_all = false;
 			} else {
 				info("switch/nrt: invalid devname: %s",
@@ -540,21 +540,25 @@ extern int switch_p_build_jobinfo(switch_jobinfo_t *switch_job,
 			}
 
 		/* device type options */
-		} else if (!strncasecmp(token, "devtype=", 8)) {
+		} else if (!xstrncasecmp(token, "devtype=", 8)) {
 			char *type_ptr = token + 8;
-			if (!strcasecmp(type_ptr, "ib")) {
+			if (!xstrcasecmp(type_ptr, "ib")) {
 				dev_type = NRT_IB;
-			} else if (!strcasecmp(type_ptr, "hfi")) {
+			} else if (!xstrcasecmp(type_ptr, "hfi")) {
 				dev_type = NRT_HFI;
-			} else if (!strcasecmp(type_ptr, "iponly")) {
+			} else if (!xstrcasecmp(type_ptr, "iponly")) {
 				dev_type = NRT_IPONLY;
-			} else if (!strcasecmp(type_ptr, "hpce")) {
+			}
+#if NRT_VERSION < 1300
+			else if (!xstrcasecmp(type_ptr, "hpce")) {
 				dev_type = NRT_HPCE;
-			} else if (!strcasecmp(type_ptr, "kmux")) {
+			} else if (!xstrcasecmp(type_ptr, "kmux")) {
 				dev_type = NRT_KMUX;
-			} else if (!strcasecmp(type_ptr, "sn_all")) {
+			}
+#endif
+			else if (!xstrcasecmp(type_ptr, "sn_all")) {
 				sn_all = true;
-			} else if (!strcasecmp(type_ptr, "sn_single")) {
+			} else if (!xstrcasecmp(type_ptr, "sn_single")) {
 				sn_all = false;
 			} else {
 				info("switch/nrt: invalid option: %s", token);
@@ -562,7 +566,7 @@ extern int switch_p_build_jobinfo(switch_jobinfo_t *switch_job,
 			}
 
 		/* instances options */
-		} else if (!strncasecmp(token, "instances=", 10)) {
+		} else if (!xstrncasecmp(token, "instances=", 10)) {
 			long int count;
 			char *end_ptr = NULL;
 			count = strtol(token+10, &end_ptr, 10);
@@ -576,33 +580,40 @@ extern int switch_p_build_jobinfo(switch_jobinfo_t *switch_job,
 			}
 
 		/* network options */
-		} else if (!strcasecmp(token, "ip")) {
+		} else if (!xstrcasecmp(token, "ip")) {
 			ip_v4 = true;
-		} else if (!strcasecmp(token, "ipv4")) {
+		} else if (!xstrcasecmp(token, "ipv4")) {
 			ip_v4 = true;
-		} else if (!strcasecmp(token, "ipv6")) {
+		} else if (!xstrcasecmp(token, "ipv6")) {
 			ip_v4 = false;
-		} else if (!strcasecmp(token, "us")) {
+		} else if (!xstrcasecmp(token, "us")) {
 			user_space = true;
 
-		/* protocol options */
-		} else if ((!strncasecmp(token, "lapi",  4)) ||
-			   (!strncasecmp(token, "mpi",   3)) ||
-			   (!strncasecmp(token, "pami",  4)) ||
-			   (!strncasecmp(token, "shmem", 5)) ||
-			   (!strncasecmp(token, "upc",   3))) {
+		/* protocol options
+		 *
+		 *  NOTE: Slurm supports the values listed below, and
+		 *        does not support poe user_defined_parallelAPI values.
+		 *        If you add to this list please add to the list in
+		 *        src/plugins/launch/poe/launch_poe.c
+		 */
+		} else if ((!xstrncasecmp(token, "lapi",  4)) ||
+			   (!xstrncasecmp(token, "mpi",   3)) ||
+			   (!xstrncasecmp(token, "pami",  4)) ||
+			   (!xstrncasecmp(token, "pgas", 4)) ||
+			   (!xstrncasecmp(token, "shmem", 5)) ||
+			   (!xstrncasecmp(token, "test", 4)) ||
+			   (!xstrncasecmp(token, "upc",   3))) {
 			if (protocol)
 				xstrcat(protocol, ",");
 			xstrcat(protocol, token);
-
 		/* adapter options */
-		} else if (!strcasecmp(token, "sn_all")) {
+		} else if (!xstrcasecmp(token, "sn_all")) {
 			sn_all = true;
-		} else if (!strcasecmp(token, "sn_single")) {
+		} else if (!xstrcasecmp(token, "sn_single")) {
 			sn_all = false;
 
 		/* Collective Acceleration Units (CAU) */
-		} else if (!strncasecmp(token, "cau=", 4)) {
+		} else if (!xstrncasecmp(token, "cau=", 4)) {
 			long int count;
 			char *end_ptr = NULL;
 			count = strtol(token+4, &end_ptr, 10);
@@ -616,7 +627,7 @@ extern int switch_p_build_jobinfo(switch_jobinfo_t *switch_job,
 			}
 
 		/* Immediate Send Slots Per Window */
-		} else if (!strncasecmp(token, "immed=", 6)) {
+		} else if (!xstrncasecmp(token, "immed=", 6)) {
 			long int count;
 			char *end_ptr = NULL;
 			count = strtol(token+6, &end_ptr, 10);
@@ -686,13 +697,13 @@ extern int switch_p_pack_jobinfo(switch_jobinfo_t *switch_job, Buf buffer,
 				protocol_version);
 }
 
-extern int switch_p_unpack_jobinfo(switch_jobinfo_t *switch_job, Buf buffer,
+extern int switch_p_unpack_jobinfo(switch_jobinfo_t **switch_job, Buf buffer,
 				   uint16_t protocol_version)
 {
 	if (debug_flags & DEBUG_FLAG_SWITCH)
 		info("switch_p_unpack_jobinfo()");
 
-	return nrt_unpack_jobinfo((slurm_nrt_jobinfo_t *)switch_job, buffer,
+	return nrt_unpack_jobinfo((slurm_nrt_jobinfo_t **)switch_job, buffer,
 				  protocol_version);
 }
 
@@ -784,9 +795,9 @@ extern char *switch_p_sprint_jobinfo(switch_jobinfo_t *switch_jobinfo,
  */
 static bool _nrt_version_ok(void)
 {
-	if ((NRT_VERSION >= 1100) && (NRT_VERSION <= 1200))
+	if ((NRT_VERSION >= 1100) && (NRT_VERSION <= 1300))
 		return true;
-	error("switch/nrt: Incompatable NRT version");
+	error("switch/nrt: Incompatible NRT version");
 	return false;
 }
 
@@ -817,14 +828,14 @@ extern int switch_p_job_init (stepd_step_rec_t *job)
 	pid_t pid;
 	DEF_TIMERS;
 	int rc;
-
+	slurm_nrt_jobinfo_t *nrt_jobinfo = job->switch_job ?
+		(slurm_nrt_jobinfo_t *)job->switch_job->data : NULL;
 	if (debug_flags & DEBUG_FLAG_SWITCH) {
 		START_TIMER;
 		info("switch_p_job_init() starting");
 	}
 	pid = getpid();
-	rc = nrt_load_table((slurm_nrt_jobinfo_t *)job->switch_job,
-			    job->uid, pid, job->argv[0]);
+	rc = nrt_load_table(nrt_jobinfo, job->uid, pid, job->argv[0]);
 	if (debug_flags & DEBUG_FLAG_SWITCH) {
 		END_TIMER;
 		info("switch_p_job_init() ending %s", TIME_STR);
@@ -845,7 +856,7 @@ extern void switch_p_job_suspend_info_get(switch_jobinfo_t *jobinfo,
 {
 	DEF_TIMERS;
 
-	if ( switch_init() < 0 )
+	if ( switch_init(0) < 0 )
 		return;
 
 	if (debug_flags & DEBUG_FLAG_SWITCH) {
@@ -864,7 +875,7 @@ extern void switch_p_job_suspend_info_get(switch_jobinfo_t *jobinfo,
 extern void switch_p_job_suspend_info_pack(void *suspend_info, Buf buffer,
 					   uint16_t protocol_version)
 {
-	if ( switch_init() < 0 )
+	if ( switch_init(0) < 0 )
 		return;
 
 	nrt_suspend_job_info_pack(suspend_info, buffer, protocol_version);
@@ -874,7 +885,7 @@ extern void switch_p_job_suspend_info_pack(void *suspend_info, Buf buffer,
 extern int switch_p_job_suspend_info_unpack(void **suspend_info, Buf buffer,
 					    uint16_t protocol_version)
 {
-	if ( switch_init() < 0 )
+	if ( switch_init(0) < 0 )
 		return SLURM_ERROR;
 
 	return nrt_suspend_job_info_unpack(suspend_info, buffer,
@@ -883,7 +894,7 @@ extern int switch_p_job_suspend_info_unpack(void **suspend_info, Buf buffer,
 
 extern void switch_p_job_suspend_info_free(void *suspend_info)
 {
-	if ( switch_init() < 0 )
+	if ( switch_init(0) < 0 )
 		return;
 
 	nrt_suspend_job_info_free(suspend_info);
@@ -936,6 +947,8 @@ extern int switch_p_job_postfini(stepd_step_rec_t *job)
 	uid_t pgid = job->jmgr_pid;
 	DEF_TIMERS;
 	int err;
+	slurm_nrt_jobinfo_t *nrt_jobinfo = job->switch_job ?
+		(slurm_nrt_jobinfo_t *)job->switch_job->data : NULL;
 
 	if (debug_flags & DEBUG_FLAG_SWITCH) {
 		START_TIMER;
@@ -951,7 +964,7 @@ extern int switch_p_job_postfini(stepd_step_rec_t *job)
 	} else
 		debug("Job %u.%u: pgid value is zero", job->jobid, job->stepid);
 
-	err = nrt_unload_table((slurm_nrt_jobinfo_t *)job->switch_job);
+	err = nrt_unload_table(nrt_jobinfo);
 	if (debug_flags & DEBUG_FLAG_SWITCH) {
 		END_TIMER;
 		info("switch_p_job_postfini() ending %s", TIME_STR);
@@ -1021,7 +1034,7 @@ static void *_state_save_thread(void *arg)
 {
 	char *dir_name = (char *)arg;
 
-	strncpy(local_dir_path, dir_name, sizeof(local_dir_path));
+	strlcpy(local_dir_path, dir_name, sizeof(local_dir_path));
 	xfree(dir_name);
 
 	while (1) {
@@ -1035,15 +1048,22 @@ static void *_state_save_thread(void *arg)
 	return NULL;
 }
 
-static void _spawn_state_save_thread(char *dir)
+extern int switch_p_job_step_pre_suspend(stepd_step_rec_t *job)
 {
-	pthread_attr_t attr;
-	pthread_t id;
+	return SLURM_SUCCESS;
+}
 
-	slurm_attr_init(&attr);
+extern int switch_p_job_step_post_suspend(stepd_step_rec_t *job)
+{
+	return SLURM_SUCCESS;
+}
 
-	if (pthread_create(&id, &attr, &_state_save_thread, (void *)dir) != 0)
-		error("Could not start switch/nrt state saving pthread");
+extern int switch_p_job_step_pre_resume(stepd_step_rec_t *job)
+{
+	return SLURM_SUCCESS;
+}
 
-	slurm_attr_destroy(&attr);
+extern int switch_p_job_step_post_resume(stepd_step_rec_t *job)
+{
+	return SLURM_SUCCESS;
 }

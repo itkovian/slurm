@@ -7,7 +7,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -45,10 +45,11 @@
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/slurm_protocol_defs.h"
 #include "src/common/slurm_acct_gather_energy.h"
-#include "src/slurmd/slurmd/slurmd.h"
 #include "src/common/xstring.h"
-#include "src/plugins/jobacct_gather/cgroup/jobacct_gather_cgroup.h"
 #include "src/slurmd/common/proctrack.h"
+#include "src/slurmd/common/xcpuinfo.h"
+#include "src/slurmd/slurmd/slurmd.h"
+#include "src/plugins/jobacct_gather/cgroup/jobacct_gather_cgroup.h"
 #include "../common/common_jag.h"
 
 #define _DEBUG 0
@@ -88,16 +89,12 @@ int bg_recover = NOT_FROM_CONTROLLER;
  * only load job completion logging plugins if the plugin_type string has a
  * prefix of "jobacct/".
  *
- * plugin_version - an unsigned 32-bit integer giving the version number
- * of the plugin.  If major and minor revisions are desired, the major
- * version number may be multiplied by a suitable magnitude constant such
- * as 100 or 1000.  Various SLURM versions will likely require a certain
- * minimum version for their plugins as the job accounting API
- * matures.
+ * plugin_version - an unsigned 32-bit integer containing the Slurm version
+ * (major.minor.micro combined into a single number).
  */
 const char plugin_name[] = "Job accounting gather cgroup plugin";
 const char plugin_type[] = "jobacct_gather/cgroup";
-const uint32_t plugin_version = 200;
+const uint32_t plugin_version = SLURM_VERSION_NUMBER;
 
 /* Other useful declarations */
 static slurm_cgroup_conf_t slurm_cgroup_conf;
@@ -108,33 +105,48 @@ static void _prec_extra(jag_prec_t *prec)
 	char *cpu_time = NULL, *memory_stat = NULL, *ptr;
 	size_t cpu_time_size = 0, memory_stat_size = 0;
 
-
 	//DEF_TIMERS;
 	//START_TIMER;
 	/* info("before"); */
 	/* print_jag_prec(prec); */
 	xcgroup_get_param(&task_cpuacct_cg, "cpuacct.stat",
 			  &cpu_time, &cpu_time_size);
-	sscanf(cpu_time, "%*s %lu %*s %lu", &utime, &stime);
-	prec->usec = utime;
-	prec->ssec = stime;
+	if (cpu_time == NULL) {
+		debug2("%s: failed to collect cpuacct.stat pid %d ppid %d",
+		       __func__, prec->pid, prec->ppid);
+	} else {
+		sscanf(cpu_time, "%*s %lu %*s %lu", &utime, &stime);
+		prec->usec = utime;
+		prec->ssec = stime;
+	}
+
 	xcgroup_get_param(&task_memory_cg, "memory.stat",
 			  &memory_stat, &memory_stat_size);
-	/* This number represents the amount of "dirty" private memory
-	   used by the cgroup.  From our experience this is slightly
-	   different than what proc presents, but is probably more
-	   accurate on what the user is actually using.
-	*/
-	ptr = strstr(memory_stat, "total_rss");
-	sscanf(ptr, "total_rss %lu", &total_rss);
-	prec->rss = total_rss / 1024; /* convert from bytes to KB */
+	if (memory_stat == NULL) {
+		debug2("%s: failed to collect memory.stat  pid %d ppid %d",
+		       __func__, prec->pid, prec->ppid);
+	} else {
+		/*
+		 * This number represents the amount of "dirty" private memory
+		 * used by the cgroup.  From our experience this is slightly
+		 * different than what proc presents, but is probably more
+		 * accurate on what the user is actually using.
+		 */
+		if ((ptr = strstr(memory_stat, "total_rss"))) {
+			sscanf(ptr, "total_rss %lu", &total_rss);
+			prec->rss = total_rss / 1024; /* bytes to KB */
+		}
 
-	/* total_pgmajfault is what is reported in proc, so we use
-	 * the same thing here. */
-	if ((ptr = strstr(memory_stat, "total_pgmajfault"))) {
-		sscanf(ptr, "total_pgmajfault %lu", &total_pgpgin);
-		prec->pages = total_pgpgin;
+		/*
+		 * total_pgmajfault is what is reported in proc, so we use
+		 * the same thing here.
+		 */
+		if ((ptr = strstr(memory_stat, "total_pgmajfault"))) {
+			sscanf(ptr, "total_pgmajfault %lu", &total_pgpgin);
+			prec->pages = total_pgpgin;
+		}
 	}
+
 	xfree(cpu_time);
 	xfree(memory_stat);
 
@@ -238,7 +250,7 @@ extern int init (void)
 		/* } */
 	}
 
-	verbose("%s loaded", plugin_name);
+	debug("%s loaded", plugin_name);
 	return SLURM_SUCCESS;
 }
 
@@ -274,7 +286,7 @@ extern int fini (void)
  *    wrong.
  */
 extern void jobacct_gather_p_poll_data(
-	List task_list, bool pgid_plugin, uint64_t cont_id)
+	List task_list, bool pgid_plugin, uint64_t cont_id, bool profile)
 {
 	static jag_callbacks_t callbacks;
 	static bool first = 1;
@@ -285,7 +297,8 @@ extern void jobacct_gather_p_poll_data(
 		callbacks.prec_extra = _prec_extra;
 	}
 
-	jag_common_poll_data(task_list, pgid_plugin, cont_id, &callbacks);
+	jag_common_poll_data(task_list, pgid_plugin, cont_id, &callbacks,
+			     profile);
 
 	return;
 }
@@ -320,29 +333,30 @@ extern char* jobacct_cgroup_create_slurm_cg(xcgroup_ns_t* ns)
 	/* in libslurm (src/common/xcgroup.c) */
 	xcgroup_t slurm_cg;
 	char* pre = (char*) xstrdup(slurm_cgroup_conf.cgroup_prepend);
+
 #ifdef MULTIPLE_SLURMD
-	if (conf->node_name != NULL)
-		xstrsubstitute(pre,"%n", conf->node_name);
-	else {
+	if (conf->node_name != NULL) {
+		xstrsubstitute(pre, "%n", conf->node_name);
+	} else {
 		xfree(pre);
 		pre = (char*) xstrdup("/slurm");
 	}
 #endif
 
 	/* create slurm cgroup in the ns (it could already exist) */
-	if (xcgroup_create(ns,&slurm_cg,pre,
+	if (xcgroup_create(ns, &slurm_cg, pre,
 			   getuid(), getgid()) != XCGROUP_SUCCESS) {
 		return pre;
 	}
 
-	if (xcgroup_instanciate(&slurm_cg) != XCGROUP_SUCCESS) {
+	if (xcgroup_instantiate(&slurm_cg) != XCGROUP_SUCCESS) {
 		error("unable to build slurm cgroup for ns %s: %m",
 		      ns->subsystems);
 		xcgroup_destroy(&slurm_cg);
 		return pre;
 	} else {
 		debug3("slurm cgroup %s successfully created for ns %s: %m",
-		       pre,ns->subsystems);
+		       pre, ns->subsystems);
 		xcgroup_destroy(&slurm_cg);
 	}
 

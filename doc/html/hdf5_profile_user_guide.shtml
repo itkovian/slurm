@@ -15,10 +15,10 @@
 
 <a id="Overview"></a>
 <h2>Overview</h2>
-<p>The AcctGatherProfileType/hdf5 plugin allows SLURM to coordinate collecting
+<p>The AcctGatherProfileType/hdf5 plugin allows Slurm to coordinate collecting
 data on jobs it runs on a cluster that is more detailed than is practical to
 include in its database. The data comes from periodically sampling various
-performance data either collected by SLURM, the operating system, or
+performance data either collected by Slurm, the operating system, or
 component software. The plugin will record the data from each source
 as a <b>Time Series</b> and also accumulate totals for each statistic for
 the job.</p>
@@ -31,15 +31,15 @@ cpu consumption, and memory use from a jobacct_gather plugin.
 Data from other sources may be added in the future.</p>
 
 <p>The data is collected into a file on a shared file system for each step on
-each allocated node of a job and then merged into a HDF5 file.
+each allocated node of a job and then merged into an HDF5 file.
 Individual files on a shared file system was chosen because it is possible
-that the data is voluminous so solutions that pass data to the SLURM control
+that the data is voluminous so solutions that pass data to the Slurm control
 daemon via RPC may not scale to very large clusters or jobs with
 many allocated nodes.</p>
 
 <p>A separate <a href="acct_gather_profile_plugins.html">
-SLURM Profile Accounting Plugin API (AcctGatherProfileType)</a> documents how
-write other Profile Accounting plugins.</P>
+Slurm Profile Accounting Plugin API (AcctGatherProfileType)</a> documents how
+to write other Profile Accounting plugins.</P>
 
 <a id="Administration"></a>
 <h2>Administration</h2>
@@ -57,13 +57,13 @@ option in the acct_gather.conf file. The directory will be created by
 Slurm if it doesn't exist.  Each user will have
 their own directory created in the ProfileHDF5Dir which contains
 the HDF5 files.  All the directories and files are created by the
-SlurmdUser which is usually root. The user specific directories as well
-as the files inside are chowned to the user running the job so they
+SlurmdUser which is usually root. The user specific directories, as well
+as the files inside, are chowned to the user running the job so they
 can access the files.  Since user root is usually creating these
 files/directories a root squashed file system will not work for
 the ProfileHDF5Dir.</p>
 
-<p>Each user that creates a profile will have a subdirector to the profile
+<p>Each user that creates a profile will have a subdirectory in the profile
 directory that has read/write permission only for the user.</p>
 </span>
 </div>
@@ -85,14 +85,14 @@ This sets the sampling frequency for data types:
 </div>
 </div>
 <div style="margin-left: 20px;">
-<h4>act_gather.conf parameters</h4>
+<h4>acct_gather.conf parameters</h4>
 <div style="margin-left: 20px;">
 <p>These parameters are directly used by the HDF5 Profile Plugin.</p>
 <dl>
 <dt><b>ProfileHDF5Dir</b> = &lt;path&gt;</dt>
 <p>
 This parameter is the path to the shared folder into which the
-acct_gather_profile plugin will write detailed data as a HDF5 file.
+acct_gather_profile plugin will write detailed data as an HDF5 file.
 The directory is assumed to be on a file system shared by the controller and
 all compute nodes. This is a required parameter.<p>
 
@@ -121,7 +121,7 @@ have a default polling frequency specified in slurm.conf in the
 JobAcctGatherFrequency parameter. The polling frequency can be overridden
 using the --acctg-freq
 <a href="srun.html">srun</a> parameter.
-They are both of the form task=sec,energy=sec,lustre=sec,network=sec.<p>
+They are both of the form task=sec,energy=sec,filesystem=sec,network=sec.<p>
 
 <p>The IPMI energy plugin also needs the EnergyIPMIFrequency value set
 in the acct_gather.conf file. This sets the rate at which the plugin samples
@@ -148,7 +148,7 @@ no data collected unless the <B>ProfileHDF5Default</B>
 option is used in acct_gather.conf. --profile on the command line overrides
 any value specified in the configuration file.</p>
 
-<DT><b>--profile</b>=&lt;all|none|[energy[,|task[,|lustre[,|network]]]]&gt;
+<DT><b>--profile</b>=&lt;all|none|[energy[,|task[,|filesystem[,|network]]]]&gt;
 <DD>
 <p>enables detailed data collection by the acct_gather_profile plugin.
 Detailed data are typically time-series that are stored in a HDF5 file for
@@ -207,7 +207,7 @@ to be attached to groups to store application defined properties.</p>
 
 <p>There are commodity programs, notably
 <a href="http://www.hdfgroup.org/hdf-java-html/hdfview/index.html">
-HDFView</a> for viewing and manipulating these files.
+HDFView</a>, for viewing and manipulating these files.
 
 <p>Below is a screen shot from HDFView expanding the job tree and showing the
 attributes for a specific task.</p>
@@ -269,13 +269,13 @@ correlate activity with other sources such as logs.</DD></DT>
 <DD>CPU Frequency at time of sample in kilohertz.</DD></DT>
 </DL>
 
-<h3>Lustre Data</h3>
+<h3>Filesystem Data</h3>
 <p><b>AcctGatherFilesystemType</b>=acct_gather_filesystem/lustre<p>
 is required in slurm.conf to collect task data.
-Appropriately set lustre=freq in either JobAcctGatherFrequency in slurm.conf
+Appropriately set Filesystem=freq in either JobAcctGatherFrequency in slurm.conf
 or in --acctg-freq on the command line.</p>
 
-<p>Each data sample in the Lustre Time Series contains the following data items.
+<p>Each data sample in the Filesystem Time Series contains the following data items.
 </p><DL>
 <DT><B>Date Time</B>
 <DD>Time of day at which the data sample was taken. This can be used to

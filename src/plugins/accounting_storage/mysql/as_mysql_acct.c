@@ -8,7 +8,7 @@
  *  Written by Danny Auble <da@llnl.gov>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -131,10 +131,28 @@ extern int as_mysql_add_accts(mysql_conn_t *mysql_conn, uint32_t uid,
 	char *extra = NULL, *tmp_extra = NULL;
 
 	int affect_rows = 0;
-	List assoc_list = list_create(slurmdb_destroy_association_rec);
+	List assoc_list = list_create(slurmdb_destroy_assoc_rec);
 
 	if (check_connection(mysql_conn) != SLURM_SUCCESS)
 		return ESLURM_DB_CONNECTION;
+
+	if (!is_user_min_admin_level(mysql_conn, uid, SLURMDB_ADMIN_OPERATOR)) {
+		slurmdb_user_rec_t user;
+
+		memset(&user, 0, sizeof(slurmdb_user_rec_t));
+		user.uid = uid;
+
+		if (!is_user_any_coord(mysql_conn, &user)) {
+			error("Only admins/operators/coordinators "
+			      "can add accounts");
+			return ESLURM_ACCESS_DENIED;
+		}
+		/* If the user is a coord of any acct they can add
+		 * accounts they are only able to make associations to
+		 * these accounts if they are coordinators of the
+		 * parent they are trying to add to
+		 */
+	}
 
 	user_name = uid_to_string((uid_t) uid);
 	itr = list_iterator_create(acct_list);
@@ -162,8 +180,8 @@ extern int as_mysql_add_accts(mysql_conn_t *mysql_conn, uint32_t uid,
 			"on duplicate key update deleted=0, mod_time=%ld %s;",
 			acct_table, cols, vals,
 			now, extra);
-		debug3("%d(%s:%d) query\n%s",
-		       mysql_conn->conn, THIS_FILE, __LINE__, query);
+		if (debug_flags & DEBUG_FLAG_DB_ASSOC)
+			DB_DEBUG(mysql_conn->conn, "query\n%s", query);
 		rc = mysql_db_query(mysql_conn, query);
 		xfree(cols);
 		xfree(vals);
@@ -174,10 +192,12 @@ extern int as_mysql_add_accts(mysql_conn_t *mysql_conn, uint32_t uid,
 			continue;
 		}
 		affect_rows = last_affected_rows(mysql_conn);
-/* 		debug3("affected %d", affect_rows); */
+		/* if (debug_flags & DEBUG_FLAG_DB_ASSOC) */
+		/* 	DB_DEBUG(mysql_conn->conn, "affected %d", affect_rows); */
 
 		if (!affect_rows) {
-			debug3("nothing changed");
+			if (debug_flags & DEBUG_FLAG_DB_ASSOC)
+				DB_DEBUG(mysql_conn->conn, "nothing changed");
 			xfree(extra);
 			continue;
 		}
@@ -204,6 +224,9 @@ extern int as_mysql_add_accts(mysql_conn_t *mysql_conn, uint32_t uid,
 		if (!object->assoc_list)
 			continue;
 
+		if (!assoc_list)
+			assoc_list =
+				list_create(slurmdb_destroy_assoc_rec);
 		list_transfer(assoc_list, object->assoc_list);
 	}
 	list_iterator_destroy(itr);
@@ -223,14 +246,12 @@ extern int as_mysql_add_accts(mysql_conn_t *mysql_conn, uint32_t uid,
 	} else
 		xfree(txn_query);
 
-	if (list_count(assoc_list)) {
-		if (as_mysql_add_assocs(mysql_conn, uid, assoc_list)
-		    == SLURM_ERROR) {
-			error("Problem adding user associations");
-			rc = SLURM_ERROR;
-		}
+	if (assoc_list && list_count(assoc_list)) {
+		if ((rc = as_mysql_add_assocs(mysql_conn, uid, assoc_list))
+		    != SLURM_SUCCESS)
+			error("Problem adding accounts associations");
 	}
-	list_destroy(assoc_list);
+	FREE_NULL_LIST(assoc_list);
 
 	return rc;
 }
@@ -257,6 +278,11 @@ extern List as_mysql_modify_accts(mysql_conn_t *mysql_conn, uint32_t uid,
 
 	if (check_connection(mysql_conn) != SLURM_SUCCESS)
 		return NULL;
+
+	if (!is_user_min_admin_level(mysql_conn, uid, SLURMDB_ADMIN_OPERATOR)) {
+		errno = ESLURM_ACCESS_DENIED;
+		return NULL;
+	}
 
 	xstrcat(extra, "where deleted=0");
 	if (acct_cond->assoc_cond
@@ -318,8 +344,8 @@ extern List as_mysql_modify_accts(mysql_conn_t *mysql_conn, uint32_t uid,
 
 	query = xstrdup_printf("select name from %s %s;", acct_table, extra);
 	xfree(extra);
-	debug3("%d(%s:%d) query\n%s",
-	       mysql_conn->conn, THIS_FILE, __LINE__, query);
+	if (debug_flags & DEBUG_FLAG_DB_ASSOC)
+		DB_DEBUG(mysql_conn->conn, "query\n%s", query);
 	if (!(result = mysql_db_query_ret(
 		      mysql_conn, query, 0))) {
 		xfree(query);
@@ -344,7 +370,9 @@ extern List as_mysql_modify_accts(mysql_conn_t *mysql_conn, uint32_t uid,
 
 	if (!list_count(ret_list)) {
 		errno = SLURM_NO_CHANGE_IN_DATA;
-		debug3("didn't effect anything\n%s", query);
+		if (debug_flags & DEBUG_FLAG_DB_ASSOC)
+			DB_DEBUG(mysql_conn->conn,
+				 "didn't effect anything\n%s", query);
 		xfree(query);
 		xfree(vals);
 		return ret_list;
@@ -358,7 +386,7 @@ extern List as_mysql_modify_accts(mysql_conn_t *mysql_conn, uint32_t uid,
 	xfree(user_name);
 	if (rc == SLURM_ERROR) {
 		error("Couldn't modify accounts");
-		list_destroy(ret_list);
+		FREE_NULL_LIST(ret_list);
 		errno = SLURM_ERROR;
 		ret_list = NULL;
 	}
@@ -393,6 +421,11 @@ extern List as_mysql_remove_accts(mysql_conn_t *mysql_conn, uint32_t uid,
 
 	if (check_connection(mysql_conn) != SLURM_SUCCESS)
 		return NULL;
+
+	if (!is_user_min_admin_level(mysql_conn, uid, SLURMDB_ADMIN_OPERATOR)) {
+		errno = ESLURM_ACCESS_DENIED;
+		return NULL;
+	}
 
 	xstrcat(extra, "where deleted=0");
 	if (acct_cond->assoc_cond
@@ -474,7 +507,9 @@ extern List as_mysql_remove_accts(mysql_conn_t *mysql_conn, uint32_t uid,
 
 	if (!list_count(ret_list)) {
 		errno = SLURM_NO_CHANGE_IN_DATA;
-		debug3("didn't effect anything\n%s", query);
+		if (debug_flags & DEBUG_FLAG_DB_ASSOC)
+			DB_DEBUG(mysql_conn->conn,
+				 "didn't effect anything\n%s", query);
 		xfree(query);
 		return ret_list;
 	}
@@ -483,8 +518,7 @@ extern List as_mysql_remove_accts(mysql_conn_t *mysql_conn, uint32_t uid,
 	/* We need to remove these accounts from the coord's that have it */
 	coord_list = as_mysql_remove_coord(
 		mysql_conn, uid, ret_list, NULL);
-	if (coord_list)
-		list_destroy(coord_list);
+	FREE_NULL_LIST(coord_list);
 
 	user_name = uid_to_string((uid_t) uid);
 
@@ -505,7 +539,7 @@ extern List as_mysql_remove_accts(mysql_conn_t *mysql_conn, uint32_t uid,
 	xfree(name_char);
 	xfree(assoc_char);
 	if (rc == SLURM_ERROR) {
-		list_destroy(ret_list);
+		FREE_NULL_LIST(ret_list);
 		return NULL;
 	}
 
@@ -656,8 +690,8 @@ empty:
 	xfree(tmp);
 	xfree(extra);
 
-	debug3("%d(%s:%d) query\n%s",
-	       mysql_conn->conn, THIS_FILE, __LINE__, query);
+	if (debug_flags & DEBUG_FLAG_DB_ASSOC)
+		DB_DEBUG(mysql_conn->conn, "query\n%s", query);
 	if (!(result = mysql_db_query_ret(
 		      mysql_conn, query, 0))) {
 		xfree(query);
@@ -672,8 +706,7 @@ empty:
 		   this list in the acct->name so we don't
 		   free it here
 		*/
-		if (acct_cond->assoc_cond->acct_list)
-			list_destroy(acct_cond->assoc_cond->acct_list);
+		FREE_NULL_LIST(acct_cond->assoc_cond->acct_list);
 		acct_cond->assoc_cond->acct_list = list_create(NULL);
 		acct_cond->assoc_cond->with_deleted = acct_cond->with_deleted;
 	}
@@ -694,7 +727,7 @@ empty:
 		if (acct_cond && acct_cond->with_assocs) {
 			if (!acct_cond->assoc_cond) {
 				acct_cond->assoc_cond = xmalloc(
-					sizeof(slurmdb_association_cond_t));
+					sizeof(slurmdb_assoc_cond_t));
 			}
 
 			list_append(acct_cond->assoc_cond->acct_list,
@@ -707,7 +740,7 @@ empty:
 	    && list_count(acct_cond->assoc_cond->acct_list)) {
 		ListIterator assoc_itr = NULL;
 		slurmdb_account_rec_t *acct = NULL;
-		slurmdb_association_rec_t *assoc = NULL;
+		slurmdb_assoc_rec_t *assoc = NULL;
 		List assoc_list = as_mysql_get_assocs(
 			mysql_conn, uid, acct_cond->assoc_cond);
 
@@ -720,12 +753,12 @@ empty:
 		assoc_itr = list_iterator_create(assoc_list);
 		while ((acct = list_next(itr))) {
 			while ((assoc = list_next(assoc_itr))) {
-				if (strcmp(assoc->acct, acct->name))
+				if (xstrcmp(assoc->acct, acct->name))
 					continue;
 
 				if (!acct->assoc_list)
 					acct->assoc_list = list_create(
-						slurmdb_destroy_association_rec);
+						slurmdb_destroy_assoc_rec);
 				list_append(acct->assoc_list, assoc);
 				list_remove(assoc_itr);
 			}
@@ -736,7 +769,7 @@ empty:
 		list_iterator_destroy(itr);
 		list_iterator_destroy(assoc_itr);
 
-		list_destroy(assoc_list);
+		FREE_NULL_LIST(assoc_list);
 	}
 
 	return acct_list;

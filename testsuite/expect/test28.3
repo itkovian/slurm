@@ -1,4 +1,4 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Test of SLURM functionality
 #          Validates that the scontrol show job option has the job
@@ -13,7 +13,7 @@
 # Written by Nathan Yee <nyee32@schedmd.com>
 #
 # This file is part of SLURM, a resource management program.
-# For details, see <http://slurm.schedmd.com/>.
+# For details, see <https://slurm.schedmd.com/>.
 # Please also read the included file: DISCLAIMER.
 #
 # SLURM is free software; you can redistribute it and/or modify it under
@@ -53,10 +53,9 @@ proc check_ids { job } {
 		set match 0
 		spawn $scontrol show job $job\_$index
 		expect {
-			-re "JobId=($number) ArrayJobId=$job ArrayTaskId=($number) " {
-				if {$job == [expr $expect_out(1,string) - $expect_out(2,string)]} {
-					incr match
-				}
+			-re "JobId=($number) ArrayJobId=$job ArrayTaskId=$index " {
+				incr match
+				exp_continue
 			}
 			timeout {
 				send_user "\nFAILURE: scontrol is not responding\n"
@@ -85,7 +84,7 @@ expect {
 		send_user "\nFAILURE: sbatch did not submit jobs\n"
 		set exit_code 1
 	}
-	timout {
+	timeout {
 		send_user "\nFAILURE: sbatch not responding\n"
 		set exit_code 1
 	}
@@ -95,7 +94,9 @@ expect {
 }
 if {$job_id != 0} {
 	check_ids $job_id
-	cancel_job $job_id
+	if {[cancel_job $job_id] != 0} {
+		set exit_code 1
+	}
 }
 
 if {$exit_code == 0} {

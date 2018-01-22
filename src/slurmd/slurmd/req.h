@@ -1,6 +1,5 @@
 /*****************************************************************************\
  * src/slurmd/slurmd/req.h - slurmd request handling
- * $Id$
  *****************************************************************************
  *  Copyright (C) 2002 The Regents of the University of California.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -8,7 +7,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -36,8 +35,8 @@
  *  with SLURM; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
-#ifndef _REQ_H
-#define _REQ_H
+#ifndef _SLURMD_REQ_H
+#define _SLURMD_REQ_H
 
 #include "src/common/slurm_protocol_defs.h"
 
@@ -50,6 +49,20 @@ void slurmd_req(slurm_msg_t *msg);
 
 void destroy_starting_step(void *x);
 
-int init_gids_cache(int cache);
+void gids_cache_purge(void);
+
+/* Add record for every launched job so we know they are ready for suspend */
+extern void record_launched_jobs(void);
+
+void file_bcast_init(void);
+void file_bcast_purge(void);
+
+/*
+ * ume_notify - Notify all jobs and steps on this node that a Uncorrectable
+ *	Memory Error (UME) has occured by sending SIG_UME (to log event in
+ *	stderr)
+ * RET count of signaled job steps
+ */
+extern int ume_notify(void);
 
 #endif

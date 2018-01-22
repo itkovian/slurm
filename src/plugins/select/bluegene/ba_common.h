@@ -7,7 +7,7 @@
  *  Written by Danny Auble <da@llnl.gov>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -46,13 +46,13 @@
 #define BUFSIZE 4096
 
 #define SWAP(a,b,t)				\
-	_STMT_START {				\
+	do {					\
 		(t) = (a);			\
 		(a) = (b);			\
 		(b) = (t);			\
-	} _STMT_END
+	} while (0)
 
-/* This is only used on L and P hense the 6 count */
+/* This is only used on L and P hence the 6 count */
 #define NUM_PORTS_PER_NODE 6
 
 extern int DIM_SIZE[HIGHEST_DIMENSIONS]; /* how many midplanes in
@@ -193,7 +193,7 @@ extern int cluster_dims;
 extern uint32_t cluster_flags;
 extern int cluster_base;
 extern bool ba_initialized;
-extern uint32_t ba_debug_flags;
+extern uint64_t ba_debug_flags;
 extern bitstr_t *ba_main_mp_bitmap;
 extern pthread_mutex_t ba_system_mutex;
 
@@ -308,9 +308,9 @@ extern void ba_node_map_set(bitstr_t *node_bitmap, uint16_t *full_offset,
  * IN end_offset - N-dimension zero-origin offset to start setting at
  * IN my_geo_system - system geometry specification
  */
-extern void ba_node_map_set_range(bitstr_t *node_bitmap,
-				  int *start_offset, int *end_offset,
-				  ba_geo_system_t *my_geo_system);
+extern int ba_node_map_set_range(bitstr_t *node_bitmap,
+				 int *start_offset, int *end_offset,
+				 ba_geo_system_t *my_geo_system);
 
 /*
  * Return the contents of the specified position in the bitmap
@@ -444,7 +444,7 @@ extern int validate_coord(uint16_t *coord);
 
 extern char *ba_switch_usage_str(uint16_t usage);
 
-extern void set_ba_debug_flags(uint32_t debug_flags);
+extern void set_ba_debug_flags(uint64_t debug_flags);
 /*
  * Resets the virtual system to a virgin state.  If track_down_mps is set
  * then those midplanes are not set to idle, but kept in a down state.
@@ -585,6 +585,9 @@ extern void ba_sync_job_to_block(bg_record_t *bg_record,
 				 struct job_record *job_ptr);
 
 extern bitstr_t *ba_create_ba_mp_cnode_bitmap(bg_record_t *bg_record);
+
+/* returns a bitmap with the cnodelist bits in a midplane not set */
+extern bitstr_t *ba_cnodelist2bitmap(char *cnodelist);
 
 /* set the ionode str based off the block allocator, either ionodes
  * or cnode coords */

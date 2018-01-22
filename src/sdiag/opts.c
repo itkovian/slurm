@@ -5,7 +5,7 @@
  *  Written by Alejandro Lucero <alucero@bsc.es>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -34,20 +34,9 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#if HAVE_CONFIG_H
-#  include "config.h"
-#endif
+#define _GNU_SOURCE
 
-#ifndef _GNU_SOURCE
-#  define _GNU_SOURCE
-#endif
-
-#if HAVE_GETOPT_H
-#  include <getopt.h>
-#else
-#  include "src/common/getopt.h"
-#endif
-
+#include <getopt.h>
 #include <stdlib.h>
 #include <unistd.h>
 
@@ -59,12 +48,15 @@
 static void  _help( void );
 static void  _usage( void );
 
-extern int sdiag_param;
+extern int  sdiag_param;
+extern bool sort_by_id;
+extern bool sort_by_time;
+extern bool sort_by_time2;
 
 /*
  * parse_command_line, fill in params data structure with data
  */
-extern void parse_command_line(int argc, char *argv[])
+extern void parse_command_line(int argc, char **argv)
 {
 	int opt_char;
 	int option_index;
@@ -72,12 +64,15 @@ extern void parse_command_line(int argc, char *argv[])
 		{"all",		no_argument,	0,	'a'},
 		{"help",	no_argument,	0,	'h'},
 		{"reset",	no_argument,	0,	'r'},
+		{"sort-by-id",	no_argument,	0,	'i'},
+		{"sort-by-time",no_argument,	0,	't'},
+		{"sort-by-time2",no_argument,	0,	'T'},
 		{"usage",	no_argument,	0,	OPT_LONG_USAGE},
 		{"version",     no_argument,	0,	'V'},
 		{NULL,		0,		0,	0}
 	};
 
-	while ((opt_char = getopt_long(argc, argv, "ahrV", long_options,
+	while ((opt_char = getopt_long(argc, argv, "ahirtTV", long_options,
 				       &option_index)) != -1) {
 		switch (opt_char) {
 			case (int)'a':
@@ -87,8 +82,17 @@ extern void parse_command_line(int argc, char *argv[])
 				_help();
 				exit(0);
 				break;
+			case (int)'i':
+				sort_by_id = true;
+				break;
 			case (int)'r':
 				sdiag_param = STAT_COMMAND_RESET;
+				break;
+			case (int)'t':
+				sort_by_time = true;
+				break;
+			case (int)'T':
+				sort_by_time2 = true;
 				break;
 			case (int) 'V':
 				print_slurm_version();
@@ -112,10 +116,13 @@ static void _help( void )
 {
 	printf ("\
 Usage: sdiag [OPTIONS]\n\
-  --a        all statistics\n\
-  --r        reset statistics\n\
+  -a              all statistics\n\
+  -r              reset statistics\n\
 \nHelp options:\n\
-  --help     show this help message\n\
-  --usage    display brief usage message\n\
-  --version  display current version number\n");
+  --help          show this help message\n\
+  --sort-by-id    sort RPCs by id\n\
+  --sort-by-time  sort RPCs by total run time\n\
+  --sort-by-time2 sort RPCs by average run time\n\
+  --usage         display brief usage message\n\
+  --version       display current version number\n");
 }

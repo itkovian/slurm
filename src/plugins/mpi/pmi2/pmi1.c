@@ -6,7 +6,7 @@
  *  All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -35,9 +35,7 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#if     HAVE_CONFIG_H
-#  include "config.h"
-#endif
+#include "config.h"
 
 #if defined(__FreeBSD__)
 #include <roken.h>
@@ -46,11 +44,12 @@
 
 #include <fcntl.h>
 #include <signal.h>
-#include <sys/types.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/types.h>
 
-#include <slurm/slurm_errno.h>
+#include "slurm/slurm_errno.h"
+
 #include "src/common/slurm_xlator.h"
 #include "src/common/xmalloc.h"
 #include "src/common/log.h"
@@ -527,7 +526,7 @@ _handle_pmi1_cmd_buf(int fd, int lrank, int buf_len, char *buf)
 
 	i = 0;
 	while (pmi1_cmd_handlers[i].cmd != NULL) {
-		if (!strcmp(req->cmd, pmi1_cmd_handlers[i].cmd))
+		if (!xstrcmp(req->cmd, pmi1_cmd_handlers[i].cmd))
 			break;
 		i ++;
 	}
@@ -554,7 +553,7 @@ _handle_pmi1_mcmd_buf(int fd, int lrank, int buf_size, int buf_len, char **pbuf)
 	buf = *pbuf;
 	n = buf_len;
 	endcmd_len = strlen(ENDCMD_KEY"\n");
-	not_end = strncmp(&buf[n - endcmd_len], ENDCMD_KEY"\n", endcmd_len);
+	not_end = xstrncmp(&buf[n - endcmd_len], ENDCMD_KEY"\n", endcmd_len);
 	while(not_end) {
 		if (n == buf_size) {
 			buf_size += MAX_READLINE;
@@ -571,8 +570,8 @@ _handle_pmi1_mcmd_buf(int fd, int lrank, int buf_size, int buf_len, char **pbuf)
 			usleep(100);
 		} else {
 			n += len;
-			not_end = strncmp(&buf[n - endcmd_len],
-					  ENDCMD_KEY"\n", endcmd_len);
+			not_end = xstrncmp(&buf[n - endcmd_len],
+					   ENDCMD_KEY"\n", endcmd_len);
 		}
 	}
 	buf[n] = '\0';
@@ -622,7 +621,7 @@ handle_pmi1_cmd(int fd, int lrank)
 	}
 
 	len = strlen(MCMD_KEY"=");
-	if (! strncmp(buf, MCMD_KEY"=", len)) {
+	if (! xstrncmp(buf, MCMD_KEY"=", len)) {
 		rc = _handle_pmi1_mcmd_buf(fd, lrank, size, n, &buf);
 		xfree(buf);
 	} else {

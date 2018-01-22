@@ -10,7 +10,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -46,11 +46,9 @@
 
 #define AGENT_THREAD_COUNT	10	/* maximum active threads per agent */
 #define COMMAND_TIMEOUT 	30	/* command requeue or error, seconds */
-#define MAX_AGENT_CNT		(MAX_SERVER_THREADS / (AGENT_THREAD_COUNT + 2))
-					/* maximum simultaneous agents, note
-					 *   total thread count is product of
-					 *   MAX_AGENT_CNT and
-					 *   (AGENT_THREAD_COUNT + 2) */
+
+#define LOTS_OF_AGENTS_CNT 50
+#define LOTS_OF_AGENTS ((get_agent_count() <= LOTS_OF_AGENTS_CNT) ? 0 : 1)
 
 typedef struct agent_arg {
 	uint32_t	node_count;	/* number of nodes to communicate
@@ -64,6 +62,9 @@ typedef struct agent_arg {
 	slurm_msg_type_t msg_type;	/* RPC to be issued */
 	void		*msg_args;	/* RPC data to be transmitted */
 } agent_arg_t;
+
+/* Start a thread to manage queued agent requests */
+extern void agent_init(void);
 
 /*
  * agent - party responsible for transmitting an common RPC in parallel
@@ -83,15 +84,13 @@ extern void *agent (void *args);
 extern void agent_queue_request(agent_arg_t *agent_arg_ptr);
 
 /*
- * agent_retry - Agent for retrying pending RPCs. One pending request is
- *	issued if it has been pending for at least min_wait seconds
+ * agent_trigger - Request processing of pending RPCs
  * IN min_wait - Minimum wait time between re-issue of a pending RPC
- * IN mai_too - Send pending email too, note this performed using a
- *		fork/waitpid, so it can take longer than just creating
- *		a pthread to send RPCs
- * RET count of queued requests remaining
+ * IN mail_too - Send pending email too, note this performed using a
+ *	fork/waitpid, so it can take longer than just creating a pthread
+ *	to send RPCs
  */
-extern int agent_retry (int min_wait, bool mail_too);
+extern void agent_trigger(int min_wait, bool mail_too);
 
 /* agent_purge - purge all pending RPC requests */
 extern void agent_purge (void);
@@ -108,12 +107,5 @@ extern void mail_job_info (struct job_record *job_ptr, uint16_t mail_type);
 
 /* Return length of agent's retry_list */
 extern int retry_list_size(void);
-
-/* slurmctld_free_batch_job_launch_msg is a variant of
- *	slurm_free_job_launch_msg because all environment variables currently
- *	loaded in one xmalloc buffer (see get_job_env()), which is different
- *	from how slurmd assembles the data from a message
- */
-extern void slurmctld_free_batch_job_launch_msg(batch_job_launch_msg_t * msg);
 
 #endif /* !_AGENT_H */

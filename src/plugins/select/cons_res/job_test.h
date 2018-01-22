@@ -1,14 +1,12 @@
 /*****************************************************************************\
  *  select_cons_res.h
- *
- *  $Id: select_cons_res.h,v 1.3 2006/10/31 20:01:38 palermo Exp $
  *****************************************************************************
  *  Copyright (C) 2006 Hewlett-Packard Development Company, L.P.
  *  Written by Susanne M. Balle, <susanne.balle@hp.com>
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -66,6 +64,18 @@ int cr_job_test(struct job_record *job_ptr, bitstr_t *node_bitmap,
 		int mode, uint16_t cr_type,
 		enum node_cr_state job_node_req, uint32_t cr_node_cnt,
 		struct part_res_record *cr_part_ptr,
-		struct node_use_record *node_usage, bitstr_t *exc_core_bitmap);
+		struct node_use_record *node_usage, bitstr_t *exc_core_bitmap,
+		bool prefer_alloc_nodes, bool qos_preemptor, bool preempt_mode);
+
+/*
+ * Given an available node_bitmap, return a corresponding available core_bitmap,
+ *	excluding all specialized cores.
+ *
+ * node_map IN - Bitmap of available nodes
+ * core_spec IN - Count of specialized cores requested by the job or NO_VAL
+ * RET bitmap of cores available for use by this job or reservation
+ * NOTE: Call bit_free() on return value to avoid memory leak.
+ */
+extern bitstr_t *make_core_bitmap(bitstr_t *node_map, uint16_t core_spec);
 
 #endif /* !_CR_JOB_TEST_H */

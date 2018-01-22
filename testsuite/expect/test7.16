@@ -1,4 +1,4 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Test of SLURM functionality
 #          Verify that auth/munge credential is properly validated.
@@ -11,7 +11,7 @@
 # Written by Morris Jette <jette@schedmd.com>
 #
 # This file is part of SLURM, a resource management program.
-# For details, see <http://slurm.schedmd.com/>.
+# For details, see <https://slurm.schedmd.com/>.
 # Please also read the included file: DISCLAIMER.
 #
 # SLURM is free software; you can redistribute it and/or modify it under
@@ -90,7 +90,8 @@ expect {
 	}
 }
 if {$job_id != 0} {
-	send_user "\FAILURE: allocation granted with bad Munge credential\n"
+	send_user "\nFAILURE: allocation granted with bad Munge credential\n"
+	send_user "FAILURE: This happens rarely, when the Slurm test modifies a byte that Munge does not use\n"
 	exit 1
 }
 

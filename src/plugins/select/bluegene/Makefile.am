@@ -23,28 +23,12 @@ libba_common_la_SOURCES = ba_common.c ba_common.h
 
 libconfigure_api_la_SOURCES = configure_api.c configure_api.h
 
-select_bluegene_la_LDFLAGS = $(SO_LDFLAGS) $(PLUGIN_FLAGS)
+select_bluegene_la_LDFLAGS = $(PLUGIN_FLAGS)
 select_bluegene_la_LIBADD = libba_common.la
 
 if BLUEGENE_LOADED
 
 SUBDIRS = sfree
-
-if BG_L_P_LOADED
-SUBDIRS += bl ba
-
-if BGL_LOADED
-pkglib_LTLIBRARIES += libsched_if64.la
-libsched_if64_la_SOURCES = libsched_if64.c
-libsched_if64_la_LDFLAGS = $(SO_LDFLAGS) $(PLUGIN_FLAGS)
-else
-pkglib_LTLIBRARIES += libsched_if.la
-libsched_if_la_SOURCES = libsched_if64.c
-libsched_if_la_LDFLAGS = $(SO_LDFLAGS) $(PLUGIN_FLAGS)
-endif
-
-block_allocator_lib  = ba/libblock_allocator.la
-endif
 
 if BGQ_LOADED
   SUBDIRS += bl_bgq ba_bgq
@@ -56,7 +40,7 @@ if BGQ_LOADED
 
   pkglib_LTLIBRARIES += runjob_plugin.la
   runjob_plugin_la_SOURCES = runjob_plugin.cc
-  runjob_plugin_la_LDFLAGS = $(SO_LDFLAGS) $(PLUGIN_FLAGS)
+  runjob_plugin_la_LDFLAGS = $(PLUGIN_FLAGS)
   runjob_plugin_la_LIBADD = $(convenience_libs)
 endif
 

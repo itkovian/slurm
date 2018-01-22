@@ -8,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -46,6 +46,8 @@
 #include "src/common/slurm_xlator.h"	/* Must be first */
 #include "src/common/list.h"
 #include "src/slurmctld/slurmctld.h"
+
+extern uint16_t other_select_type_param;
 
 /*
  * Initialize context for node selection plugin
@@ -207,10 +209,16 @@ extern int other_job_resized(struct job_record *job_ptr,
 
 /*
  * Pass job-step signal to other plugin.
- * IN job_ptr - job to be signalled
+ * IN job_ptr - job to be signaled
  * IN signal  - signal(7) number
  */
 extern int other_job_signal(struct job_record *job_ptr, int signal);
+
+/*
+ * Pass job memory allocation confirmation request to other plugin.
+ * IN job_ptr - job to be signaled
+ */
+extern int other_job_mem_confirm(struct job_record *job_ptr);
 
 /*
  * Note termination of job is starting. Executed from slurmctld.
@@ -257,8 +265,10 @@ extern int other_step_start(struct step_record *step_ptr);
 /*
  * clear what happened in select_g_step_pick_nodes
  * IN/OUT step_ptr - Flush the resources from the job and step.
+ * IN killing_step - if true then we are just starting to kill the step
+ *                   if false, the step is completely terminated
  */
-extern int other_step_finish(struct step_record *step_ptr);
+extern int other_step_finish(struct step_record *step_ptr, bool killing_step);
 
 /* allocate storage for a select job credential
  * RET jobinfo - storage for a select job credential
@@ -383,24 +393,14 @@ extern int other_pack_select_info(time_t last_query_time, uint16_t show_flags,
 /* Note reconfiguration or change in partition configuration */
 extern int other_reconfigure(void);
 
-/*
- * other_resv_test - Identify the nodes which "best" satisfy a reservation
- *	request. "best" is defined as either single set of consecutive nodes
- *	satisfying the request and leaving the minimum number of unused nodes
- *	OR the fewest number of consecutive node sets
- * IN avail_bitmap - nodes available for the reservation
- * IN node_cnt - count of required nodes
- * IN core_cnt - count of required cores per node
- * IN core_bitmap - cores to be excluded for this reservation
- * IN flags - reservation request flags
- * RET - nodes selected for use by the reservation
- */
-extern bitstr_t * other_resv_test(bitstr_t *avail_bitmap, uint32_t node_cnt,
-				  uint32_t *core_cnt, bitstr_t **core_bitmap,
-				  uint32_t flags);
+extern bitstr_t * other_resv_test(resv_desc_msg_t *resv_desc_ptr,
+				  uint32_t node_cnt,
+				  bitstr_t *avail_bitmap,
+				  bitstr_t **core_bitmap);
 
 extern void other_ba_init(node_info_msg_t *node_info_ptr, bool sanity_check);
 extern void other_ba_fini(void);
 extern int *other_ba_get_dims(void);
+extern bitstr_t *other_ba_cnodelist2bitmap(char *cnodelist);
 
 #endif /* _CRAY_OTHER_SELECT_H */

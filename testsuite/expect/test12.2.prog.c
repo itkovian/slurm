@@ -8,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -25,13 +25,14 @@
  *  with SLURM; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <fcntl.h>
+#include <time.h>
+#include <unistd.h>
 
 int
 main (int argc, char **argv)
@@ -43,6 +44,7 @@ main (int argc, char **argv)
 	int fd;
 	char *mem;
 	char *file_name;
+	time_t time_start = time(NULL);
 
 	if (argc != 6) {
 		fprintf(stderr,
@@ -88,6 +90,7 @@ main (int argc, char **argv)
 	}
 	close(fd);
 
+	sleep_time -= difftime(time(NULL), time_start);
 	sleep(sleep_time);
 	free(mem);
 

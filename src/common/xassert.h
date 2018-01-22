@@ -2,7 +2,6 @@
  *  xassert.h: assert type macro with configurable handling
  *             If NDEBUG is defined, do nothing.
  *             If not, and expression is zero, log an error message and abort.
- *  $Id$
  *****************************************************************************
  *  Copyright (C) 2004 The Regents of the University of California.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -10,7 +9,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -42,9 +41,7 @@
 #ifndef _XASSERT_H
 #define _XASSERT_H	1
 
-#if HAVE_CONFIG_H
-#  include "config.h"
-#endif
+#include "config.h"
 
 #include "macros.h"
 
@@ -54,10 +51,10 @@
 
 #else /* !NDEBUG */
 
-#  define xassert(__ex)  _STMT_START { \
-     (__ex) ? ((void)0) : \
-     __xassert_failed(__STRING(__ex), __FILE__,  __LINE__, __CURRENT_FUNC__);\
-     } _STMT_END
+#  define xassert(__ex)  do { \
+     ((__ex)) ? ((void)0) : \
+     __xassert_failed(__STRING(__ex), __FILE__,  __LINE__, __func__);\
+     } while (0)
 
 /*  This prints the assertion failed message to the slurm log facility
  *  (see log.h) and aborts the calling program

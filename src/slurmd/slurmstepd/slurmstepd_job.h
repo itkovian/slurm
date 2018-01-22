@@ -1,6 +1,5 @@
 /*****************************************************************************\
  *  src/slurmd/slurmstepd/slurmstepd_job.h  stepd_step_rec_t definition
- *  $Id$
  *****************************************************************************
  *  Copyright (C) 2002-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
@@ -10,7 +9,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -42,10 +41,7 @@
 #ifndef _SLURMSTEPD_JOB_H
 #define _SLURMSTEPD_JOB_H
 
-#if WITH_PTHREADS
 #include <pthread.h>
-#endif
-
 #include <pwd.h>
 
 #include "src/common/macros.h"
@@ -72,6 +68,7 @@ typedef struct {
 	slurm_addr_t ioaddr;       /* Address to connect on for normal I/O.
 				      Spawn IO uses messages to the normal
 				      resp_addr. */
+	uint16_t protocol_version; /* protocol_version of the srun */
 } srun_info_t;
 
 typedef enum {
@@ -126,7 +123,9 @@ typedef struct {		/* MPMD specifications, needed for Cray */
 } mpmd_set_t;
 
 typedef struct {
-	slurmstepd_state_t state;
+	slurmstepd_state_t state;	/* Job state			*/
+	pthread_cond_t state_cond;	/* Job state conditional	*/
+	pthread_mutex_t state_mutex;	/* Job state mutex		*/
 	uint32_t       jobid;  /* Current SLURM job id                      */
 	uint32_t       stepid; /* Current step id (or NO_VAL)               */
 	uint32_t       array_job_id;  /* job array master job ID            */
@@ -134,12 +133,20 @@ typedef struct {
 	uint32_t       nnodes; /* number of nodes in current job            */
 	uint32_t       ntasks; /* total number of tasks in current job      */
 	uint32_t       nodeid; /* relative position of this node in job     */
+	uint32_t       node_offset; 	/* pack job node offset or NO_VAL   */
 	uint32_t       node_tasks; /* number of tasks on *this* node        */
+	uint32_t       pack_jobid;	/* pack job ID or NO_VAL */
+	uint32_t       pack_nnodes;	/* total task count for entire pack job */
+	char          *pack_node_list;	/* pack step node list */
+	uint32_t       pack_ntasks;	/* total task count for entire pack job */
+	uint32_t       pack_offset; 	/* pack job offset or NO_VAL        */
+	uint32_t       pack_task_offset;/* pack job task offset or NO_VAL   */
+	uint16_t      *pack_task_cnts;	/* Number of tasks on each node in pack job */
 	uint16_t      *task_cnts;  /* Number of tasks on each node in job   */
 	uint32_t       cpus_per_task;	/* number of cpus desired per task  */
 	uint32_t       debug;  /* debug level for job slurmd                */
-	uint32_t       job_mem;  /* MB of memory reserved for the job       */
-	uint32_t       step_mem; /* MB of memory reserved for the step      */
+	uint64_t       job_mem;  /* MB of memory reserved for the job       */
+	uint64_t       step_mem; /* MB of memory reserved for the step      */
 	uint16_t       cpus;   /* number of cpus to use for this job        */
 	uint32_t       argc;   /* number of commandline arguments           */
 	char         **env;    /* job environment                           */
@@ -148,12 +155,15 @@ typedef struct {
 	task_dist_states_t task_dist;/* -m distribution                     */
 	char          *node_name; /* node name of node running job
 				   * needed for front-end systems           */
-	cpu_bind_type_t cpu_bind_type; /* --cpu_bind=                       */
+	cpu_bind_type_t cpu_bind_type; /* --cpu-bind=                       */
 	char          *cpu_bind;       /* binding map for map/mask_cpu      */
-	mem_bind_type_t mem_bind_type; /* --mem_bind=                       */
+	mem_bind_type_t mem_bind_type; /* --mem-bind=                       */
 	char          *mem_bind;       /* binding map for tasks to memory   */
-	uint32_t       cpu_freq;       /* requested cpu frequency           */
-	switch_jobinfo_t *switch_job; /* switch-specific job information     */
+	uint16_t accel_bind_type;  /* --accel_bind= */
+	uint32_t cpu_freq_min; /* Minimum cpu frequency  */
+	uint32_t cpu_freq_max; /* Maximum cpu frequency  */
+	uint32_t cpu_freq_gov; /* cpu frequency governor */
+	dynamic_plugin_data_t *switch_job; /* switch-specific job information     */
 	uid_t         uid;     /* user id for job                           */
 	char          *user_name;
 	gid_t         gid;     /* group ID for job                          */
@@ -162,7 +172,6 @@ typedef struct {
 	bool           aborted;    /* true if already aborted               */
 	bool           batch;      /* true if this is a batch job           */
 	bool           run_prolog; /* true if need to run prolog            */
-	bool           user_managed_io;
 	time_t         timelimit;  /* time at which job must stop           */
 	uint32_t       profile;	   /* Level of acct_gather_profile          */
 	char          *task_prolog; /* per-task prolog                      */
@@ -194,20 +203,13 @@ typedef struct {
 			       * used when a new client attaches
 			       */
 
-	uint8_t	buffered_stdio; /* stdio buffering flag, 1 for line-buffering,
-				 * 0 for no buffering
-				 */
-	uint8_t labelio;	/* 1 for labelling output with the task id */
-
 	pthread_t      ioid;  /* pthread id of IO thread                    */
 	pthread_t      msgid; /* pthread id of message thread               */
 	eio_handle_t  *msg_handle; /* eio handle for the message thread     */
 
 	pid_t          jmgr_pid;     /* job manager pid                     */
 	pid_t          pgid;         /* process group id for tasks          */
-
-	uint16_t       task_flags;
-	uint16_t       multi_prog;
+	uint32_t       flags;        /* See LAUNCH_* flags defined in slurm_protocol_defs.h */
 	uint16_t       overcommit;
 	env_t          *envtp;
 	uint64_t       cont_id;
@@ -215,7 +217,6 @@ typedef struct {
 	char          *batchdir;
 	jobacctinfo_t *jobacct;
 	uint8_t        open_mode;	/* stdout/err append or truncate */
-	uint8_t        pty;		/* set if creating pseudo tty	*/
 	job_options_t  options;
 	char          *ckpt_dir;
 	time_t         ckpt_timestamp;
@@ -232,16 +233,27 @@ typedef struct {
 					  * POINTER. */
 	mpmd_set_t     *mpmd_set;	/* MPMD specifications for Cray */
 	uint16_t	job_core_spec;	/* count of specialized cores */
+	int		non_smp;	/* Set if task IDs are not monotonically
+					 * increasing across all nodes, set only
+					 * native Cray systems */
+	bool		oom_error;	/* step out of memory error */
+
+	uint16_t x11;			/* only set for extern step */
+	int x11_display;		/* display number if x11 forwarding setup */
+	char *x11_magic_cookie;		/* xauth magic cookie value */
+	char *x11_target_host;		/* remote machine to connect back to */
+	uint16_t x11_target_port;	/* remote x11 port to connect back to */
 } stepd_step_rec_t;
 
 
-stepd_step_rec_t * stepd_step_rec_create(launch_tasks_request_msg_t *msg);
+stepd_step_rec_t * stepd_step_rec_create(launch_tasks_request_msg_t *msg,
+					 uint16_t protocol_version);
 stepd_step_rec_t * batch_stepd_step_rec_create(batch_job_launch_msg_t *msg);
 
 void stepd_step_rec_destroy(stepd_step_rec_t *job);
 
 srun_info_t * srun_info_create(slurm_cred_t *cred, slurm_addr_t *respaddr,
-				    slurm_addr_t *ioaddr);
+			       slurm_addr_t *ioaddr, uint16_t protocol_version);
 
 void  srun_info_destroy(srun_info_t *srun);
 
@@ -258,6 +270,10 @@ static inline stepd_step_task_info_t *
 job_task_info_by_pid (stepd_step_rec_t *job, pid_t pid)
 {
 	uint32_t i;
+
+	if (!job)
+		return NULL;
+
 	for (i = 0; i < job->node_tasks; i++) {
 		if (job->task[i]->pid == pid)
 			return (job->task[i]);

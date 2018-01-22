@@ -1,6 +1,5 @@
 /*****************************************************************************\
  *  debugger.c - Definitions needed for parallel debugger
- *  $Id: debugger.c 11149 2007-03-14 20:53:19Z morrone $
  *****************************************************************************
  *  Copyright (C) 2002-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
@@ -9,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -38,15 +37,11 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#if defined(__FreeBSD__)
+#include "config.h"
+
 #include <signal.h>
-#endif
 
-#if HAVE_CONFIG_H
-#  include "config.h"
-#endif
-
-#if defined HAVE_BG_FILES && !defined HAVE_BG_L_P
+#if defined HAVE_BG_FILES
 /* Use symbols from the runjob.so library provided by IBM.
  * Do NOT use debugger symbols local to the srun command */
 
@@ -63,11 +58,13 @@
  */
 MPIR_PROCDESC *MPIR_proctable;
 int MPIR_proctable_size;
-VOLATILE int MPIR_debug_state;
+volatile int MPIR_debug_state;
 int MPIR_being_debugged;
 int MPIR_i_am_starter;
 int MPIR_acquired_pre_main;
 char *totalview_jobid;
+char *totalview_stepid;
+
 #ifdef DEBUGGER_PARTIAL_ATTACH
   int MPIR_partial_attach_ok;
 #endif

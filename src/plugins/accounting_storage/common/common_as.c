@@ -1,7 +1,5 @@
 /*****************************************************************************\
  *  common_as.c - common functions for accounting storage
- *
- *  $Id: common_as.c 13061 2008-01-22 21:23:56Z da $
  *****************************************************************************
  *  Copyright (C) 2004-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
@@ -9,7 +7,7 @@
  *  Written by Danny Auble <da@llnl.gov>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -38,29 +36,35 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#include <strings.h>
+#include <fcntl.h>
+#include <string.h>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
-#include <fcntl.h>
+
+#include "src/common/env.h"
 #include "src/common/slurmdbd_defs.h"
 #include "src/common/slurm_auth.h"
+#include "src/common/slurm_time.h"
 #include "src/common/xstring.h"
-#include "src/common/env.h"
 #include "src/slurmdbd/read_config.h"
 #include "common_as.h"
 
-extern char *assoc_hour_table;
 extern char *assoc_day_table;
+extern char *assoc_hour_table;
 extern char *assoc_month_table;
 
-extern char *cluster_hour_table;
 extern char *cluster_day_table;
+extern char *cluster_hour_table;
 extern char *cluster_month_table;
 
-extern char *wckey_hour_table;
 extern char *wckey_day_table;
+extern char *wckey_hour_table;
 extern char *wckey_month_table;
+
+#ifndef NDEBUG
+extern __thread bool drop_priv;
+#endif
 
 /*
  * We want SLURMDB_MODIFY_ASSOC always to be the last
@@ -81,7 +85,7 @@ static int _sort_update_object_dec(void *a, void *b)
 
 static void _dump_slurmdb_assoc_records(List assoc_list)
 {
-	slurmdb_association_rec_t *assoc = NULL;
+	slurmdb_assoc_rec_t *assoc = NULL;
 	ListIterator itr = NULL;
 
 	itr = list_iterator_create(assoc_list);
@@ -136,15 +140,21 @@ static void _dump_slurmdb_res_records(List res_list)
  * RET: error code
  *
  * NOTE: This function will take the object given and free it later so it
- *       needed to be removed from a list if in one before.
+ *       needs to be removed from a existing lists prior.
  */
 extern int addto_update_list(List update_list, slurmdb_update_type_t type,
 			     void *object)
 {
 	slurmdb_update_object_t *update_object = NULL;
-	slurmdb_association_rec_t *assoc = object;
+	slurmdb_assoc_rec_t *assoc = object;
 	slurmdb_qos_rec_t *qos = object;
+#ifndef NDEBUG
+	slurmdb_tres_rec_t *tres = object;
+	slurmdb_res_rec_t *res = object;
+	slurmdb_wckey_rec_t *wckey = object;
+#endif
 	ListIterator itr = NULL;
+
 	if (!update_list) {
 		error("no update list given");
 		return SLURM_ERROR;
@@ -161,7 +171,11 @@ extern int addto_update_list(List update_list, slurmdb_update_type_t type,
 		/* here we prepend primarly for remove association
 		   since parents need to be removed last, and they are
 		   removed first in the calling code */
-		list_prepend(update_object->objects, object);
+		if (type == SLURMDB_UPDATE_FEDS) {
+			FREE_NULL_LIST(update_object->objects);
+			update_object->objects = object;
+		} else
+			list_prepend(update_object->objects, object);
 		return SLURM_SUCCESS;
 	}
 
@@ -181,86 +195,52 @@ extern int addto_update_list(List update_list, slurmdb_update_type_t type,
 	case SLURMDB_REMOVE_COORD:
 		update_object->objects = list_create(slurmdb_destroy_user_rec);
 		break;
+	case SLURMDB_ADD_TRES:
+		xassert(tres->id);
+		update_object->objects = list_create(slurmdb_destroy_tres_rec);
+		break;
 	case SLURMDB_ADD_ASSOC:
 		/* We are going to send these to the slurmctld's so
-		   lets set up the correct limits to INIFINITE instead
+		   lets set up the correct limits to INFINITE instead
 		   of NO_VAL */
-		if (assoc->grp_cpu_mins == (uint64_t)NO_VAL)
-			assoc->grp_cpu_mins = (uint64_t)INFINITE;
-		if (assoc->grp_cpu_run_mins == (uint64_t)NO_VAL)
-			assoc->grp_cpu_run_mins = (uint64_t)INFINITE;
-		if (assoc->grp_cpus == NO_VAL)
-			assoc->grp_cpus = INFINITE;
 		if (assoc->grp_jobs == NO_VAL)
 			assoc->grp_jobs = INFINITE;
-		if (assoc->grp_mem == NO_VAL)
-			assoc->grp_mem = INFINITE;
-		if (assoc->grp_nodes == NO_VAL)
-			assoc->grp_nodes = INFINITE;
 		if (assoc->grp_submit_jobs == NO_VAL)
 			assoc->grp_submit_jobs = INFINITE;
 		if (assoc->grp_wall == NO_VAL)
 			assoc->grp_wall = INFINITE;
 
-		if (assoc->max_cpu_mins_pj == (uint64_t)NO_VAL)
-			assoc->max_cpu_mins_pj = (uint64_t)INFINITE;
-		if (assoc->max_cpu_run_mins == (uint64_t)NO_VAL)
-			assoc->max_cpu_run_mins = (uint64_t)INFINITE;
-		if (assoc->max_cpus_pj == NO_VAL)
-			assoc->max_cpus_pj = INFINITE;
 		if (assoc->max_jobs == NO_VAL)
 			assoc->max_jobs = INFINITE;
-		if (assoc->max_nodes_pj == NO_VAL)
-			assoc->max_nodes_pj = INFINITE;
 		if (assoc->max_submit_jobs == NO_VAL)
 			assoc->max_submit_jobs = INFINITE;
 		if (assoc->max_wall_pj == NO_VAL)
 			assoc->max_wall_pj = INFINITE;
+		/* fall through */
 	case SLURMDB_MODIFY_ASSOC:
 	case SLURMDB_REMOVE_ASSOC:
-		xassert(((slurmdb_association_rec_t *)object)->cluster);
+		xassert(assoc->cluster);
 		update_object->objects = list_create(
-			slurmdb_destroy_association_rec);
+			slurmdb_destroy_assoc_rec);
 		break;
 	case SLURMDB_ADD_QOS:
 		/* We are going to send these to the slurmctld's so
-		   lets set up the correct limits to INIFINITE instead
+		   lets set up the correct limits to INFINITE instead
 		   of NO_VAL */
-		if (qos->grp_cpu_mins == (uint64_t)NO_VAL)
-			qos->grp_cpu_mins = (uint64_t)INFINITE;
-		if (qos->grp_cpu_run_mins == (uint64_t)NO_VAL)
-			qos->grp_cpu_run_mins = (uint64_t)INFINITE;
-		if (qos->grp_cpus == NO_VAL)
-			qos->grp_cpus = INFINITE;
 		if (qos->grp_jobs == NO_VAL)
 			qos->grp_jobs = INFINITE;
-		if (qos->grp_mem == NO_VAL)
-			qos->grp_mem = INFINITE;
-		if (qos->grp_nodes == NO_VAL)
-			qos->grp_nodes = INFINITE;
 		if (qos->grp_submit_jobs == NO_VAL)
 			qos->grp_submit_jobs = INFINITE;
 		if (qos->grp_wall == NO_VAL)
 			qos->grp_wall = INFINITE;
 
-		if (qos->max_cpu_mins_pj == (uint64_t)NO_VAL)
-			qos->max_cpu_mins_pj = (uint64_t)INFINITE;
-		if (qos->max_cpu_run_mins_pu == (uint64_t)NO_VAL)
-			qos->max_cpu_run_mins_pu = (uint64_t)INFINITE;
-		if (qos->max_cpus_pj == NO_VAL)
-			qos->max_cpus_pj = INFINITE;
-		if (qos->max_cpus_pu == NO_VAL)
-			qos->max_cpus_pu = INFINITE;
 		if (qos->max_jobs_pu == NO_VAL)
 			qos->max_jobs_pu = INFINITE;
-		if (qos->max_nodes_pj == NO_VAL)
-			qos->max_nodes_pj = INFINITE;
-		if (qos->max_nodes_pu == NO_VAL)
-			qos->max_nodes_pu = INFINITE;
 		if (qos->max_submit_jobs_pu == NO_VAL)
 			qos->max_submit_jobs_pu = INFINITE;
 		if (qos->max_wall_pj == NO_VAL)
 			qos->max_wall_pj = INFINITE;
+		/* fall through */
 	case SLURMDB_MODIFY_QOS:
 	case SLURMDB_REMOVE_QOS:
 		update_object->objects = list_create(
@@ -269,7 +249,7 @@ extern int addto_update_list(List update_list, slurmdb_update_type_t type,
 	case SLURMDB_ADD_WCKEY:
 	case SLURMDB_MODIFY_WCKEY:
 	case SLURMDB_REMOVE_WCKEY:
-		xassert(((slurmdb_wckey_rec_t *)object)->cluster);
+		xassert(wckey->cluster);
 		update_object->objects = list_create(
 			slurmdb_destroy_wckey_rec);
 		break;
@@ -281,14 +261,18 @@ extern int addto_update_list(List update_list, slurmdb_update_type_t type,
 		update_object->objects = list_create(slurm_destroy_char);
 		break;
 	case SLURMDB_ADD_RES:
-		xassert(((slurmdb_res_rec_t *)object)->name);
-		xassert(((slurmdb_res_rec_t *)object)->server);
+		xassert(res->name);
+		xassert(res->server);
+		/* fall through */
 	case SLURMDB_MODIFY_RES:
 	case SLURMDB_REMOVE_RES:
-		xassert(((slurmdb_res_rec_t *)object)->id != NO_VAL);
+		xassert(res->id != NO_VAL);
 		update_object->objects = list_create(
 			slurmdb_destroy_res_rec);
 		break;
+	case SLURMDB_UPDATE_FEDS:
+		update_object->objects = object;
+		return SLURM_SUCCESS;
 	case SLURMDB_UPDATE_NOTSET:
 	default:
 		error("unknown type set in update_object: %d", type);
@@ -324,11 +308,17 @@ extern void dump_update_list(List update_list)
 		case SLURMDB_REMOVE_COORD:
 			debug3("\tUSER RECORDS");
 			break;
+		case SLURMDB_ADD_TRES:
+			debug3("\tTRES RECORDS");
+			break;
 		case SLURMDB_ADD_ASSOC:
 		case SLURMDB_MODIFY_ASSOC:
 		case SLURMDB_REMOVE_ASSOC:
 			debug3("\tASSOC RECORDS");
 			_dump_slurmdb_assoc_records(object->objects);
+			break;
+		case SLURMDB_UPDATE_FEDS:
+			debug3("\tFEDERATION RECORDS");
 			break;
 		case SLURMDB_ADD_QOS:
 		case SLURMDB_MODIFY_QOS:
@@ -370,7 +360,7 @@ extern void dump_update_list(List update_list)
 extern int cluster_first_reg(char *host, uint16_t port, uint16_t rpc_version)
 {
 	slurm_addr_t ctld_address;
-	slurm_fd_t fd;
+	int fd;
 	int rc = SLURM_SUCCESS;
 
 	info("First time to register cluster requesting "
@@ -400,7 +390,7 @@ extern int cluster_first_reg(char *host, uint16_t port, uint16_t rpc_version)
 		 * for an arbitray fd or should these be fire
 		 * and forget?  For this, that we can probably
 		 * forget about it */
-		slurm_close_stream(fd);
+		close(fd);
 	}
 	return rc;
 }
@@ -414,7 +404,8 @@ extern int cluster_first_reg(char *host, uint16_t port, uint16_t rpc_version)
  * IN/OUT usage_end: end time
  * RET: error code
  */
-extern int set_usage_information(char **usage_table, slurmdbd_msg_type_t type,
+extern int set_usage_information(char **usage_table,
+				 slurmdbd_msg_type_t type,
 				 time_t *usage_start, time_t *usage_end)
 {
 	time_t start = (*usage_start), end = (*usage_end);
@@ -425,14 +416,14 @@ extern int set_usage_information(char **usage_table, slurmdbd_msg_type_t type,
 
 	/* Default is going to be the last day */
 	if (!end) {
-		if (!localtime_r(&my_time, &end_tm)) {
+		if (!slurm_localtime_r(&my_time, &end_tm)) {
 			error("Couldn't get localtime from end %ld",
 			      my_time);
 			return SLURM_ERROR;
 		}
 		end_tm.tm_hour = 0;
 	} else {
-		if (!localtime_r(&end, &end_tm)) {
+		if (!slurm_localtime_r(&end, &end_tm)) {
 			error("Couldn't get localtime from user end %ld",
 			      end);
 			return SLURM_ERROR;
@@ -441,10 +432,10 @@ extern int set_usage_information(char **usage_table, slurmdbd_msg_type_t type,
 	end_tm.tm_sec = 0;
 	end_tm.tm_min = 0;
 	end_tm.tm_isdst = -1;
-	end = mktime(&end_tm);
+	end = slurm_mktime(&end_tm);
 
 	if (!start) {
-		if (!localtime_r(&my_time, &start_tm)) {
+		if (!slurm_localtime_r(&my_time, &start_tm)) {
 			error("Couldn't get localtime from start %ld",
 			      my_time);
 			return SLURM_ERROR;
@@ -452,7 +443,7 @@ extern int set_usage_information(char **usage_table, slurmdbd_msg_type_t type,
 		start_tm.tm_hour = 0;
 		start_tm.tm_mday--;
 	} else {
-		if (!localtime_r(&start, &start_tm)) {
+		if (!slurm_localtime_r(&start, &start_tm)) {
 			error("Couldn't get localtime from user start %ld",
 			      start);
 			return SLURM_ERROR;
@@ -461,11 +452,11 @@ extern int set_usage_information(char **usage_table, slurmdbd_msg_type_t type,
 	start_tm.tm_sec = 0;
 	start_tm.tm_min = 0;
 	start_tm.tm_isdst = -1;
-	start = mktime(&start_tm);
+	start = slurm_mktime(&start_tm);
 
 	if (end-start < 3600) {
 		end = start + 3600;
-		if (!localtime_r(&end, &end_tm)) {
+		if (!slurm_localtime_r(&end, &end_tm)) {
 			error("2 Couldn't get localtime from user end %ld",
 			      end);
 			return SLURM_ERROR;
@@ -492,7 +483,7 @@ extern int set_usage_information(char **usage_table, slurmdbd_msg_type_t type,
 			     slurmdbd_msg_type_2_str(type, 1));
 			break;
 		}
-	} else if (start_tm.tm_mday == 0 && end_tm.tm_mday == 0
+	} else if (start_tm.tm_mday == 1 && end_tm.tm_mday == 1
 		  && (end-start > 86400)) {
 		switch (type) {
 		case DBD_GET_ASSOC_USAGE:
@@ -514,6 +505,7 @@ extern int set_usage_information(char **usage_table, slurmdbd_msg_type_t type,
 	(*usage_start) = start;
 	(*usage_end) = end;
 	(*usage_table) = my_usage_table;
+
 	return SLURM_SUCCESS;
 }
 
@@ -533,7 +525,7 @@ extern void merge_delta_qos_list(List qos_list, List delta_qos_list)
 	while((new_qos = list_next(new_itr))) {
 		if (new_qos[0] == '-') {
 			while((curr_qos = list_next(curr_itr))) {
-				if (!strcmp(curr_qos, new_qos+1)) {
+				if (!xstrcmp(curr_qos, new_qos+1)) {
 					list_delete_item(curr_itr);
 					break;
 				}
@@ -541,7 +533,7 @@ extern void merge_delta_qos_list(List qos_list, List delta_qos_list)
 			list_iterator_reset(curr_itr);
 		} else if (new_qos[0] == '+') {
 			while((curr_qos = list_next(curr_itr))) {
-				if (!strcmp(curr_qos, new_qos+1)) {
+				if (!xstrcmp(curr_qos, new_qos+1)) {
 					break;
 				}
 			}
@@ -563,6 +555,10 @@ extern bool is_user_min_admin_level(void *db_conn, uid_t uid,
 	 * THERE IS NO AUTHENTICATION WHEN RUNNNING OUT OF THE
 	 * SLURMDBD!
 	 */
+#ifndef NDEBUG
+	if (drop_priv)
+		return false;
+#endif
 	if (slurmdbd_conf) {
 		/* We have to check the authentication here in the
 		 * plugin since we don't know what accounts are being
@@ -571,7 +567,7 @@ extern bool is_user_min_admin_level(void *db_conn, uid_t uid,
 		if ((uid != slurmdbd_conf->slurm_user_id && uid != 0)
 		   && assoc_mgr_get_admin_level(db_conn, uid) < min_level)
 			is_admin = 0;
-	} else if (uid != 0)
+	} else if ((uid != 0) && (uid != slurmctld_conf.slurm_user_id))
 		is_admin = 0;
 
 	return is_admin;
@@ -590,7 +586,7 @@ extern bool is_user_coord(slurmdb_user_rec_t *user, char *account)
 
 	itr = list_iterator_create(user->coord_accts);
 	while((coord = list_next(itr))) {
-		if (!strcasecmp(coord->name, account))
+		if (!xstrcasecmp(coord->name, account))
 			break;
 	}
 	list_iterator_destroy(itr);
@@ -655,8 +651,8 @@ extern time_t archive_setup_end_time(time_t last_submit, uint32_t purge)
 		return 0;
 	}
 
-	/* use localtime to avoid any daylight savings issues */
-	if (!localtime_r(&last_submit, &time_tm)) {
+	/* use slurm_localtime to avoid any daylight savings issues */
+	if (!slurm_localtime_r(&last_submit, &time_tm)) {
 		error("Couldn't get localtime from first "
 		      "suspend start %ld", (long)last_submit);
 		return 0;
@@ -682,7 +678,7 @@ extern time_t archive_setup_end_time(time_t last_submit, uint32_t purge)
 	}
 
 	time_tm.tm_isdst = -1;
-	return (mktime(&time_tm) - 1);
+	return (slurm_mktime(&time_tm) - 1);
 }
 
 
@@ -696,7 +692,6 @@ extern int archive_run_script(slurmdb_archive_cond_t *arch_cond,
 	time_t curr_end;
 
 	if (stat(arch_cond->archive_script, &st) < 0) {
-		errno = errno;
 		error("archive_run_script: failed to stat %s: %m",
 		      arch_cond->archive_script);
 		return SLURM_ERROR;
@@ -790,6 +785,34 @@ extern int archive_run_script(slurmdb_archive_cond_t *arch_cond,
 				     (long)curr_end);
 	}
 
+	if (arch_cond->purge_txn != NO_VAL) {
+		if (!(curr_end = archive_setup_end_time(
+			     last_submit, arch_cond->purge_txn))) {
+			error("Parsing purge txn");
+			return SLURM_ERROR;
+		}
+
+		env_array_append_fmt(&env, "SLURM_ARCHIVE_TXN", "%u",
+				     SLURMDB_PURGE_ARCHIVE_SET(
+					     arch_cond->purge_txn));
+		env_array_append_fmt(&env, "SLURM_ARCHIVE_LAST_TXN", "%ld",
+				     (long)curr_end);
+	}
+
+	if (arch_cond->purge_usage != NO_VAL) {
+		if (!(curr_end = archive_setup_end_time(
+			     last_submit, arch_cond->purge_usage))) {
+			error("Parsing purge usage");
+			return SLURM_ERROR;
+		}
+
+		env_array_append_fmt(&env, "SLURM_ARCHIVE_USAGE", "%u",
+				     SLURMDB_PURGE_ARCHIVE_SET(
+					     arch_cond->purge_usage));
+		env_array_append_fmt(&env, "SLURM_ARCHIVE_LAST_USAGE", "%ld",
+				     (long)curr_end);
+	}
+
 #ifdef _PATH_STDPATH
 	env_array_append (&env, "PATH", _PATH_STDPATH);
 #else
@@ -810,7 +833,7 @@ static char *_make_archive_name(time_t period_start, time_t period_end,
 	char start_char[32];
 	char end_char[32];
 
-	localtime_r((time_t *)&period_start, &time_tm);
+	slurm_localtime_r((time_t *)&period_start, &time_tm);
 	time_tm.tm_sec = 0;
 	time_tm.tm_min = 0;
 
@@ -833,7 +856,7 @@ static char *_make_archive_name(time_t period_start, time_t period_end,
 		 time_tm.tm_min,
 		 time_tm.tm_sec);
 
-	localtime_r((time_t *)&period_end, &time_tm);
+	slurm_localtime_r((time_t *)&period_end, &time_tm);
 	snprintf(end_char, sizeof(end_char),
 		 "%4.4u-%2.2u-%2.2u"
 		 "T%2.2u:%2.2u:%2.2u",

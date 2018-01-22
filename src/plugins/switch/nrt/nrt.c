@@ -9,7 +9,7 @@
  *  Largely re-written for NRT support by Morris Jette <jette@schedmd.com>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -50,28 +50,21 @@
  *  put SLURM's libpermapi.so in /usr/lib64. IBM to address later.
 \*****************************************************************************/
 
+#include "config.h"
+
 #include <assert.h>
+#include <arpa/inet.h>
 #include <dlfcn.h>
+#include <nrt.h>
 #include <pthread.h>
 #include <stdlib.h>
-
-#if HAVE_CONFIG_H
-#  include "config.h"
-#endif
-
-#if HAVE_NRT_H
-# include <nrt.h>
-#else
-# error "Must have nrt.h to compile this module!"
-#endif
-
-#include <arpa/inet.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 
 #include "slurm/slurm_errno.h"
 #include "src/common/slurm_xlator.h"
+#include "src/common/strlcpy.h"
 #include "src/common/read_config.h"
 #include "src/common/node_conf.h"
 #include "src/plugins/switch/nrt/nrt_keys.h"
@@ -303,7 +296,6 @@ static int	_job_step_window_state(slurm_nrt_jobinfo_t *jp,
 				       hostlist_t hl, win_state_t state);
 static int	_load_min_window_id(char *adapter_name,
 				    nrt_adapter_t adapter_type);
-static void	_lock(void);
 static nrt_job_key_t _next_key(void);
 static int	_pack_libstate(slurm_nrt_libstate_t *lp, Buf buffer,
 			       uint16_t protocol_version);
@@ -314,7 +306,6 @@ static char *	_state_str(win_state_t state);
 static int	_unload_window_all_jobs(char *adapter_name,
 					nrt_adapter_t adapter_type,
 					nrt_window_id_t window_id);
-static void	_unlock(void);
 static int	_unpack_libstate(slurm_nrt_libstate_t *lp, Buf buffer);
 static int	_unpack_nodeinfo(slurm_nrt_nodeinfo_t *n, Buf buf,
 				 bool believe_window_status,
@@ -332,29 +323,6 @@ static int	_wait_job(nrt_job_key_t job_key,preemption_state_t want_state,
 static char *	_win_state_str(win_state_t state);
 static int	_window_state_set(slurm_nrt_jobinfo_t *jp, char *hostname,
 				  win_state_t state);
-/* The _lock() and _unlock() functions are used to lock/unlock a
- * global mutex.  Used to serialize access to the global library
- * state variable nrt_state.
- */
-static void
-_lock(void)
-{
-	int err = 1;
-
-	while (err) {
-		err = pthread_mutex_lock(&global_lock);
-	}
-}
-
-static void
-_unlock(void)
-{
-	int err = 1;
-
-	while (err) {
-		err = pthread_mutex_unlock(&global_lock);
-	}
-}
 
 /* The lid caching functions were created to avoid unnecessary
  * function calls each time we need to load network tables on a node.
@@ -425,7 +393,7 @@ _fill_in_adapter_cache(void)
 			}
 			lid_cache[lid_cache_size].adapter_type = adapter_names.
 								 adapter_type;
-			strncpy(lid_cache[lid_cache_size].adapter_name,
+			strlcpy(lid_cache[lid_cache_size].adapter_name,
 				adapter_names.adapter_names[j],
 				NRT_MAX_ADAPTER_NAME_LEN);
 			lid_cache_size++;
@@ -485,7 +453,7 @@ _find_node(slurm_nrt_libstate_t *lp, char *name)
 		n = lp->hash_table[i];
 		while (n) {
 			xassert(n->magic == NRT_NODEINFO_MAGIC);
-			if (!strncmp(n->name, name, NRT_HOSTLEN))
+			if (!xstrncmp(n->name, name, NRT_HOSTLEN))
 				return n;
 			n = n->next;
 		}
@@ -498,8 +466,8 @@ _find_node(slurm_nrt_libstate_t *lp, char *name)
 		n = lp->hash_table[i];
 		while (n) {
 			xassert(n->magic == NRT_NODEINFO_MAGIC);
-			if (!strncmp(n->name, node_ptr->node_hostname,
-				     NRT_HOSTLEN))
+			if (!xstrncmp(n->name, node_ptr->node_hostname,
+				      NRT_HOSTLEN))
 				return n;
 			n = n->next;
 		}
@@ -642,7 +610,7 @@ _job_step_window_state(slurm_nrt_jobinfo_t *jp, hostlist_t hl,
 
 	if ((jp == NULL) || (jp->magic == NRT_NULL_MAGIC)) {
 		debug2("(%s: %d: %s) job->switch_job was NULL",
-		       THIS_FILE, __LINE__, __FUNCTION__);
+		       THIS_FILE, __LINE__, __func__);
 		return SLURM_ERROR;
 	}
 
@@ -656,13 +624,13 @@ _job_step_window_state(slurm_nrt_jobinfo_t *jp, hostlist_t hl,
 		return SLURM_SUCCESS;
 
 	hi = hostlist_iterator_create(hl);
-	_lock();
+	slurm_mutex_lock(&global_lock);
 	while ((host = hostlist_next(hi))) {
 		err = _window_state_set(jp, host, state);
 		rc = MAX(rc, err);
 		free(host);
 	}
-	_unlock();
+	slurm_mutex_unlock(&global_lock);
 	hostlist_iterator_destroy(hi);
 
 	return rc;
@@ -729,8 +697,8 @@ _window_state_set(slurm_nrt_jobinfo_t *jp, char *hostname, win_state_t state)
 		/* Find the adapter that matches the one in tableinfo */
 		for (j = 0; j < node->adapter_count; j++) {
 			adapter = &node->adapter_list[j];
-			if (strcasecmp(adapter->adapter_name,
-				       tableinfo[i].adapter_name))
+			if (xstrcasecmp(adapter->adapter_name,
+					tableinfo[i].adapter_name))
 				continue;
 			for (task_id = 0; task_id < tableinfo[i].table_length;
 			     task_id++) {
@@ -779,7 +747,9 @@ _window_state_set(slurm_nrt_jobinfo_t *jp, char *hostname, win_state_t state)
 						       hfi_tbl_ptr->win_id,
 						       task_id);
 					}
-				} else if ((adapter->adapter_type==NRT_HPCE) ||
+				}
+#if NRT_VERSION < 1300
+				else if ((adapter->adapter_type==NRT_HPCE) ||
 					   (adapter->adapter_type==NRT_KMUX)) {
 					nrt_hpce_task_info_t *hpce_tbl_ptr;
 					hpce_tbl_ptr  = tableinfo[i].table;
@@ -802,7 +772,9 @@ _window_state_set(slurm_nrt_jobinfo_t *jp, char *hostname, win_state_t state)
 						       hpce_tbl_ptr->win_id,
 						       task_id);
 					}
-				} else {
+				}
+#endif
+				else {
 					error("switch/nrt: _window_state_set:"
 					      " Missing support for adapter "
 					      "type %s",
@@ -886,7 +858,7 @@ _alloc_node(slurm_nrt_libstate_t *lp, char *name)
 			  sizeof(struct slurm_nrt_adapter));
 
 	if (name != NULL) {
-		strncpy(n->name, name, NRT_HOSTLEN);
+		strlcpy(n->name, name, NRT_HOSTLEN);
 		if (need_hash_rebuild || (lp->node_count > lp->hash_max))
 			_hash_rebuild(lp);
 		else
@@ -928,8 +900,10 @@ static void _table_alloc(nrt_tableinfo_t *tableinfo, int table_inx,
 		table_size = sizeof(nrt_hfi_task_info_t);
 	else if (adapter_type == NRT_IPONLY)
 		table_size = sizeof(nrt_ip_task_info_t);
+#if NRT_VERSION < 1300
 	else if ((adapter_type == NRT_HPCE) || (adapter_type == NRT_KMUX))
 		table_size = sizeof(nrt_hpce_task_info_t);
+#endif
 	else {
 		error("Missing support for adapter type %s",
 		      _adapter_type_str(adapter_type));
@@ -1224,7 +1198,7 @@ _allocate_windows_all(slurm_nrt_jobinfo_t *jp, char *hostname,
 					ib_table = (nrt_ib_task_info_t *)
 						   tableinfo[table_inx].table;
 					ib_table += task_id;
-					strncpy(ib_table->device_name,
+					strlcpy(ib_table->device_name,
 						adapter->adapter_name,
 						NRT_MAX_DEVICENAME_SIZE);
 					ib_table->base_lid = adapter->lid;
@@ -1244,7 +1218,9 @@ _allocate_windows_all(slurm_nrt_jobinfo_t *jp, char *hostname,
 					hfi_table->lpar_id = adapter->special;
 					hfi_table->task_id = task_id;
 					hfi_table->win_id = window->window_id;
-				} else if ((adapter->adapter_type == NRT_HPCE)||
+				}
+#if NRT_VERSION < 1300
+				else if ((adapter->adapter_type == NRT_HPCE)||
 					   (adapter->adapter_type == NRT_KMUX)){
 					nrt_hpce_task_info_t *hpce_table;
 					_table_alloc(tableinfo, table_inx,
@@ -1255,7 +1231,9 @@ _allocate_windows_all(slurm_nrt_jobinfo_t *jp, char *hostname,
 					hpce_table->node_number = node_number;
 					hpce_table->task_id = task_id;
 					hpce_table->win_id = window->window_id;
-				} else {
+				}
+#endif
+				else {
 					error("switch/nrt: Missing support "
 					      "for adapter type %s",
 					      _adapter_type_str(adapter->
@@ -1263,14 +1241,14 @@ _allocate_windows_all(slurm_nrt_jobinfo_t *jp, char *hostname,
 					goto alloc_fail;
 				}
 
-				strncpy(tableinfo[table_inx].adapter_name,
+				strlcpy(tableinfo[table_inx].adapter_name,
 					adapter->adapter_name,
 					NRT_MAX_ADAPTER_NAME_LEN);
 				tableinfo[table_inx].adapter_type = adapter->
 								    adapter_type;
 				tableinfo[table_inx].network_id = adapter->
 								  network_id;
-				strncpy(tableinfo[table_inx].protocol_name,
+				strlcpy(tableinfo[table_inx].protocol_name,
 					protocol_table->
 					protocol_table[context_id].
 					protocol_name,
@@ -1347,8 +1325,8 @@ _allocate_window_single(char *adapter_name, slurm_nrt_jobinfo_t *jp,
 		debug2("adapter %s at index %d",
 		       node->adapter_list[i].adapter_name, i);
 		if (adapter_name) {
-			if (!strcasecmp(node->adapter_list[i].adapter_name,
-					adapter_name)) {
+			if (!xstrcasecmp(node->adapter_list[i].adapter_name,
+					 adapter_name)) {
 				adapter = &node->adapter_list[i];
 				break;
 			}
@@ -1416,7 +1394,7 @@ _allocate_window_single(char *adapter_name, slurm_nrt_jobinfo_t *jp,
 				ib_table = (nrt_ib_task_info_t *)
 					   tableinfo[table_inx].table;
 				ib_table += task_id;
-				strncpy(ib_table->device_name, adapter_name,
+				strlcpy(ib_table->device_name, adapter_name,
 					NRT_MAX_DEVICENAME_SIZE);
 				ib_table->base_lid = adapter->lid;
 				ib_table->port_id  = 1;
@@ -1435,7 +1413,9 @@ _allocate_window_single(char *adapter_name, slurm_nrt_jobinfo_t *jp,
 				hfi_table->lpar_id = adapter->special;
 				hfi_table->task_id = task_id;
 				hfi_table->win_id = window->window_id;
-			} else if ((adapter_type == NRT_HPCE) ||
+			}
+#if NRT_VERSION < 1300
+			else if ((adapter_type == NRT_HPCE) ||
 				   (adapter_type == NRT_KMUX)) {
 				nrt_hpce_task_info_t *hpce_table;
 				_table_alloc(tableinfo, table_inx,
@@ -1445,18 +1425,20 @@ _allocate_window_single(char *adapter_name, slurm_nrt_jobinfo_t *jp,
 				hpce_table += task_id;
 				hpce_table->task_id = task_id;
 				hpce_table->win_id = window->window_id;
-			} else {
+			}
+#endif
+			else {
 				error("Missing support for adapter type %s",
 				      _adapter_type_str(adapter_type));
 				goto alloc_fail;
 			}
 
-			strncpy(tableinfo[table_inx].adapter_name, adapter_name,
+			strlcpy(tableinfo[table_inx].adapter_name, adapter_name,
 				NRT_MAX_ADAPTER_NAME_LEN);
 			tableinfo[table_inx].adapter_type = adapter->
 							    adapter_type;
 			tableinfo[table_inx].network_id = adapter->network_id;
-			strncpy(tableinfo[table_inx].protocol_name,
+			strlcpy(tableinfo[table_inx].protocol_name,
 				protocol_table->protocol_table[context_id].
 				protocol_name,
 				NRT_MAX_PROTO_NAME_LEN);
@@ -1509,10 +1491,12 @@ _adapter_type_str(nrt_adapter_t type)
 		return "HFI";
 	case NRT_IPONLY:
 		return "IP_ONLY";
+#if NRT_VERSION < 1300
 	case NRT_HPCE:
 		return "HPC_Ethernet";
 	case NRT_KMUX:
 		return "Kernel_Emulated_HPCE";
+#endif
 	default:
 		snprintf(buf, sizeof(buf), "%d", type);
 		return buf;
@@ -1774,7 +1758,9 @@ _print_table(void *table, int size, nrt_adapter_t adapter_type, bool ip_v4)
 			info("  lpar_id: %u", hfi_tbl_ptr->lpar_id);
 			info("  lid: %u", hfi_tbl_ptr->lid);
 			info("  win_id: %hu", hfi_tbl_ptr->win_id);
-		} else if ((adapter_type == NRT_HPCE) ||
+		}
+#if NRT_VERSION < 1300
+		else if ((adapter_type == NRT_HPCE) ||
 		           (adapter_type == NRT_KMUX)) {
 			nrt_hpce_task_info_t *hpce_tbl_ptr;
 			hpce_tbl_ptr = table;
@@ -1786,7 +1772,9 @@ _print_table(void *table, int size, nrt_adapter_t adapter_type, bool ip_v4)
 			info("  node_number: %s", addr_str);
 /*			info("  node_number: %u", hpce_tbl_ptr->node_number); */
 			info("  device_name: %s", hpce_tbl_ptr->device_name);
-		} else if (adapter_type == NRT_IPONLY) {
+		}
+#endif
+		else if (adapter_type == NRT_IPONLY) {
 			nrt_ip_task_info_t *ip_tbl_ptr;
 			char addr_str[128];
 			ip_tbl_ptr = table;
@@ -1824,7 +1812,7 @@ _print_jobinfo(slurm_nrt_jobinfo_t *j)
 
 	if ((j == NULL) || (j->magic == NRT_NULL_MAGIC)) {
 		debug2("(%s: %d: %s) job->switch_job was NULL",
-		       THIS_FILE, __LINE__, __FUNCTION__);
+		       THIS_FILE, __LINE__, __func__);
 		return;
 	}
 
@@ -1929,10 +1917,10 @@ nrt_init(void)
 	slurm_nrt_libstate_t *tmp;
 
 	tmp = _alloc_libstate();
-	_lock();
+	slurm_mutex_lock(&global_lock);
 	xassert(!nrt_state);
 	nrt_state = tmp;
-	_unlock();
+	slurm_mutex_unlock(&global_lock);
 
 	return SLURM_SUCCESS;
 }
@@ -2255,7 +2243,7 @@ _get_adapters(slurm_nrt_nodeinfo_t *n)
 				_print_adapter_status(&adapter_status);
 			}
 			adapter_ptr = &n->adapter_list[n->adapter_count];
-			strncpy(adapter_ptr->adapter_name,
+			strlcpy(adapter_ptr->adapter_name,
 				adapter_status.adapter_name,
 				NRT_MAX_ADAPTER_NAME_LEN);
 			adapter_ptr->adapter_type = adapter_status.
@@ -2391,10 +2379,10 @@ nrt_build_nodeinfo(slurm_nrt_nodeinfo_t *n, char *name)
 	xassert(n->magic == NRT_NODEINFO_MAGIC);
 	xassert(name);
 
-	strncpy(n->name, name, NRT_HOSTLEN);
-	_lock();
+	strlcpy(n->name, name, NRT_HOSTLEN);
+	slurm_mutex_lock(&global_lock);
 	err = _get_adapters(n);
-	_unlock();
+	slurm_mutex_unlock(&global_lock);
 
 	return err;
 }
@@ -2465,13 +2453,13 @@ _copy_node(slurm_nrt_nodeinfo_t *dest, slurm_nrt_nodeinfo_t *src)
 		_print_nodeinfo(src);
 	}
 
-	strncpy(dest->name, src->name, NRT_HOSTLEN);
+	strlcpy(dest->name, src->name, NRT_HOSTLEN);
 	dest->node_number = src->node_number;
 	dest->adapter_count = src->adapter_count;
 	for (i = 0; i < dest->adapter_count; i++) {
 		sa = src->adapter_list + i;
 		da = dest->adapter_list +i;
-		strncpy(da->adapter_name, sa->adapter_name,
+		strlcpy(da->adapter_name, sa->adapter_name,
 			NRT_MAX_ADAPTER_NAME_LEN);
 		da->adapter_type = sa->adapter_type;
 		da->cau_indexes_avail = sa->cau_indexes_avail;
@@ -2566,7 +2554,7 @@ _fake_unpack_adapters(Buf buf, slurm_nrt_nodeinfo_t *n,
 
 		for (j = 0; j < n->adapter_count; j++) {
 			tmp_a = n->adapter_list + j;
-			if (strcmp(tmp_a->adapter_name, name_ptr))
+			if (xstrcmp(tmp_a->adapter_name, name_ptr))
 				continue;
 			if (tmp_a->cau_indexes_avail != cau_indexes_avail) {
 				info("switch/nrt: resetting cau_indexes_avail "
@@ -2633,7 +2621,7 @@ _fake_unpack_adapters(Buf buf, slurm_nrt_nodeinfo_t *n,
 				 sizeof(slurm_nrt_adapter_t) *
 				 n->adapter_count);
 			tmp_a = n->adapter_list + j;
-			strncpy(tmp_a->adapter_name, name_ptr,
+			strlcpy(tmp_a->adapter_name, name_ptr,
 				NRT_MAX_ADAPTER_NAME_LEN);
 			tmp_a->adapter_type = adapter_type;
 			/* tmp_a->block_count = 0 */
@@ -2818,9 +2806,9 @@ nrt_unpack_nodeinfo(slurm_nrt_nodeinfo_t *n, Buf buf, uint16_t protocol_version)
 {
 	int rc;
 
-	_lock();
+	slurm_mutex_lock(&global_lock);
 	rc = _unpack_nodeinfo(n, buf, false, protocol_version);
-	_unlock();
+	slurm_mutex_unlock(&global_lock);
 	return rc;
 }
 
@@ -2866,7 +2854,7 @@ nrt_job_step_complete(slurm_nrt_jobinfo_t *jp, hostlist_t hl)
 	xassert(!hostlist_is_empty(hl));
 	if ((jp == NULL) || (jp->magic == NRT_NULL_MAGIC)) {
 		debug2("(%s: %d: %s) job->switch_job was NULL",
-		       THIS_FILE, __LINE__, __FUNCTION__);
+		       THIS_FILE, __LINE__, __func__);
 		return SLURM_ERROR;
 	}
 
@@ -2888,7 +2876,7 @@ nrt_job_step_complete(slurm_nrt_jobinfo_t *jp, hostlist_t hl)
 	hostlist_uniq(uniq_hl);
 	hi = hostlist_iterator_create(uniq_hl);
 
-	_lock();
+	slurm_mutex_lock(&global_lock);
 	if (nrt_state != NULL) {
 		while ((node_name = hostlist_next(hi)) != NULL) {
 			_free_resources_by_job(jp, node_name);
@@ -2902,7 +2890,7 @@ nrt_job_step_complete(slurm_nrt_jobinfo_t *jp, hostlist_t hl)
 		 */
 		debug("nrt_job_step_complete called when nrt_state == NULL");
 	}
-	_unlock();
+	slurm_mutex_unlock(&global_lock);
 
 	hostlist_iterator_destroy(hi);
 	hostlist_destroy(uniq_hl);
@@ -2949,12 +2937,12 @@ _next_key(void)
 
 	xassert(nrt_state);
 
-	_lock();
+	slurm_mutex_lock(&global_lock);
 	key = nrt_state->key_index;
 	if (key == 0)
 		key++;
 	nrt_state->key_index = (nrt_job_key_t) (key + 1);
-	_unlock();
+	slurm_mutex_unlock(&global_lock);
 
 	return key;
 }
@@ -2975,14 +2963,14 @@ static nrt_protocol_table_t *_get_protocol_table(char *protocol)
 	token = strtok_r(protocol_str, ",", &save_ptr);
 	while (token) {
 		for (i = 0; i < protocol_table->protocol_table_cnt; i++) {
-			if (!strcmp(token, protocol_table->protocol_table[i].
-					   protocol_name))
+			if (!xstrcmp(token, protocol_table->protocol_table[i].
+					    protocol_name))
 				break;
 		}
 		if ((i >= protocol_table->protocol_table_cnt) &&
 		    (i < NRT_MAX_PROTO_CNT)) {
 			/* Need to add new protocol type */
-			strncpy(protocol_table->protocol_table[i].protocol_name,
+			strlcpy(protocol_table->protocol_table[i].protocol_name,
 				token, NRT_MAX_PROTO_NAME_LEN);
 			protocol_table->protocol_table_cnt++;
 		}
@@ -3003,10 +2991,12 @@ _adapter_type_pref(nrt_adapter_t adapter_type)
 		return 8;
 	if (adapter_type == NRT_IB)
 		return 7;
+#if NRT_VERSION < 1300
 	if (adapter_type == NRT_HPCE)
 		return 6;
 	if (adapter_type == NRT_KMUX)
 		return 5;
+#endif
 	return 0;
 }
 
@@ -3040,7 +3030,7 @@ nrt_build_jobinfo(slurm_nrt_jobinfo_t *jp, hostlist_t hl,
 
 	if ((jp == NULL) || (jp->magic == NRT_NULL_MAGIC)) {
 		debug2("(%s: %d: %s) job->switch_job was NULL",
-		       THIS_FILE, __LINE__, __FUNCTION__);
+		       THIS_FILE, __LINE__, __func__);
 		return SLURM_ERROR;
 	}
 
@@ -3073,7 +3063,7 @@ nrt_build_jobinfo(slurm_nrt_jobinfo_t *jp, hostlist_t hl,
 	 */
 	hi = hostlist_iterator_create(hl);
 	host = hostlist_next(hi);
-	_lock();
+	slurm_mutex_lock(&global_lock);
 	node = _find_node(nrt_state, host);
 	if (host != NULL)
 		free(host);
@@ -3082,8 +3072,8 @@ nrt_build_jobinfo(slurm_nrt_jobinfo_t *jp, hostlist_t hl,
 			nrt_adapter_t ad_type;
 			/* Match specific adapter name */
 			if (adapter_name &&
-			    strcmp(adapter_name,
-				   node->adapter_list[i].adapter_name)) {
+			    xstrcmp(adapter_name,
+				    node->adapter_list[i].adapter_name)) {
 				continue;
 			}
 			/* Match specific adapter type (IB, HFI, etc) */
@@ -3125,7 +3115,7 @@ nrt_build_jobinfo(slurm_nrt_jobinfo_t *jp, hostlist_t hl,
 		jp->tables_per_task = 0;
 		info("switch/nrt: no adapter found for job");
 	}
-	_unlock();
+	slurm_mutex_unlock(&global_lock);
 	if (jp->tables_per_task == 0) {
 		hostlist_iterator_destroy(hi);
 		return SLURM_FAILURE;
@@ -3196,7 +3186,7 @@ nrt_build_jobinfo(slurm_nrt_jobinfo_t *jp, hostlist_t hl,
 	}
 
 	if (jp->tables_per_task) {
-		_lock();
+		slurm_mutex_lock(&global_lock);
 		for  (i = 0; i < nnodes; i++) {
 			host = hostlist_next(hi);
 			if (!host)
@@ -3221,13 +3211,13 @@ nrt_build_jobinfo(slurm_nrt_jobinfo_t *jp, hostlist_t hl,
 								instances, j);
 				}
 				if (rc != SLURM_SUCCESS) {
-					_unlock();
+					slurm_mutex_unlock(&global_lock);
 					goto fail;
 				}
 			}
 			free(host);
 		}
-		_unlock();
+		slurm_mutex_unlock(&global_lock);
 	}
 
 
@@ -3321,7 +3311,9 @@ _pack_tableinfo(nrt_tableinfo_t *tableinfo, Buf buf, slurm_nrt_jobinfo_t *jp,
 			tmp_8 = hfi_tbl_ptr->win_id;
 			pack8(tmp_8, buf);
 		}
-	} else if ((adapter_type == NRT_HPCE) || (adapter_type == NRT_KMUX)) {
+	}
+#if NRT_VERSION < 1300
+	else if ((adapter_type == NRT_HPCE) || (adapter_type == NRT_KMUX)) {
 		nrt_hpce_task_info_t *hpce_tbl_ptr;
 		for (i = 0, hpce_tbl_ptr = tableinfo->table;
 		     i < tableinfo->table_length;
@@ -3332,7 +3324,9 @@ _pack_tableinfo(nrt_tableinfo_t *tableinfo, Buf buf, slurm_nrt_jobinfo_t *jp,
 			packmem(hpce_tbl_ptr->device_name,
 				NRT_MAX_DEVICENAME_SIZE, buf);
 		}
-	} else {
+	}
+#endif
+	else {
 		error("_pack_tableinfo: Missing support for adapter type %s",
 		      _adapter_type_str(adapter_type));
 	}
@@ -3472,7 +3466,9 @@ _unpack_tableinfo(nrt_tableinfo_t *tableinfo, Buf buf, slurm_nrt_jobinfo_t *jp,
 			safe_unpack8(&tmp_8, buf);
 			hfi_tbl_ptr->win_id = tmp_8;
 		}
-	} else if ((adapter_type == NRT_HPCE) || (adapter_type == NRT_KMUX)) {
+	}
+#if NRT_VERSION < 1300
+	else if ((adapter_type == NRT_HPCE) || (adapter_type == NRT_KMUX)) {
 		nrt_hpce_task_info_t *hpce_tbl_ptr;
 		tableinfo->table = (nrt_hpce_task_info_t *)
 				   xmalloc(tableinfo->table_length *
@@ -3487,7 +3483,9 @@ _unpack_tableinfo(nrt_tableinfo_t *tableinfo, Buf buf, slurm_nrt_jobinfo_t *jp,
 			if (tmp_32 != NRT_MAX_DEVICENAME_SIZE)
 				goto unpack_error;
 		}
-	} else {
+	}
+#endif
+	else {
 		error("_unpack_tableinfo: Missing support for adapter type %s",
 		      _adapter_type_str(adapter_type));
 	}
@@ -3501,19 +3499,23 @@ unpack_error: /* safe_unpackXX are macros which jump to unpack_error */
 
 /* Used by: all */
 extern int
-nrt_unpack_jobinfo(slurm_nrt_jobinfo_t *j, Buf buf,
+nrt_unpack_jobinfo(slurm_nrt_jobinfo_t **j_pptr, Buf buf,
 		   uint16_t protocol_version)
 {
 	int i;
+	slurm_nrt_jobinfo_t *j;
 
-	xassert(j);
+	xassert(j_pptr);
 	xassert(buf);
+
+	nrt_alloc_jobinfo(j_pptr);
+	j = *j_pptr;
 
 	safe_unpack32(&j->magic, buf);
 
 	if (j->magic == NRT_NULL_MAGIC) {
 		debug2("(%s: %d: %s) Nothing to unpack.",
-		       THIS_FILE, __LINE__, __FUNCTION__);
+		       THIS_FILE, __LINE__, __func__);
 		return SLURM_SUCCESS;
 	}
 
@@ -3546,11 +3548,10 @@ nrt_unpack_jobinfo(slurm_nrt_jobinfo_t *j, Buf buf,
 
 unpack_error:
 	error("nrt_unpack_jobinfo error");
-	if (j->tableinfo) {
-		for (i = 0; i < j->tables_per_task; i++)
-			xfree(j->tableinfo[i].table);
-		xfree(j->tableinfo);
-	}
+
+	nrt_free_jobinfo(*j_pptr);
+	*j_pptr = NULL;
+
 	slurm_seterrno_ret(EUNPACK);
 	return SLURM_ERROR;
 }
@@ -3600,7 +3601,7 @@ nrt_get_jobinfo(slurm_nrt_jobinfo_t *jp, int key, void *data)
 
 	if ((jp == NULL) || (jp->magic == NRT_NULL_MAGIC)) {
 		debug2("(%s: %d: %s) job->switch_job was NULL",
-		       THIS_FILE, __LINE__, __FUNCTION__);
+		       THIS_FILE, __LINE__, __func__);
 		return SLURM_SUCCESS;
 	}
 
@@ -3725,7 +3726,9 @@ _wait_for_all_windows(nrt_tableinfo_t *tableinfo)
 			if (hfi_tbl_ptr->lpar_id != my_lpar_id)
 				continue;
 			window_id = hfi_tbl_ptr->win_id;
-		} else if ((tableinfo->adapter_type == NRT_HPCE) ||
+		}
+#if NRT_VERSION < 1300
+		else if ((tableinfo->adapter_type == NRT_HPCE) ||
 		           (tableinfo->adapter_type == NRT_KMUX)) {
 			nrt_hpce_task_info_t *hpce_tbl_ptr;
 			hpce_tbl_ptr = (nrt_hpce_task_info_t *) tableinfo->
@@ -3734,7 +3737,9 @@ _wait_for_all_windows(nrt_tableinfo_t *tableinfo)
 			if (hpce_tbl_ptr->node_number != my_network_id)
 				continue;
 			window_id = hpce_tbl_ptr->win_id;
-		} else {
+		}
+#endif
+		else {
 			error("_wait_for_all_windows: Missing support for "
 			      "adapter_type %s",
 			      _adapter_type_str(tableinfo->adapter_type));
@@ -3795,7 +3800,7 @@ nrt_load_table(slurm_nrt_jobinfo_t *jp, int uid, int pid, char *job_name)
 
 	if ((jp == NULL) || (jp->magic == NRT_NULL_MAGIC)) {
 		debug2("(%s: %d: %s) job->switch_job was NULL",
-		       THIS_FILE, __LINE__, __FUNCTION__);
+		       THIS_FILE, __LINE__, __func__);
 		return SLURM_ERROR;
 	}
 
@@ -3828,7 +3833,7 @@ nrt_load_table(slurm_nrt_jobinfo_t *jp, int uid, int pid, char *job_name)
 		if (adapter_name == NULL)
 			continue;
 
-		bzero(&table_info, sizeof(nrt_table_info_t));
+		memset(&table_info, 0, sizeof(nrt_table_info_t));
 		table_info.num_tasks = jp->tableinfo[i].table_length;
 		table_info.job_key = jp->job_key;
 		/* Enable job preeption and release of resources */
@@ -3843,7 +3848,7 @@ nrt_load_table(slurm_nrt_jobinfo_t *jp, int uid, int pid, char *job_name)
 			table_info.is_user_space = 1;
 		if (jp->ip_v4)
 			table_info.is_ipv4 = 1;
-		/* IP V6: table_info.is_ipv4 initialized above by bzero() */
+		/* IP V6: table_info.is_ipv4 initialized above by memset() */
 		table_info.context_id = jp->tableinfo[i].context_id;
 		table_info.table_id = jp->tableinfo[i].table_id;
 		if (job_name) {
@@ -3852,12 +3857,12 @@ nrt_load_table(slurm_nrt_jobinfo_t *jp, int uid, int pid, char *job_name)
 				sep++;
 			else
 				sep = job_name;
-			strncpy(table_info.job_name, sep,
+			strlcpy(table_info.job_name, sep,
 				NRT_MAX_JOB_NAME_LEN);
 		} else {
 			table_info.job_name[0] = '\0';
 		}
-		strncpy(table_info.protocol_name,
+		strlcpy(table_info.protocol_name,
 			jp->tableinfo[i].protocol_name,
 			NRT_MAX_PROTO_NAME_LEN);
 		table_info.use_bulk_transfer = jp->bulk_xfer;
@@ -3970,7 +3975,7 @@ nrt_unload_table(slurm_nrt_jobinfo_t *jp)
 {
 	if ((jp == NULL) || (jp->magic == NRT_NULL_MAGIC)) {
 		debug2("(%s: %d: %s) job->switch_job was NULL",
-		       THIS_FILE, __LINE__, __FUNCTION__);
+		       THIS_FILE, __LINE__, __func__);
 		return SLURM_ERROR;
 	}
 
@@ -4039,7 +4044,7 @@ _pack_libstate(slurm_nrt_libstate_t *lp, Buf buffer, uint16_t protocol_version)
 extern void
 nrt_libstate_save(Buf buffer, bool free_flag)
 {
-	_lock();
+	slurm_mutex_lock(&global_lock);
 
 	if (nrt_state != NULL)
 		_pack_libstate(nrt_state, buffer, SLURM_PROTOCOL_VERSION);
@@ -4050,7 +4055,7 @@ nrt_libstate_save(Buf buffer, bool free_flag)
 		_free_libstate(nrt_state);
 		nrt_state = NULL;	/* freed above */
 	}
-	_unlock();
+	slurm_mutex_unlock(&global_lock);
 }
 
 /* Used by: slurmctld */
@@ -4059,20 +4064,17 @@ _unpack_libstate(slurm_nrt_libstate_t *lp, Buf buffer)
 {
 	char *ver_str = NULL;
 	uint32_t ver_str_len;
-	uint16_t protocol_version = (uint16_t) NO_VAL;
+	uint16_t protocol_version = NO_VAL16;
 	uint32_t node_count;
 	int i;
 
 	/* Validate state version */
 	safe_unpackstr_xmalloc(&ver_str, &ver_str_len, buffer);
 	debug3("Version string in job_state header is %s", ver_str);
-	if (ver_str) {
-		if (!strcmp(ver_str, NRT_STATE_VERSION))
-			safe_unpack16(&protocol_version, buffer);
-		else
-			protocol_version = SLURM_2_6_PROTOCOL_VERSION;
-	}
-	if (protocol_version == (uint16_t) NO_VAL) {
+	if (ver_str && !xstrcmp(ver_str, NRT_STATE_VERSION))
+		safe_unpack16(&protocol_version, buffer);
+
+	if (protocol_version == NO_VAL16) {
 		error("******************************************************");
 		error("Can not recover switch/nrt state, incompatible version");
 		error("******************************************************");
@@ -4115,17 +4117,17 @@ nrt_libstate_restore(Buf buffer)
 {
 	int rc;
 
-	_lock();
+	slurm_mutex_lock(&global_lock);
 	xassert(!nrt_state);
 
 	nrt_state = _alloc_libstate();
 	if (!nrt_state) {
 		error("nrt_libstate_restore nrt_state is NULL");
-		_unlock();
+		slurm_mutex_unlock(&global_lock);
 		return SLURM_FAILURE;
 	}
 	rc = _unpack_libstate(nrt_state, buffer);
-	_unlock();
+	slurm_mutex_unlock(&global_lock);
 
 	return rc;
 }
@@ -4144,10 +4146,10 @@ nrt_libstate_clear(void)
 	else
 		debug3("Clearing state on all windows in global NRT state");
 
-	_lock();
+	slurm_mutex_lock(&global_lock);
 	if (!nrt_state || !nrt_state->node_list) {
 		error("nrt_state or node_list not initialized!");
-		_unlock();
+		slurm_mutex_unlock(&global_lock);
 		return SLURM_ERROR;
 	}
 
@@ -4167,7 +4169,7 @@ nrt_libstate_clear(void)
 			}
 		}
 	}
-	_unlock();
+	slurm_mutex_unlock(&global_lock);
 
 	return SLURM_SUCCESS;
 }
@@ -4479,19 +4481,19 @@ extern bool nrt_adapter_name_check(char *token, hostlist_t hl)
 	hi = hostlist_iterator_create(hl);
 	host = hostlist_next(hi);
 	hostlist_iterator_destroy(hi);
-	_lock();
+	slurm_mutex_lock(&global_lock);
 	node = _find_node(nrt_state, host);
 	if (host)
 		free(host);
 	if (node && node->adapter_list) {
 		for (i = 0; i < node->adapter_count; i++) {
-			if (strcmp(token,node->adapter_list[i].adapter_name))
+			if (xstrcmp(token,node->adapter_list[i].adapter_name))
 				continue;
 			name_found = true;
 			break;
 		}
 	}
-	_unlock();
+	slurm_mutex_unlock(&global_lock);
 
 	return name_found;
 }

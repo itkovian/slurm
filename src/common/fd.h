@@ -1,5 +1,5 @@
 /*****************************************************************************\
- *  $Id$
+ *  fd.h - common file descriptor functions
  *****************************************************************************
  *  Copyright (C) 2001-2006 The Regents of the University of California.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -35,15 +35,11 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-
 #ifndef _FD_H
 #define _FD_H
 
-
-#ifdef HAVE_CONFIG_H
-#  include "config.h"
-#endif /* HAVE_CONFIG_H */
-
+#include <fcntl.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
 
@@ -57,15 +53,6 @@ static inline void closeall(int fd)
 	while (fd < fdlimit)
 		close(fd++);
 }
-
-/* Open a fd with close-on-exec (POSIX 2008, Linux 2.6.23+), emulating
- * it on systems that lack it.  */
-int open_cloexec(const char *pathname, int flags);
-
-/* Create a fd with close-on-exec (POSIX 2008, Linux 2.6.23+),
- * emulating it on systems that lack it.  */
-int creat_cloexec(const char *pathname, mode_t mode);
-
 
 void fd_set_close_on_exec(int fd);
 /*
@@ -87,12 +74,6 @@ void fd_set_blocking(int fd);
  * Sets the file descriptor (fd) for blocking I/O.
  */
 
-int fd_get_read_lock(int fd);
-/*
- *  Obtain a read lock on the file specified by (fd).
- *  Returns 0 on success, or -1 if prevented from obtaining the lock.
- */
-
 int fd_get_readw_lock(int fd);
 /*
  *  Obtain a read lock on the file specified by (fd),
@@ -106,13 +87,6 @@ int fd_get_write_lock(int fd);
  *  Returns 0 on success, or -1 if prevented from obtaining the lock.
  */
 
-int fd_get_writew_lock(int fd);
-/*
- *  Obtain a write lock on the file specified by (fd),
- *    blocking until one becomes available.
- *  Returns 0 on success, or -1 on error.
- */
-
 int fd_release_lock(int fd);
 /*
  *  Release a lock held on the file specified by (fd).
@@ -124,13 +98,6 @@ pid_t fd_is_read_lock_blocked(int fd);
  *  If a lock exists the would block a request for a read-lock
  *    (ie, if a write-lock is already being held on the file),
  *    returns the pid of the process holding the lock; o/w, returns 0.
- */
-
-pid_t fd_is_write_lock_blocked(int fd);
-/*
- *  If a lock exists the would block a request for a write-lock
- *    (ie, if any lock is already being held on the file),
- *    returns the pid of a process holding the lock; o/w, returns 0.
  */
 
 ssize_t fd_read_n(int fd, void *buf, size_t n);

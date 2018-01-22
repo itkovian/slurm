@@ -39,9 +39,11 @@ node_info_to_hv(node_info_t *node_info, uint16_t node_scaling, HV *hv)
 	STORE_FIELD(hv, node_info, cores, uint16_t);
 	STORE_FIELD(hv, node_info, cpu_load, uint32_t);
 	STORE_FIELD(hv, node_info, cpus, uint16_t);
-	if(node_info->features)
+	if (node_info->features)
 		STORE_FIELD(hv, node_info, features, charp);
-	if(node_info->gres)
+	if (node_info->features_act)
+		STORE_FIELD(hv, node_info, features_act, charp);
+	if (node_info->gres)
 		STORE_FIELD(hv, node_info, gres, charp);
 	if (node_info->name)
 		STORE_FIELD(hv, node_info, name, charp);
@@ -49,10 +51,10 @@ node_info_to_hv(node_info_t *node_info, uint16_t node_scaling, HV *hv)
 		Perl_warn (aTHX_ "node name missing in node_info_t");
 		return -1;
 	}
-	STORE_FIELD(hv, node_info, node_state, uint16_t);
+	STORE_FIELD(hv, node_info, node_state, uint32_t);
 	if(node_info->os)
 		STORE_FIELD(hv, node_info, os, charp);
-	STORE_FIELD(hv, node_info, real_memory, uint32_t);
+	STORE_FIELD(hv, node_info, real_memory, uint64_t);
 	if(node_info->reason)
 		STORE_FIELD(hv, node_info, reason, charp);
 	STORE_FIELD(hv, node_info, reason_time, time_t);
@@ -106,11 +108,12 @@ hv_to_node_info(HV *hv, node_info_t *node_info)
 	FETCH_FIELD(hv, node_info, cpu_load, uint32_t, TRUE);
 	FETCH_FIELD(hv, node_info, cpus, uint16_t, TRUE);
 	FETCH_FIELD(hv, node_info, features, charp, FALSE);
+	FETCH_FIELD(hv, node_info, features_act, charp, FALSE);
 	FETCH_FIELD(hv, node_info, gres, charp, FALSE);
 	FETCH_FIELD(hv, node_info, name, charp, TRUE);
-	FETCH_FIELD(hv, node_info, node_state, uint16_t, TRUE);
+	FETCH_FIELD(hv, node_info, node_state, uint32_t, TRUE);
 	FETCH_FIELD(hv, node_info, os, charp, FALSE);
-	FETCH_FIELD(hv, node_info, real_memory, uint32_t, TRUE);
+	FETCH_FIELD(hv, node_info, real_memory, uint64_t, TRUE);
 	FETCH_FIELD(hv, node_info, reason, charp, FALSE);
 	FETCH_FIELD(hv, node_info, reason_time, time_t, TRUE);
 	FETCH_FIELD(hv, node_info, reason_uid, uint32_t, TRUE);
@@ -136,14 +139,17 @@ node_info_msg_to_hv(node_info_msg_t *node_info_msg, HV *hv)
 
 	STORE_FIELD(hv, node_info_msg, last_update, time_t);
 	STORE_FIELD(hv, node_info_msg, node_scaling, uint16_t);
-	/* record_count implied in node_array */
+	/*
+	 * node_info_msg->node_array will have node_records with NULL names for
+	 * nodes that are hidden. They are put in the array to preserve the
+	 * node_index which will match up with a partiton's node_inx[]. Add
+	 * empty hashes for nodes that have NULL names -- hidden nodes.
+	 */
 	av = newAV();
 	for(i = 0; i < node_info_msg->record_count; i ++) {
-		if (!node_info_msg->node_array[i].name)
-			continue;
-
 		hv_info =newHV();
-		if (node_info_to_hv(node_info_msg->node_array + i,
+		if (node_info_msg->node_array[i].name &&
+		    node_info_to_hv(node_info_msg->node_array + i,
 				    node_info_msg->node_scaling, hv_info) < 0) {
 			SvREFCNT_dec((SV*)hv_info);
 			SvREFCNT_dec((SV*)av);
@@ -206,9 +212,10 @@ hv_to_update_node_msg(HV *hv, update_node_msg_t *update_msg)
 	FETCH_FIELD(hv, update_msg, node_addr, charp, FALSE);
 	FETCH_FIELD(hv, update_msg, node_hostname, charp, FALSE);
 	FETCH_FIELD(hv, update_msg, node_names, charp, TRUE);
-	FETCH_FIELD(hv, update_msg, node_state, uint16_t, FALSE);
+	FETCH_FIELD(hv, update_msg, node_state, uint32_t, FALSE);
 	FETCH_FIELD(hv, update_msg, reason, charp, FALSE);
 	FETCH_FIELD(hv, update_msg, features, charp, FALSE);
+	FETCH_FIELD(hv, update_msg, features_act, charp, FALSE);
 	FETCH_FIELD(hv, update_msg, weight, uint32_t, FALSE);
 	return 0;
 }

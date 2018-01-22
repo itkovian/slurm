@@ -6,7 +6,7 @@
  *  Written by Danny Auble <da@schedmd.com>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -43,7 +43,6 @@
 
 #include "src/common/list.h"
 #include "src/common/node_select.h"
-#include "src/common/parse_spec.h"
 
 #include "ba_common.h"
 
@@ -177,6 +176,6 @@ extern char *bg_configure_give_geo(uint16_t *int_geo, int dims, bool with_sep);
 
 extern s_p_hashtbl_t *bg_configure_config_make_tbl(char *filename);
 
-extern void ba_configure_set_ba_debug_flags(uint32_t debug_flags);
+extern void ba_configure_set_ba_debug_flags(uint64_t debug_flags);
 
 #endif

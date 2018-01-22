@@ -9,7 +9,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -37,11 +37,12 @@
  *  with SLURM; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
+#include <grp.h>
 
-#include "src/sacctmgr/sacctmgr.h"
+#include "src/common/slurm_time.h"
 #include "src/common/slurmdbd_defs.h"
 #include "src/common/uid.h"
-#include <grp.h>
+#include "src/sacctmgr/sacctmgr.h"
 
 static uint32_t _decode_node_state(char *val)
 {
@@ -51,15 +52,15 @@ static uint32_t _decode_node_state(char *val)
 
 	vallen = strlen(val);
 
-	if (!strncasecmp(val, "DRAIN", MAX(vallen, 3)))
+	if (!xstrncasecmp(val, "DRAIN", MAX(vallen, 3)))
 		return NODE_STATE_DRAIN;
-	else if (!strncasecmp(val, "FAIL", MAX(vallen, 3)))
+	else if (!xstrncasecmp(val, "FAIL", MAX(vallen, 3)))
 		return NODE_STATE_FAIL;
 	else {
 		uint32_t j;
 		for (j = 0; j < NODE_STATE_END; j++) {
-			if (strncasecmp(node_state_string(j), val,
-					MAX(vallen, 3)) == 0){
+			if (xstrncasecmp(node_state_string(j), val,
+					 MAX(vallen, 3)) == 0){
 				return j;
 			}
 		}
@@ -120,7 +121,8 @@ static int _addto_state_char_list(List char_list, char *names)
 					name = xstrdup_printf("%u", c);
 
 					while((tmp_char = list_next(itr))) {
-						if (!strcasecmp(tmp_char, name))
+						if (!xstrcasecmp(tmp_char,
+								 name))
 							break;
 					}
 
@@ -152,7 +154,7 @@ static int _addto_state_char_list(List char_list, char *names)
 			name = xstrdup_printf("%u", c);
 
 			while((tmp_char = list_next(itr))) {
-				if (!strcasecmp(tmp_char, name))
+				if (!xstrcasecmp(tmp_char, name))
 					break;
 			}
 
@@ -226,7 +228,8 @@ static int _addto_id_char_list(List char_list, char *names, bool gid)
 					name = _convert_to_id( name, gid );
 
 					while((tmp_char = list_next(itr))) {
-						if (!strcasecmp(tmp_char, name))
+						if (!xstrcasecmp(tmp_char,
+								 name))
 							break;
 					}
 
@@ -254,7 +257,7 @@ static int _addto_id_char_list(List char_list, char *names, bool gid)
 			name = _convert_to_id(name, gid);
 
 			while((tmp_char = list_next(itr))) {
-				if (!strcasecmp(tmp_char, name))
+				if (!xstrcasecmp(tmp_char, name))
 					break;
 			}
 
@@ -269,7 +272,7 @@ static int _addto_id_char_list(List char_list, char *names, bool gid)
 	return count;
 }
 
-static int _set_cond(int *start, int argc, char *argv[],
+static int _set_cond(int *start, int argc, char **argv,
 		     slurmdb_event_cond_t *event_cond,
 		     List format_list)
 {
@@ -292,17 +295,17 @@ static int _set_cond(int *start, int argc, char *argv[],
 			}
 		}
 
-		if (!end && !strncasecmp(argv[i], "all_clusters",
-					       MAX(command_len, 5))) {
+		if (!end && !xstrncasecmp(argv[i], "all_clusters",
+					  MAX(command_len, 5))) {
 			local_cluster_flag = 1;
-		} else if (!end && !strncasecmp(argv[i], "all_time",
-					       MAX(command_len, 5))) {
+		} else if (!end && !xstrncasecmp(argv[i], "all_time",
+						 MAX(command_len, 5))) {
 			all_time_flag = 1;
-		} else if (!end && !strncasecmp(argv[i], "where",
-					MAX(command_len, 5))) {
+		} else if (!end && !xstrncasecmp(argv[i], "where",
+						 MAX(command_len, 5))) {
 			continue;
-		} else if (!end || (!strncasecmp (argv[i], "Events",
-						 MAX(command_len, 1)))) {
+		} else if (!end || (!xstrncasecmp(argv[i], "Events",
+						  MAX(command_len, 1)))) {
 			ListIterator itr = NULL;
 			List tmp_list = list_create(slurm_destroy_char);
 			char *temp = NULL;
@@ -314,15 +317,15 @@ static int _set_cond(int *start, int argc, char *argv[],
 			/* check to make sure user gave ints here */
 			itr = list_iterator_create(tmp_list);
 			while ((temp = list_next(itr))) {
-				if (!strncasecmp("Node", temp,
-						MAX(strlen(temp), 1))) {
+				if (!xstrncasecmp("Node", temp,
+						  MAX(strlen(temp), 1))) {
 					if (event_cond->event_type)
 						event_cond->event_type =
 							SLURMDB_EVENT_ALL;
 					else
 						event_cond->event_type =
 							SLURMDB_EVENT_NODE;
-				} else if (!strncasecmp("Cluster", temp,
+				} else if (!xstrncasecmp("Cluster", temp,
 						MAX(strlen(temp), 1))) {
 					if (event_cond->event_type)
 						event_cond->event_type =
@@ -341,8 +344,8 @@ static int _set_cond(int *start, int argc, char *argv[],
 				}
 			}
 			list_iterator_destroy(itr);
-			list_destroy(tmp_list);
-		} else if (!strncasecmp (argv[i], "Clusters",
+			FREE_NULL_LIST(tmp_list);
+		} else if (!xstrncasecmp(argv[i], "Clusters",
 					 MAX(command_len, 1))) {
 			if (!event_cond->cluster_list)
 				event_cond->cluster_list =
@@ -350,24 +353,24 @@ static int _set_cond(int *start, int argc, char *argv[],
 			if (slurm_addto_char_list(event_cond->cluster_list,
 						 argv[i]+end))
 				set = 1;
-		} else if (!strncasecmp (argv[i], "End", MAX(command_len, 1))) {
+		} else if (!xstrncasecmp(argv[i], "End", MAX(command_len, 1))) {
 			event_cond->period_end = parse_time(argv[i]+end, 1);
 			set = 1;
-		} else if (!strncasecmp (argv[i], "Format",
+		} else if (!xstrncasecmp(argv[i], "Format",
 					 MAX(command_len, 1))) {
 			if (format_list)
 				slurm_addto_char_list(format_list, argv[i]+end);
-		} else if (!strncasecmp (argv[i], "MinCpus",
+		} else if (!xstrncasecmp(argv[i], "MinCpus",
 					 MAX(command_len, 2))) {
 			if (get_uint(argv[i]+end, &event_cond->cpus_min,
 			    "MinCpus") == SLURM_SUCCESS)
 				set = 1;
-		} else if (!strncasecmp (argv[i], "MaxCpus",
+		} else if (!xstrncasecmp(argv[i], "MaxCpus",
 					 MAX(command_len, 2))) {
 			if (get_uint(argv[i]+end, &event_cond->cpus_max,
 			    "MaxCpus") == SLURM_SUCCESS)
 				set = 1;
-		} else if (!strncasecmp (argv[i], "Nodes",
+		} else if (!xstrncasecmp(argv[i], "Nodes",
 					 MAX(command_len, 1))) {
 			if (!event_cond->node_list)
 				event_cond->node_list =
@@ -375,7 +378,7 @@ static int _set_cond(int *start, int argc, char *argv[],
 			if (slurm_addto_char_list(event_cond->node_list,
 						 argv[i]+end))
 				set = 1;
-		} else if (!strncasecmp (argv[i], "Reason",
+		} else if (!xstrncasecmp(argv[i], "Reason",
 					 MAX(command_len, 1))) {
 			if (!event_cond->reason_list)
 				event_cond->reason_list =
@@ -383,11 +386,11 @@ static int _set_cond(int *start, int argc, char *argv[],
 			if (slurm_addto_char_list(event_cond->reason_list,
 						 argv[i]+end))
 				set = 1;
-		} else if (!strncasecmp (argv[i], "Start",
+		} else if (!xstrncasecmp(argv[i], "Start",
 					 MAX(command_len, 4))) {
 			event_cond->period_start = parse_time(argv[i]+end, 1);
 			set = 1;
-		} else if (!strncasecmp (argv[i], "States",
+		} else if (!xstrncasecmp(argv[i], "States",
 					 MAX(command_len, 4))) {
 			if (!event_cond->state_list)
 				event_cond->state_list =
@@ -397,7 +400,7 @@ static int _set_cond(int *start, int argc, char *argv[],
 				event_cond->event_type = SLURMDB_EVENT_NODE;
 				set = 1;
 			}
-		} else if (!strncasecmp (argv[i], "User",
+		} else if (!xstrncasecmp(argv[i], "User",
 					 MAX(command_len, 1))) {
 			if (!event_cond->reason_uid_list)
 				event_cond->reason_uid_list =
@@ -425,7 +428,8 @@ static int _set_cond(int *start, int argc, char *argv[],
 		if (!event_cond->state_list) {
 			struct tm start_tm;
 
-			if (!localtime_r(&event_cond->period_start, &start_tm)) {
+			if (!slurm_localtime_r(&event_cond->period_start,
+					       &start_tm)) {
 				fprintf(stderr,
 					" Couldn't get localtime from %ld",
 					(long)event_cond->period_start);
@@ -437,7 +441,7 @@ static int _set_cond(int *start, int argc, char *argv[],
 			start_tm.tm_hour = 0;
 			start_tm.tm_mday--;
 			start_tm.tm_isdst = -1;
-			event_cond->period_start = mktime(&start_tm);
+			event_cond->period_start = slurm_mktime(&start_tm);
 		}
 	}
 
@@ -445,17 +449,16 @@ static int _set_cond(int *start, int argc, char *argv[],
 }
 
 
-extern int sacctmgr_list_event(int argc, char *argv[])
+extern int sacctmgr_list_event(int argc, char **argv)
 {
 	int rc = SLURM_SUCCESS;
 	slurmdb_event_cond_t *event_cond =
 		xmalloc(sizeof(slurmdb_event_cond_t));
 	List event_list = NULL;
 	slurmdb_event_rec_t *event = NULL;
-	int i=0;
+	int i = 0;
 	ListIterator itr = NULL;
 	ListIterator itr2 = NULL;
-	char *object = NULL;
 	int field_count = 0;
 
 	print_field_t *field = NULL;
@@ -467,39 +470,39 @@ extern int sacctmgr_list_event(int argc, char *argv[])
 	   time correctly for just the past day.
 	*/
 	if (argc == 0) {
-                struct tm start_tm;
+		struct tm start_tm;
 		event_cond->period_start = time(NULL);
 
-                if (!localtime_r(&event_cond->period_start, &start_tm)) {
-                        fprintf(stderr,
-                                " Couldn't get localtime from %ld",
-                                (long)event_cond->period_start);
-                        exit_code=1;
-                        return 0;
-                }
-                start_tm.tm_sec = 0;
-                start_tm.tm_min = 0;
-                start_tm.tm_hour = 0;
-                start_tm.tm_mday--;
-                start_tm.tm_isdst = -1;
-                event_cond->period_start = mktime(&start_tm);
-        }
+		if (!slurm_localtime_r(&event_cond->period_start,
+				       &start_tm)) {
+			fprintf(stderr,
+				" Couldn't get localtime from %ld",
+				(long)event_cond->period_start);
+			exit_code = 1;
+			slurmdb_destroy_event_cond(event_cond);
+			return 0;
+		}
+		start_tm.tm_sec = 0;
+		start_tm.tm_min = 0;
+		start_tm.tm_hour = 0;
+		start_tm.tm_mday--;
+		start_tm.tm_isdst = -1;
+		event_cond->period_start = slurm_mktime(&start_tm);
+	}
 
-	for (i=0; i<argc; i++) {
+	for (i = 0; i < argc; i++) {
 		int command_len = strlen(argv[i]);
-		if (!strncasecmp (argv[i], "Where", MAX(command_len, 5))
-		    || !strncasecmp (argv[i], "Set", MAX(command_len, 3)))
+		if (!xstrncasecmp(argv[i], "Where", MAX(command_len, 5))
+		    || !xstrncasecmp(argv[i], "Set", MAX(command_len, 3)))
 			i++;
 		_set_cond(&i, argc, argv, event_cond, format_list);
 	}
 
 	if (exit_code) {
 		slurmdb_destroy_event_cond(event_cond);
-		list_destroy(format_list);
+		FREE_NULL_LIST(format_list);
 		return SLURM_ERROR;
 	}
-
-	print_fields_list = list_create(destroy_print_field);
 
 	if (!list_count(format_list)) {
 		if (event_cond->event_type == SLURMDB_EVENT_CLUSTER)
@@ -512,122 +515,22 @@ extern int sacctmgr_list_event(int argc, char *argv[])
 					      "End,State,Reason,User");
 	}
 
-	itr = list_iterator_create(format_list);
-	while((object = list_next(itr))) {
-		char *tmp_char = NULL;
-		int command_len = 0;
-		int newlen = 0;
-
-		if ((tmp_char = strstr(object, "\%"))) {
-			newlen = atoi(tmp_char+1);
-			tmp_char[0] = '\0';
-		}
-
-		command_len = strlen(object);
-
-		field = xmalloc(sizeof(print_field_t));
-		if (!strncasecmp("ClusterNodes", object,
-				       MAX(command_len, 8))) {
-			field->type = PRINT_CLUSTER_NODES;
-			field->name = xstrdup("Cluster Nodes");
-			field->len = 20;
-			field->print_routine = print_fields_str;
-		} else if (!strncasecmp("Cluster", object,
-				       MAX(command_len, 1))) {
-			field->type = PRINT_CLUSTER;
-			field->name = xstrdup("Cluster");
-			field->len = 10;
-			field->print_routine = print_fields_str;
-		} else if (!strncasecmp("CPUs", object,
-				MAX(command_len, 2))) {
-			field->type = PRINT_CPUS;
-			field->name = xstrdup("CPUs");
-			field->len = 7;
-			field->print_routine = print_fields_str;
-		} else if (!strncasecmp("Duration", object,
-				       MAX(command_len, 2))) {
-			field->type = PRINT_DURATION;
-			field->name = xstrdup("Duration");
-			field->len = 13;
-			field->print_routine = print_fields_time_from_secs;
-		} else if (!strncasecmp("End", object, MAX(command_len, 2))) {
-			field->type = PRINT_END;
-			field->name = xstrdup("End");
-			field->len = 19;
-			field->print_routine = print_fields_date;
-		} else if (!strncasecmp("EventRaw", object,
-				MAX(command_len, 6))) {
-			field->type = PRINT_EVENTRAW;
-			field->name = xstrdup("EventRaw");
-			field->len = 8;
-			field->print_routine = print_fields_uint;
-		} else if (!strncasecmp("Event", object,
-				MAX(command_len, 2))) {
-			field->type = PRINT_EVENT;
-			field->name = xstrdup("Event");
-			field->len = 7;
-			field->print_routine = print_fields_str;
-		} else if (!strncasecmp("NodeName", object,
-				       MAX(command_len, 1))) {
-			field->type = PRINT_NODENAME;
-			field->name = xstrdup("Node Name");
-			field->len = -15;
-			field->print_routine = print_fields_str;
-		} else if (!strncasecmp("Reason", object, MAX(command_len, 1))) {
-			field->type = PRINT_REASON;
-			field->name = xstrdup("Reason");
-			field->len = 30;
-			field->print_routine = print_fields_str;
-		} else if (!strncasecmp("Start", object,
-				       MAX(command_len, 1))) {
-			field->type = PRINT_START;
-			field->name = xstrdup("Start");
-			field->len = 19;
-			field->print_routine = print_fields_date;
-		} else if (!strncasecmp("StateRaw", object,
-				       MAX(command_len, 6))) {
-			field->type = PRINT_STATERAW;
-			field->name = xstrdup("StateRaw");
-			field->len = 8;
-			field->print_routine = print_fields_uint;
-		} else if (!strncasecmp("State", object, MAX(command_len, 1))) {
-			field->type = PRINT_STATE;
-			field->name = xstrdup("State");
-			field->len = 6;
-			field->print_routine = print_fields_str;
-		} else if (!strncasecmp("User", object, MAX(command_len, 1))) {
-			field->type = PRINT_USER;
-			field->name = xstrdup("User");
-			field->len = 15;
-			field->print_routine = print_fields_str;
-		} else {
-			exit_code=1;
-			fprintf(stderr, " Unknown field '%s'\n", object);
-			xfree(field);
-			continue;
-		}
-
-		if (newlen)
-			field->len = newlen;
-
-		list_append(print_fields_list, field);
-	}
-	list_iterator_destroy(itr);
-	list_destroy(format_list);
+	print_fields_list = sacctmgr_process_format_list(format_list);
+	FREE_NULL_LIST(format_list);
 
 	if (exit_code) {
-		list_destroy(print_fields_list);
+		FREE_NULL_LIST(print_fields_list);
 		return SLURM_ERROR;
 	}
 
-	event_list = acct_storage_g_get_events(db_conn, my_uid, event_cond);
+	event_list = slurmdb_events_get(db_conn, event_cond);
 	slurmdb_destroy_event_cond(event_cond);
 
 	if (!event_list) {
 		exit_code=1;
 		fprintf(stderr, " Error with request: %s\n",
 			slurm_strerror(errno));
-		list_destroy(print_fields_list);
+		FREE_NULL_LIST(print_fields_list);
 		return SLURM_ERROR;
 	}
 	itr = list_iterator_create(event_list);
@@ -640,6 +543,7 @@ extern int sacctmgr_list_event(int argc, char *argv[])
 		int curr_inx = 1;
 		char tmp[20], *tmp_char;
 		time_t newend = event->period_end;
+
 		while((field = list_next(itr2))) {
 			switch(field->type) {
 			case PRINT_CLUSTER:
@@ -653,8 +557,12 @@ extern int sacctmgr_list_event(int argc, char *argv[])
 					(curr_inx == field_count));
 				break;
 			case PRINT_CPUS:
-				convert_num_unit((float)event->cpu_count,
-						 tmp, sizeof(tmp), UNIT_NONE);
+				convert_num_unit(
+					(float)slurmdb_find_tres_count_in_string(
+						event->tres_str, TRES_CPU),
+					tmp, sizeof(tmp), UNIT_NONE, NO_VAL,
+					CONVERT_NUM_UNIT_EXACT);
+
 				field->print_routine(
 					field,
 					tmp,
@@ -669,7 +577,7 @@ extern int sacctmgr_list_event(int argc, char *argv[])
 						   - event->period_start),
 					(curr_inx == field_count));
 				break;
-			case PRINT_END:
+			case PRINT_TIMEEND:
 				field->print_routine(field,
 						     event->period_end,
 						     (curr_inx == field_count));
@@ -681,7 +589,8 @@ extern int sacctmgr_list_event(int argc, char *argv[])
 			case PRINT_EVENT:
 				if (event->event_type == SLURMDB_EVENT_CLUSTER)
 					tmp_char = "Cluster";
-				else if (event->event_type == SLURMDB_EVENT_NODE)
+				else if (event->event_type ==
+					 SLURMDB_EVENT_NODE)
 					tmp_char = "Node";
 				else
 					tmp_char = "Unknown";
@@ -694,7 +603,7 @@ extern int sacctmgr_list_event(int argc, char *argv[])
 						     event->node_name,
 						     (curr_inx == field_count));
 				break;
-			case PRINT_START:
+			case PRINT_TIMESTART:
 				field->print_routine(field,
 						     event->period_start,
 						     (curr_inx == field_count));
@@ -718,13 +627,25 @@ extern int sacctmgr_list_event(int argc, char *argv[])
 						     tmp_char,
 						     (curr_inx == field_count));
 				break;
+			case PRINT_TRES:
+				sacctmgr_initialize_g_tres_list();
+
+				tmp_char = slurmdb_make_tres_string_from_simple(
+					event->tres_str, g_tres_list, NO_VAL,
+					CONVERT_NUM_UNIT_EXACT);
+
+				field->print_routine(
+					field,
+					tmp_char,
+					(curr_inx == field_count));
+				xfree(tmp_char);
+				break;
 			case PRINT_USER:
 				if (event->reason_uid != NO_VAL) {
-					tmp_char = uid_to_string(
+					tmp_char = uid_to_string_cached(
 						event->reason_uid);
 					snprintf(tmp, sizeof(tmp), "%s(%u)",
 						 tmp_char, event->reason_uid);
-					xfree(tmp_char);
 				} else
 					memset(tmp, 0, sizeof(tmp));
 				field->print_routine(field, tmp,
@@ -743,7 +664,7 @@ extern int sacctmgr_list_event(int argc, char *argv[])
 
 	list_iterator_destroy(itr2);
 	list_iterator_destroy(itr);
-	list_destroy(event_list);
-	list_destroy(print_fields_list);
+	FREE_NULL_LIST(event_list);
+	FREE_NULL_LIST(print_fields_list);
 	return rc;
 }

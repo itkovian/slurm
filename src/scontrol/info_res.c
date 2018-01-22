@@ -7,7 +7,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -104,7 +104,7 @@ scontrol_print_res (char *reservation_name)
 	res_ptr = res_info_ptr->reservation_array;
 	for (i = 0; i < res_info_ptr->record_count; i++) {
 		if (reservation_name &&
-		    strcmp (reservation_name, res_ptr[i].name) != 0)
+		    xstrcmp (reservation_name, res_ptr[i].name) != 0)
 			continue;
 		print_cnt++;
 		slurm_print_reservation_info (stdout, & res_ptr[i],

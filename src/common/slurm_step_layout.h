@@ -1,15 +1,13 @@
 /*****************************************************************************\
  *  slurm_step_layout.c - function to distribute tasks over nodes.
- *  $Id: slurm.hp.elan.patch,v 1.1 2005/07/28 04:08:19 cholmes Exp $
  *****************************************************************************
- *
  *  Copyright (C) 2005 Hewlett-Packard Development Company, L.P.
  *  Written by Chris Holmes, <cholmes@hp.com>, who borrowed heavily
  *  from other parts of SLURM.
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -24,7 +22,7 @@
  *
  *  You should have received a copy of the GNU General Public License along
  *  with SLURM; if not, write to the Free Software Foundation, Inc.,
- *  59 Temple Place, Suite 330, Boston, MA  02111-1307  USA.
+ *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
  *
  *  This file is patterned after hostlist.h, written by Mark Grondona and
  *  Copyright (C) 2002 The Regents of the University of California.
@@ -33,16 +31,7 @@
 #ifndef _SLURM_STEP_LAYOUT_H
 #define _SLURM_STEP_LAYOUT_H
 
-#if HAVE_CONFIG_H
-#  include "config.h"
-#  if HAVE_INTTYPES_H
-#    include <inttypes.h>
-#  else
-#    if HAVE_STDINT_H
-#      include <stdint.h>
-#    endif
-#  endif			/* HAVE_INTTYPES_H */
-#endif
+#include <inttypes.h>
 
 #include "src/common/hostlist.h"
 #include "src/common/pack.h"
@@ -51,25 +40,12 @@
  * slurm_step_layout_create - determine how many tasks of a job will be
  *                    run on each node. Distribution is influenced
  *                    by number of cpus on each host.
- * IN tlist - hostlist corresponding to task layout
- * IN cpus_per_node - cpus per node
- * IN cpu_count_reps - how many nodes have same cpu count
- * IN node_cnt - number of nodes we have
- * IN task_cnt - number of tasks to distribute across these cpus
- * IN cpus_per_task - number of cpus per task
- * IN task_dist - type of distribution we are using
- * IN plane_size - plane size (only needed for the plane distribution)
+ * IN step_layout_req - information needed for task distibutionhostlist corresponding to task layout
  * RET a pointer to an slurm_step_layout_t structure
  * NOTE: allocates memory that should be xfreed by caller
  */
-extern slurm_step_layout_t *slurm_step_layout_create(const char *tlist,
-						     uint16_t *cpus_per_node,
-						     uint32_t *cpu_count_reps,
-						     uint32_t node_cnt,
-						     uint32_t task_cnt,
-						     uint16_t cpus_per_task,
-						     uint16_t task_dist,
-						     uint16_t plane_size);
+extern slurm_step_layout_t *slurm_step_layout_create(
+	slurm_step_layout_req_t *step_layout_req);
 
 /*
  * fake_slurm_step_layout_create - used when you don't allocate a job from the

@@ -1,6 +1,5 @@
 /*****************************************************************************\
  *  pmi_server.c - Global PMI data as maintained within srun
- *  $Id$
  *****************************************************************************
  *  Copyright (C) 2005-2006 The Regents of the University of California.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -8,7 +7,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -23,12 +22,8 @@
  *
  *  You should have received a copy of the GNU General Public License along
  *  with SLURM; if not, write to the Free Software Foundation, Inc.,
- *  59 Temple Place, Suite 330, Boston, MA  02111-1307  USA.
+ *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
-
-#if HAVE_CONFIG_H
-#  include "config.h"
-#endif
 
 #include <pthread.h>
 #include <stdlib.h>
@@ -66,7 +61,7 @@ static int pmi_kvs_no_dup_keys = 1;
 struct barrier_resp {
 	uint16_t port;
 	char *hostname;
-};				/* details for barrier task communcations */
+};				/* details for barrier task communications */
 struct barrier_resp *barrier_ptr = NULL;
 uint32_t barrier_resp_cnt = 0;	/* tasks having reached barrier */
 uint32_t barrier_cnt = 0;	/* tasks needing to reach barrier */
@@ -81,7 +76,7 @@ struct agent_arg {
 };				/* details for message agent manager */
 struct msg_arg {
 	struct barrier_resp *bar_ptr;
-	struct kvs_comm_set *kvs_ptr;
+	kvs_comm_set_t *kvs_ptr;
 };
 int agent_cnt = 0;		/* number of active message agents */
 int agent_max_cnt = 32;		/* maximum number of active agents */
@@ -104,8 +99,6 @@ static void _print_kvs(void);
 static void _kvs_xmit_tasks(void)
 {
 	struct agent_arg *args;
-	pthread_attr_t attr;
-	pthread_t agent_id;
 
 #if _DEBUG
 	info("All tasks at barrier, transmit KVS keypairs now");
@@ -138,11 +131,7 @@ static void _kvs_xmit_tasks(void)
 	}
 
 	/* Spawn a pthread to transmit it */
-	slurm_attr_init(&attr);
-	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-	if (pthread_create(&agent_id, &attr, _agent, (void *) args))
-		fatal("pthread_create");
-	slurm_attr_destroy(&attr);
+	slurm_thread_create_detached(NULL, _agent, args);
 }
 
 static void *_msg_thread(void *x)
@@ -176,7 +165,7 @@ static void *_msg_thread(void *x)
 
 	slurm_mutex_lock(&agent_mutex);
 	agent_cnt--;
-	pthread_cond_signal(&agent_cond);
+	slurm_cond_signal(&agent_cond);
 	slurm_mutex_unlock(&agent_mutex);
 	xfree(x);
 	return NULL;
@@ -185,14 +174,12 @@ static void *_msg_thread(void *x)
 static void *_agent(void *x)
 {
 	struct agent_arg *args = (struct agent_arg *) x;
-	struct kvs_comm_set *kvs_set;
+	kvs_comm_set_t *kvs_set;
 	struct msg_arg *msg_args;
 	struct kvs_hosts *kvs_host_list;
 	int i, j, kvs_set_cnt = 0, host_cnt, pmi_fanout = 32;
 	int msg_sent = 0, max_forward = 0;
 	char *tmp, *fanout_off_host;
-	pthread_t msg_id;
-	pthread_attr_t attr;
 	DEF_TIMERS;
 
 	tmp = getenv("PMI_FANOUT");
@@ -206,9 +193,7 @@ static void *_agent(void *x)
 	/* only send one message to each host,
 	 * build table of the ports on each host */
 	START_TIMER;
-	slurm_attr_init(&attr);
-	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-	kvs_set = xmalloc(sizeof(struct kvs_comm_set) * args->barrier_xmit_cnt);
+	kvs_set = xmalloc(sizeof(kvs_comm_set_t) * args->barrier_xmit_cnt);
 	for (i=0; i<args->barrier_xmit_cnt; i++) {
 		if (args->barrier_xmit_ptr[i].port == 0)
 			continue;	/* already sent message to host */
@@ -242,7 +227,7 @@ static void *_agent(void *x)
 
 		slurm_mutex_lock(&agent_mutex);
 		while (agent_cnt >= agent_max_cnt)
-			pthread_cond_wait(&agent_cond, &agent_mutex);
+			slurm_cond_wait(&agent_cond, &agent_mutex);
 		agent_cnt++;
 		slurm_mutex_unlock(&agent_mutex);
 
@@ -261,9 +246,9 @@ static void *_agent(void *x)
 			 * or for some other reason we only want
 			 * one pthread. */
 			_msg_thread((void *) msg_args);
-		} else if (pthread_create(&msg_id, &attr, _msg_thread,
-				(void *) msg_args)) {
-			fatal("pthread_create: %m");
+		} else {
+			slurm_thread_create_detached(NULL, _msg_thread,
+						     msg_args);
 		}
 	}
 
@@ -273,9 +258,8 @@ static void *_agent(void *x)
 	/* wait for completion of all outgoing message */
 	slurm_mutex_lock(&agent_mutex);
 	while (agent_cnt > 0)
-		pthread_cond_wait(&agent_cond, &agent_mutex);
+		slurm_cond_wait(&agent_cond, &agent_mutex);
 	slurm_mutex_unlock(&agent_mutex);
-	slurm_attr_destroy(&attr);
 
 	/* Release allocated memory */
 	for (i=0; i<kvs_set_cnt; i++)
@@ -414,7 +398,7 @@ static void _print_kvs(void)
 #endif
 }
 
-extern int pmi_kvs_put(struct kvs_comm_set *kvs_set_ptr)
+extern int pmi_kvs_put(kvs_comm_set_t *kvs_set_ptr)
 {
 	int i, usec_timer;
 	struct kvs_comm *kvs_ptr;
@@ -438,7 +422,7 @@ extern int pmi_kvs_put(struct kvs_comm_set *kvs_set_ptr)
 	 * NOTE: We just move pointers rather than copy data where
 	 * possible for improved performance */
 	START_TIMER;
-	pthread_mutex_lock(&kvs_mutex);
+	slurm_mutex_lock(&kvs_mutex);
 	for (i=0; i<kvs_set_ptr->kvs_comm_recs; i++) {
 		kvs_ptr = _find_kvs_by_name(kvs_set_ptr->
 			kvs_comm_ptr[i]->kvs_name);
@@ -450,10 +434,9 @@ extern int pmi_kvs_put(struct kvs_comm_set *kvs_set_ptr)
 			kvs_set_ptr-> kvs_comm_ptr[i] = NULL;
 		}
 	}
-	slurm_free_kvs_comm_set(kvs_set_ptr);
 	_print_kvs();
 	kvs_updated = 1;
-	pthread_mutex_unlock(&kvs_mutex);
+	slurm_mutex_unlock(&kvs_mutex);
 	END_TIMER;
 	usec_timer = DELTA_TIMER;
 	min_time_kvs_put = MIN(min_time_kvs_put, usec_timer);
@@ -487,7 +470,7 @@ extern int pmi_kvs_get(kvs_get_msg_t *kvs_get_ptr)
 	if (kvs_get_ptr->task_id < 10000)
 		tm[kvs_get_ptr->task_id] = cur_time;
 #endif
-	pthread_mutex_lock(&kvs_mutex);
+	slurm_mutex_lock(&kvs_mutex);
 	if (barrier_cnt == 0) {
 		barrier_cnt = kvs_get_ptr->size;
 		barrier_ptr = xmalloc(sizeof(struct barrier_resp)*barrier_cnt);
@@ -521,7 +504,7 @@ extern int pmi_kvs_get(kvs_get_msg_t *kvs_get_ptr)
 #endif
 		_kvs_xmit_tasks();
 	}
-fini:	pthread_mutex_unlock(&kvs_mutex);
+fini:	slurm_mutex_unlock(&kvs_mutex);
 
 	return rc;
 }
@@ -562,11 +545,11 @@ static void _free_kvs_comm(struct kvs_comm *kvs_comm_ptr)
 extern void pmi_kvs_free(void)
 {
 	int i;
-	pthread_mutex_lock(&kvs_mutex);
+	slurm_mutex_lock(&kvs_mutex);
 	for (i = 0; i < kvs_comm_cnt; i ++) {
 		_free_kvs_comm(kvs_comm_ptr[i]);
 	}
 	xfree(kvs_comm_ptr);
 	kvs_comm_cnt = 0;
-	pthread_mutex_unlock(&kvs_mutex);
+	slurm_mutex_unlock(&kvs_mutex);
 }

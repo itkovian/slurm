@@ -7,7 +7,7 @@
  *  Written by Dan Phung <phung4@llnl.gov> et. al.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -63,6 +63,7 @@ extern int submit_job(struct job_record *job_ptr, bitstr_t *bitmap,
 		      uint32_t min_nodes, uint32_t max_nodes,
 		      uint32_t req_nodes, uint16_t mode,
 		      List preemptee_candidates,
-		      List *preemptee_job_list);
+		      List *preemptee_job_list,
+		      bitstr_t *exc_core_bitmap);
 
 #endif /* _BG_JOB_PLACE_H_ */

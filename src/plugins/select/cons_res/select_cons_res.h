@@ -1,15 +1,13 @@
 /*****************************************************************************\
  *  select_cons_res.h
- *
- *  $Id: select_cons_res.h,v 1.3 2006/10/31 20:01:38 palermo Exp $
  *****************************************************************************
  *  Copyright (C) 2006 Hewlett-Packard Development Company, L.P.
-*   Portions Copyright (C) 2010 SchedMD <http://www.schedmd.com>.
+ *  Portions Copyright (C) 2010 SchedMD <https://www.schedmd.com>.
  *  Written by Susanne M. Balle, <susanne.balle@hp.com>
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -55,11 +53,12 @@
 #include "src/common/node_select.h"
 #include "src/common/pack.h"
 #include "src/common/slurm_protocol_api.h"
+#include "src/common/slurm_resource_info.h"
+#include "src/common/slurm_topology.h"
 #include "src/common/xassert.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
-#include "src/common/slurm_resource_info.h"
-#include "src/common/slurm_topology.h"
+#include "src/slurmctld/powercapping.h"
 #include "src/slurmctld/preempt.h"
 #include "src/slurmctld/slurmctld.h"
 
@@ -69,15 +68,15 @@
 struct part_row_data {
 	bitstr_t *row_bitmap;		/* contains core bitmap for all jobs in
 					 * this row */
-	uint32_t num_jobs;		/* Number of jobs in this row */
 	struct job_resources **job_list;/* List of jobs in this row */
 	uint32_t job_list_size;		/* Size of job_list array */
+	uint32_t num_jobs;		/* Number of occupied entries in job_list array */
 };
 
 /* partition CPU allocation data */
 struct part_res_record {
 	struct part_res_record *next;	/* Ptr to next part_res_record */
-	uint16_t num_rows;		/* Number of row_bitmaps */
+	uint16_t num_rows;		/* Number of elements in "row" array */
 	struct part_record *part_ptr;   /* controller part record pointer */
 	struct part_row_data *row;	/* array of rows containing jobs */
 };
@@ -89,22 +88,31 @@ struct node_res_record {
 	uint16_t boards; 		/* count of boards configured */
 	uint16_t sockets;		/* count of sockets configured */
 	uint16_t cores;			/* count of cores configured */
+	uint16_t threads;		/* count of hyperthreads per core */
 	uint16_t vpus;			/* count of virtual cpus (hyperthreads)
 					 * configured per core */
-	uint32_t real_memory;		/* MB of real memory configured */
+	uint64_t real_memory;		/* MB of real memory configured */
+	uint64_t mem_spec_limit;	/* MB of specialized/system memory */
 };
 
 /* per-node resource usage record */
 struct node_use_record {
-	uint32_t alloc_memory;		/* real memory reserved by already
+	uint64_t alloc_memory;		/* real memory reserved by already
 					 * scheduled jobs */
 	List gres_list;			/* list of gres state info managed by 
 					 * plugins */
 	uint16_t node_state;		/* see node_cr_state comments */
 };
 
-extern uint32_t select_debug_flags;
+extern bool     backfill_busy_nodes;
+extern bool     have_dragonfly;
+extern bool     pack_serial_at_end;
+extern bool     preempt_by_part;
+extern bool     preempt_by_qos;
+extern uint64_t select_debug_flags;
 extern uint16_t select_fast_schedule;
+extern bool     spec_cores_first;
+extern bool     topo_optional;
 
 extern struct part_res_record *select_part_record;
 extern struct node_res_record *select_node_record;
@@ -112,5 +120,6 @@ extern struct node_use_record *select_node_usage;
 
 extern void cr_sort_part_rows(struct part_res_record *p_ptr);
 extern uint32_t cr_get_coremap_offset(uint32_t node_index);
+extern int cr_cpus_per_core(struct job_details *details, int node_inx);
 
 #endif /* !_CONS_RES_H */

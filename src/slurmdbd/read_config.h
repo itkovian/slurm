@@ -8,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -40,21 +40,10 @@
 #ifndef _DBD_READ_CONFIG_H
 #define _DBD_READ_CONFIG_H
 
-#if HAVE_CONFIG_H
-#  include "config.h"
-#if HAVE_INTTYPES_H
-#  include <inttypes.h>
-#else  /* !HAVE_INTTYPES_H */
-#  if HAVE_STDINT_H
-#    include <stdint.h>
-#  endif
-#endif  /* HAVE_INTTYPES_H */
-#else   /* !HAVE_CONFIG_H */
-#include <stdint.h>
-#endif  /* HAVE_CONFIG_H */
-
+#include <inttypes.h>
 #include <time.h>
 #include <pthread.h>
+
 #include "src/common/list.h"
 
 #define DEFAULT_SLURMDBD_AUTHTYPE	"auth/none"
@@ -72,17 +61,21 @@ typedef struct slurm_dbd_conf {
 	char *		archive_script;	/* script to archive old data	*/
 	char *		auth_info;	/* authentication info		*/
 	char *		auth_type;	/* authentication mechanism	*/
-	uint16_t        control_timeout;/* how long to wait before
-					 * backup takes control         */
+	uint16_t        commit_delay;   /* On busy systems delay
+					 * commits from slurmctld this
+					 * many seconds                 */
 	char *		dbd_addr;	/* network address of Slurm DBD	*/
 	char *		dbd_backup;	/* hostname of Slurm DBD backup */
 	char *		dbd_host;	/* hostname of Slurm DBD	*/
 	uint16_t	dbd_port;	/* port number for RPCs to DBD	*/
+	uint64_t	debug_flags;	/* Debug flags set              */
 	uint16_t	debug_level;	/* Debug level, default=3	*/
 	char *	 	default_qos;	/* default qos setting when
 					 * adding clusters              */
 	char *		log_file;	/* Log file			*/
+	uint16_t	syslog_debug;	/* output to both logfile and syslog*/
 	uint16_t        log_fmt;        /* Log file timestamt format    */
+	uint32_t	max_time_range;	/* max time range for user queries */
 	uint16_t        msg_timeout;    /* message timeout		*/
 	char *		pid_file;	/* where to store current PID	*/
 	char *		plugindir;	/* dir to look for plugins	*/
@@ -95,6 +88,10 @@ typedef struct slurm_dbd_conf {
 	uint32_t	purge_resv;	/* purge time for reservation info */
 	uint32_t	purge_step;	/* purge time for step info	*/
 	uint32_t        purge_suspend;  /* purge suspend data older
+					 * than this in months or days	*/
+	uint32_t        purge_txn;      /* purge transaction data older
+					 * than this in months or days	*/
+	uint32_t        purge_usage;    /* purge usage data older
 					 * than this in months or days	*/
 	uint32_t	slurm_user_id;	/* uid of slurm_user_name	*/
 	char *		slurm_user_name;/* user that slurmcdtld runs as	*/
@@ -109,6 +106,7 @@ typedef struct slurm_dbd_conf {
 	uint16_t        track_wckey;    /* Whether or not to track wckey*/
 	uint16_t        track_ctld;     /* Whether or not track when a
 					 * slurmctld goes down or not   */
+	uint16_t        tcp_timeout;    /* tcp timeout			*/
 } slurm_dbd_conf_t;
 
 extern pthread_mutex_t conf_mutex;

@@ -1,8 +1,8 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Stress test with maximum slurmctld message concurrency.
 #          We start a large number of job steps, the simultaneously
-#          cancel them all. Message can get lost/restransmitted, so
+#          cancel them all. Message can get lost/retransmitted, so
 #          there is a delayed test for job step removal.
 #
 # Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
@@ -16,7 +16,7 @@
 # CODE-OCEC-09-009. All rights reserved.
 #
 # This file is part of SLURM, a resource management program.
-# For details, see <http://slurm.schedmd.com/>.
+# For details, see <https://slurm.schedmd.com/>.
 # Please also read the included file: DISCLAIMER.
 #
 # SLURM is free software; you can redistribute it and/or modify it under
@@ -51,12 +51,12 @@ if {[test_alps]} {
 	exit $exit_code
 }
 
-if {[string first "Memory" test_select_type_params] == -1} {
+if {![test_select_type_params "Memory"]} {
 	set mem_per_step 0
 } elseif {[test_launch_poe]} {
 	set mem_per_step 200
 } else {
-	set mem_per_step 1
+	set mem_per_step 8
 }
 
 #
@@ -72,7 +72,7 @@ if {[test_front_end] != 0 || $enable_memory_leak_debug != 0} {
 # NOTE: The initial sleep is so that all of the submissions have time
 #   to occur before contending with a multitude of job step creations.
 #   This is especially important on very slow systems (e.g. AIX).
-# NOTE: Explicity set a small memory limit. Without explicitly setting the step
+# NOTE: Explicitly set a small memory limit. Without explicitly setting the step
 #   memory limit, it will use the system default (same as the job) which may
 #   prevent the level of parallelism desired.
 #
@@ -80,9 +80,9 @@ make_bash_script $file_in "
 $bin_sleep 5
 ulimit -u `ulimit -u -H`
 for ((inx=0; inx < $task_cnt; inx++)) ; do
-$srun -N1 -n1 --mem-per-cpu=$mem_per_step $bin_sleep $sleep_time &
+$srun -N1 -n1 --mem=0 $bin_sleep $sleep_time &
 done
-$srun -N1 -n1 --mem-per-cpu=$mem_per_step $bin_sleep $sleep_time
+$srun -N1 -n1 --mem=0 $bin_sleep $sleep_time
 "
 
 #
@@ -91,7 +91,7 @@ $srun -N1 -n1 --mem-per-cpu=$mem_per_step $bin_sleep $sleep_time
 set start_cnt 0
 set timeout 30
 for {set inx 0} {$inx < $job_cnt} {incr inx} {
-	set sbatch_pid [spawn $sbatch --job-name=$job_name --mem-per-cpu=[expr $mem_per_step * 10] --output=/dev/null --error=/dev/null -t5 $file_in]
+	set sbatch_pid [spawn $sbatch --gres=craynetwork:0 --job-name=$job_name --mem-per-cpu=[expr $mem_per_step * 10] --output=/dev/null --error=/dev/null -t5 $file_in]
 	expect {
 		-re "Submitted batch job ($number)" {
 			incr start_cnt
@@ -118,46 +118,46 @@ if {$start_cnt < $job_cnt} {
 	send_user "\nAll $start_cnt jobs submitted\n"
 }
 
+set user_name [get_my_user_name]
+
+#
+# There could be hundreds of job steps, we don't want to see
+# the details, but want to make sure that we did start many
+#
+set desired_tasks [expr $task_cnt * 2 / 3]
+
 #
 # Give the jobs a few seconds to get initiated, check for steps,
 # then kill them all
 #
-set user_name ""
-
 exec $bin_sleep $delay
-spawn $bin_id -un
-expect {
-	-re "($alpha_numeric_under)" {
-		set user_name $expect_out(1,string)
-	}
-	eof {
-		wait
+
+set job_count  0
+set step_count 0
+set timeout    60
+log_user 0
+while { 1 } {
+	set job_count 0
+	spawn $squeue --state R --name $job_name --user $user_name
+	expect {
+		-re "$job_name" {
+			incr job_count
+			exp_continue
+		}
+		timeout {
+			send_user "\nFAILURE: squeue not responding\n"
+			set exit_code 1
+		}
+		eof {
+			wait
+		}
 	}
 
-}
-#
-# There could be hundreds of job steps, we don't want to see
-# the details, but want to make sure that we did start a bunch
-#
-# Determine if this is AIX (for task count, federation switch
-# prevents each node from running more than 16 tasks)
-#
-if {[test_aix]} {
-	set desired_tasks 15
-} else {
-	set desired_tasks [expr $task_cnt * 2 / 3]
-}
-
-set matches 0
-while { $matches < $desired_tasks } {
-	log_user 0
-	set matches 0
-	set timeout 60
-	exec $bin_sleep 3
-	spawn $squeue --steps --user $user_name
+	set step_count 0
+	spawn $squeue --steps --name $job_name --user $user_name
 	expect {
 		-re "sleep" {
-			incr matches
+			incr step_count
 			exp_continue
 		}
 		-re "error:" {
@@ -166,28 +166,34 @@ while { $matches < $desired_tasks } {
 			exp_continue
 		}
 		timeout {
-			break
+			send_user "\nFAILURE: squeue not responding\n"
+			set exit_code 1
 		}
 		eof {
 			wait
-			break
 		}
 	}
-	if {$matches == 0} {
+	if {$step_count >= $desired_tasks || $step_count == 0} {
 		break
 	}
+	set scaled_task_cnt [expr $job_count * $desired_tasks]
+	if {$step_count >= $scaled_task_cnt} {
+		send_user "\nOnly started $job_count jobs, reducing step count target to $scaled_task_cnt\n"
+		set desired_tasks $scaled_task_cnt
+	}
+	exec $bin_sleep 3
 }
 if {[test_aix]} {
 	sleep 5
 }
 
 log_user 1
-if {$matches < $desired_tasks} {
-	send_user "\nFAILURE: only started $matches job steps\n"
+if {$step_count < $desired_tasks} {
+	send_user "\nFAILURE: only started $job_count jobs and $step_count steps\n"
 	send_user "  We expected at least $desired_tasks and possibly hundreds\n"
 	set exit_code 1
 } else {
-	send_user "\nwe found $matches job steps\n"
+	send_user "\nWe found $job_count jobs and $step_count steps\n"
 }
 spawn $scancel --quiet --user $user_name
 expect {
@@ -197,7 +203,7 @@ expect {
 }
 
 #
-# Give a few seconds for clean-up and insure things are still fine
+# Give a few seconds for clean-up and ensure things are still fine
 # If message are lost, slurmctld re-sends job kill RPC 120 seconds later
 # In any case, make sure that all jobs get completed
 #

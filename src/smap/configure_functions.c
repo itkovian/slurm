@@ -10,7 +10,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -38,6 +38,8 @@
  *  with SLURM; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
+
+#include "config.h"
 
 #include "src/smap/smap.h"
 #include "src/common/uid.h"
@@ -68,12 +70,12 @@ static int	_remove_allocation(char *com, List allocated_blocks);
 static int	_resolve(char *com);
 static int	_save_allocation(char *com, List allocated_blocks);
 static int      _set_layout(char *com);
-static int      _set_base_part_cnt(char *com);
+static int      _set_midplane_cnode_cnt(char *com);
 static int      _set_nodecard_cnt(char *com);
 
 int color_count = 0;
 char error_string[255];
-int base_part_node_cnt = 512;
+int midplane_cnode_cnt = 512;
 int nodecard_node_cnt = 32;
 char *layout_mode = "STATIC";
 
@@ -109,7 +111,7 @@ static void _destroy_allocated_block(void *object)
 			_set_nodes(allocated_block->nodes, 0, '.');
 			bg_configure_remove_block(
 				allocated_block->nodes, is_small);
-			list_destroy(allocated_block->nodes);
+			FREE_NULL_LIST(allocated_block->nodes);
 		}
 		destroy_select_ba_request(allocated_block->request);
 		xfree(allocated_block);
@@ -118,7 +120,7 @@ static void _destroy_allocated_block(void *object)
 
 static allocated_block_t *_make_request(select_ba_request_t *request)
 {
-	List results = list_create(NULL);
+	List results;
 	allocated_block_t *allocated_block = NULL;
 
 #ifdef HAVE_BGQ
@@ -148,8 +150,7 @@ static allocated_block_t *_make_request(select_ba_request_t *request)
 		results = NULL;
 	}
 
-	if (results)
-		list_destroy(results);
+	FREE_NULL_LIST(results);
 	return allocated_block;
 
 }
@@ -162,7 +163,7 @@ static int _full_request(select_ba_request_t *request,
 	allocated_block_t *allocated_block;
 	int rc = 1;
 
-	if (!strcasecmp(layout_mode,"OVERLAP"))
+	if (!xstrcasecmp(layout_mode,"OVERLAP"))
 		bg_configure_reset_ba_system(true);
 
 	if (usable_mp_bitmap)
@@ -171,7 +172,7 @@ static int _full_request(select_ba_request_t *request,
 	/*
 	 * Here is where we do the allocating of the partition.
 	 * It will send a request back which we will throw into
-	 * a list just incase we change something later.
+	 * a list just in case we change something later.
 	 */
 	if (!bg_configure_new_ba_request(request)) {
 		memset(error_string, 0, 255);
@@ -202,7 +203,7 @@ static int _full_request(select_ba_request_t *request,
 		if ((allocated_block = _make_request(request)) != NULL)
 			list_append(allocated_blocks, allocated_block);
 		else {
-			if (request->geometry[0] != (uint16_t)NO_VAL)
+			if (request->geometry[0] != NO_VAL16)
 				tmp_char = bg_configure_give_geo(
 					request->geometry,
 					params.cluster_dims, 1);
@@ -242,13 +243,13 @@ static int _set_layout(char *com)
 	int i;
 
 	for (i = 0; com[i]; i++) {
-		if (!strncasecmp(com+i, "dynamic", 7)) {
+		if (!xstrncasecmp(com+i, "dynamic", 7)) {
 			layout_mode = "DYNAMIC";
 			break;
-		} else if (!strncasecmp(com+i, "static", 6)) {
+		} else if (!xstrncasecmp(com+i, "static", 6)) {
 			layout_mode = "STATIC";
 			break;
-		} else if (!strncasecmp(com+i, "overlap", 7)) {
+		} else if (!xstrncasecmp(com+i, "overlap", 7)) {
 			layout_mode = "OVERLAP";
 			break;
 		}
@@ -264,7 +265,7 @@ static int _set_layout(char *com)
 	return 1;
 }
 
-static int _set_base_part_cnt(char *com)
+static int _set_midplane_cnode_cnt(char *com)
 {
 	int i;
 
@@ -278,10 +279,10 @@ static int _set_base_part_cnt(char *com)
 		return 0;
 	}
 
-	base_part_node_cnt = atoi(&com[i]);
+	midplane_cnode_cnt = atoi(&com[i]);
 	memset(error_string, 0, 255);
 	sprintf(error_string,
-		"BasePartitionNodeCnt set to %d\n", base_part_node_cnt);
+		"MidplaneNodeCnt set to %d\n", midplane_cnode_cnt);
 
 	return 1;
 }
@@ -323,12 +324,7 @@ static int _create_allocation(char *com, List allocated_blocks)
 	select_ba_request_t *request;
 	char fini_char;
 	int diff=0;
-#ifndef HAVE_BGL
-#ifdef HAVE_BGP
-	int small16=-1;
-#endif
 	int small64=-1, small256=-1;
-#endif
 	request = (select_ba_request_t*) xmalloc(sizeof(select_ba_request_t));
 	request->rotate = false;
 	request->elongate = false;
@@ -339,14 +335,14 @@ static int _create_allocation(char *com, List allocated_blocks)
 	request->deny_pass = 0;
 	request->avail_mp_bitmap = NULL;
 	for (j = 0; j < params.cluster_dims; j++) {
-		request->geometry[j]  = (uint16_t) NO_VAL;
+		request->geometry[j]  = NO_VAL16;
 		request->conn_type[j] = SELECT_TORUS;
 	}
 
 	while (i < len) {
-		if (!strncasecmp(com+i, "mesh", 4)
-		    || !strncasecmp(com+i, "small", 5)
-		    || !strncasecmp(com+i, "torus", 5)) {
+		if (!xstrncasecmp(com+i, "mesh", 4)
+		    || !xstrncasecmp(com+i, "small", 5)
+		    || !xstrncasecmp(com+i, "torus", 5)) {
 			char conn_type[200];
 			j = i;
 			while (j < len) {
@@ -360,7 +356,7 @@ static int _create_allocation(char *com, List allocated_blocks)
 			conn_type[(j-i)+1] = '\0';
 			verify_conn_type(conn_type, request->conn_type);
 			i += j;
-		} else if (!strncasecmp(com+i, "deny", 4)) {
+		} else if (!xstrncasecmp(com+i, "deny", 4)) {
 			i += 4;
 			if (strstr(com+i, "A"))
 				request->deny_pass |= PASS_DENY_A;
@@ -370,27 +366,27 @@ static int _create_allocation(char *com, List allocated_blocks)
 				request->deny_pass |= PASS_DENY_Y;
 			if (strstr(com+i, "Z"))
 				request->deny_pass |= PASS_DENY_Z;
-			if (!strcasecmp(com+i, "ALL"))
+			if (!xstrcasecmp(com+i, "ALL"))
 				request->deny_pass |= PASS_DENY_ALL;
-		} else if (!strncasecmp(com+i, "nodecard", 8)) {
+		} else if (!xstrncasecmp(com+i, "nodecard", 8)) {
 			small32 = 0;
 			i += 8;
-		} else if (!strncasecmp(com+i, "quarter", 7)) {
+		} else if (!xstrncasecmp(com+i, "quarter", 7)) {
 			small128 = 0;
 			i += 7;
-		} else if (!strncasecmp(com+i, "32CN", 4)) {
+		} else if (!xstrncasecmp(com+i, "32CN", 4)) {
 			small32 = 0;
 			i += 4;
-		} else if (!strncasecmp(com+i, "128CN", 5)) {
+		} else if (!xstrncasecmp(com+i, "128CN", 5)) {
 			small128 = 0;
 			i += 5;
-		} else if (!strncasecmp(com+i, "rotate", 6)) {
+		} else if (!xstrncasecmp(com+i, "rotate", 6)) {
 			request->rotate = true;
 			i += 6;
-		} else if (!strncasecmp(com+i, "elongate", 8)) {
+		} else if (!xstrncasecmp(com+i, "elongate", 8)) {
 			request->elongate = true;
 			i += 8;
-		} else if (!strncasecmp(com+i, "start", 5)) {
+		} else if (!xstrncasecmp(com+i, "start", 5)) {
 			request->start_req = 1;
 			i += 5;
 		} else if (request->start_req && (starti < 0) &&
@@ -404,21 +400,10 @@ static int _create_allocation(char *com, List allocated_blocks)
 		} else if (small128 == 0 && (com[i] >= '0' && com[i] <= '9')) {
 			small128 = i;
 			i++;
-		}
-#ifdef HAVE_BGP
-		else if (!strncasecmp(com+i, "16CN", 4)) {
-			small16 = 0;
-			i += 4;
-		} else if (small16 == 0 && (com[i] >= '0' && com[i] <= '9')) {
-			small16 = i;
-			i++;
-		}
-#endif
-#ifndef HAVE_BGL
-		else if (!strncasecmp(com+i, "64CN", 4)) {
+		} else if (!xstrncasecmp(com+i, "64CN", 4)) {
 			small64 = 0;
 			i += 4;
-		} else if (!strncasecmp(com+i, "256CN", 5)) {
+		} else if (!xstrncasecmp(com+i, "256CN", 5)) {
 			small256 = 0;
 			i += 5;
 		} else if (small64 == 0 && (com[i] >= '0' && com[i] <= '9')) {
@@ -427,9 +412,7 @@ static int _create_allocation(char *com, List allocated_blocks)
 		} else if (small256 == 0 && (com[i] >= '0' && com[i] <= '9')) {
 			small256 = i;
 			i++;
-		}
-#endif
-		else if ((geoi < 0) &&
+		} else if ((geoi < 0) &&
 			 (((com[i] >= '0') && (com[i] <= '9')) ||
 			  ((com[i] >= 'A') && (com[i] <= 'Z')))) {
 			geoi = i;
@@ -442,13 +425,6 @@ static int _create_allocation(char *com, List allocated_blocks)
 
 	if (request->conn_type[0] >= SELECT_SMALL) {
 		int total = 512;
-#ifdef HAVE_BGP
-		if (small16 > 0) {
-			request->small16 = atoi(&com[small16]);
-			total -= request->small16 * 16;
-		}
-#endif
-#ifndef HAVE_BGL
 		if (small64 > 0) {
 			request->small64 = atoi(&com[small64]);
 			total -= request->small64 * 64;
@@ -458,7 +434,6 @@ static int _create_allocation(char *com, List allocated_blocks)
 			request->small256 = atoi(&com[small256]);
 			total -= request->small256 * 256;
 		}
-#endif
 
 		if (small32 > 0) {
 			request->small32 = atoi(&com[small32]);
@@ -477,7 +452,6 @@ static int _create_allocation(char *com, List allocated_blocks)
 
 		}
 
-#ifndef HAVE_BGL
 		while (total > 0) {
 			if (total >= 256) {
 				request->small256++;
@@ -491,28 +465,10 @@ static int _create_allocation(char *com, List allocated_blocks)
 			} else if (total >= 32) {
 				request->small32++;
 				total -= 32;
-			}
-#ifdef HAVE_BGP
-			else if (total >= 16) {
-				request->small16++;
-				total -= 16;
-			}
-#endif
-			else
-				break;
-		}
-#else
-		while (total > 0) {
-			if (total >= 128) {
-				request->small128++;
-				total -= 128;
-			} else if (total >= 32) {
-				request->small32++;
-				total -= 32;
 			} else
 				break;
 		}
-#endif
+
 		request->size = 1;
 /* 		sprintf(error_string, */
 /* 			"got %d %d %d %d %d %d", */
@@ -820,13 +776,11 @@ static int _copy_allocation(char *com, List allocated_blocks)
 		request->rotate =allocated_block->request->rotate;
 		request->elongate = allocated_block->request->elongate;
 		request->deny_pass = allocated_block->request->deny_pass;
-#ifndef HAVE_BGL
 		request->small16 = allocated_block->request->small16;
-		request->small64 = allocated_block->request->small64;
-		request->small256 = allocated_block->request->small256;
-#endif
 		request->small32 = allocated_block->request->small32;
+		request->small64 = allocated_block->request->small64;
 		request->small128 = allocated_block->request->small128;
+		request->small256 = allocated_block->request->small256;
 
 		request->rotate_count= 0;
 		request->elongate_count = 0;
@@ -898,47 +852,19 @@ static int _save_allocation(char *com, List allocated_blocks)
 			"# See the bluegene.conf man page for "
 			"more information\n");
 		xstrcat(save_string, "#\n");
-#ifdef HAVE_BGL
-		image_dir = "/bgl/BlueLight/ppcfloor/bglsys/bin";
-		xstrfmtcat(save_string, "BlrtsImage=%s/rts_hw.rts\n",
-			   image_dir);
-		xstrfmtcat(save_string, "LinuxImage=%s/zImage.elf\n",
-			   image_dir);
-		xstrfmtcat(save_string,
-			   "MloaderImage=%s/mmcs-mloader.rts\n",
-			   image_dir);
-		xstrfmtcat(save_string,
-			   "RamDiskImage=%s/ramdisk.elf\n",
-			   image_dir);
-
-		xstrcat(save_string, "IONodesPerMP=8 # io poor\n");
-		xstrcat(save_string, "# IONodesPerMP=64 # io rich\n");
-#elif defined HAVE_BGP
-		image_dir = "/bgsys/drivers/ppcfloor/boot";
-		xstrfmtcat(save_string, "CnloadImage=%s/cns,%s/cnk\n",
-			   image_dir, image_dir);
-		xstrfmtcat(save_string, "MloaderImage=%s/uloader\n",
-			   image_dir);
-		xstrfmtcat(save_string,
-			   "IoloadImage=%s/cns,%s/linux,%s/ramdisk\n",
-			   image_dir, image_dir, image_dir);
-		xstrcat(save_string, "IONodesPerMP=4 # io poor\n");
-		xstrcat(save_string, "# IONodesPerMP=32 # io rich\n");
-#else
 		image_dir = "/bgsys/drivers/ppcfloor/boot";
 		xstrfmtcat(save_string, "MloaderImage=%s/firmware\n",
 			   image_dir);
 		xstrcat(save_string, "IONodesPerMP=4 # io semi-poor\n");
 		xstrcat(save_string, "# IONodesPerMP=16 # io rich\n");
-#endif
 
 		xstrcat(save_string, "BridgeAPILogFile="
 		       "/var/log/slurm/bridgeapi.log\n");
 
 		xstrcat(save_string, "BridgeAPIVerbose=2\n");
 
-		xstrfmtcat(save_string, "BasePartitionNodeCnt=%d\n",
-			   base_part_node_cnt);
+		xstrfmtcat(save_string, "MidPlaneNodeCnt=%d\n",
+			   midplane_cnode_cnt);
 		xstrfmtcat(save_string, "NodeCardNodeCnt=%d\n",
 			   nodecard_node_cnt);
 		if (!list_count(allocated_blocks))
@@ -954,25 +880,6 @@ static int _save_allocation(char *com, List allocated_blocks)
 			if (request->small16 || request->small32
 			    || request->small64 || request->small128
 			    || request->small256) {
-#ifdef HAVE_BGL
-				xstrfmtcat(extra,
-					   " 32CNBlocks=%d "
-					   "128CNBlocks=%d",
-					   request->small32,
-					   request->small128);
-#elif defined HAVE_BGP
-				xstrfmtcat(extra,
-					   " 16CNBlocks=%d "
-					   "32CNBlocks=%d "
-					   "64CNBlocks=%d "
-					   "128CNBlocks=%d "
-					   "256CNBlocks=%d",
-					   request->small16,
-					   request->small32,
-					   request->small64,
-					   request->small128,
-					   request->small256);
-#else
 				xstrfmtcat(extra,
 					   " 32CNBlocks=%d "
 					   "64CNBlocks=%d "
@@ -982,13 +889,12 @@ static int _save_allocation(char *com, List allocated_blocks)
 					   request->small64,
 					   request->small128,
 					   request->small256);
-#endif
 			}
 
 			xstrfmtcat(save_string, "MPs=%s", request->save_name);
 
 			for (i=0; i<SYSTEM_DIMENSIONS; i++) {
-				if (request->conn_type[i] == (uint16_t)NO_VAL)
+				if (request->conn_type[i] == NO_VAL16)
 					break;
 				if (i)
 					xstrcat(save_string, ",");
@@ -996,9 +902,6 @@ static int _save_allocation(char *com, List allocated_blocks)
 					xstrcat(save_string, " Type=");
 				xstrfmtcat(save_string, "%s", conn_type_string(
 						   request->conn_type[i]));
-#ifdef HAVE_BG_L_P
-				break;
-#endif
 			}
 
 			if (extra) {
@@ -1036,6 +939,9 @@ static int _add_bg_record(select_ba_request_t *blockreq, List allocated_blocks)
 	memset(tmp_char, 0, sizeof(tmp_char));
 	memset(tmp_char2, 0, sizeof(tmp_char2));
 
+	start[0] = end[0] = (int16_t)-1; /* Set this here just so Clang won't
+					  * report false postive.
+					  */
 	for (i = 0; i < params.cluster_dims; i++) {
 		best_start[0] = 0;
 		blockreq->geometry[i] = 0;
@@ -1198,7 +1104,7 @@ static int _load_configuration(char *com, List allocated_blocks)
 		xfree(layout);
 	}
 
-	if (strcasecmp(layout_mode, "DYNAMIC")) {
+	if (xstrcasecmp(layout_mode, "DYNAMIC")) {
 		if (!s_p_get_array((void ***)&blockreq_array,
 				   &count, "MPs", tbl)) {
 			if (!s_p_get_array((void ***)&blockreq_array,
@@ -1247,27 +1153,18 @@ static void _print_header_command(void)
 #endif
 	main_xcord += 10;
 
-#ifdef HAVE_BGP
-	mvwprintw(text_win, main_ycord,
-		  main_xcord, "16CN");
-	main_xcord += 5;
-#endif
 	mvwprintw(text_win, main_ycord,
 		  main_xcord, "32CN");
 	main_xcord += 5;
-#ifndef HAVE_BGL
 	mvwprintw(text_win, main_ycord,
 		  main_xcord, "64CN");
 	main_xcord += 5;
-#endif
 	mvwprintw(text_win, main_ycord,
 		  main_xcord, "128CN");
 	main_xcord += 6;
-#ifndef HAVE_BGL
 	mvwprintw(text_win, main_ycord,
 		  main_xcord, "256CN");
 	main_xcord += 6;
-#endif
 #ifdef HAVE_BG
 	mvwprintw(text_win, main_ycord,
 		  main_xcord, "MIDPLANELIST");
@@ -1316,44 +1213,27 @@ static void _print_text_command(allocated_block_t *allocated_block)
 	main_xcord += 10;
 
 	if (allocated_block->request->conn_type[0] >= SELECT_SMALL) {
-#ifdef HAVE_BGP
-		mvwprintw(text_win, main_ycord,
-			  main_xcord, "%d",
-			  allocated_block->request->small16);
-		main_xcord += 5;
-#endif
-
 		mvwprintw(text_win, main_ycord,
 			  main_xcord, "%d",
 			  allocated_block->request->small32);
 		main_xcord += 5;
 
-#ifndef HAVE_BGL
 		mvwprintw(text_win, main_ycord,
 			  main_xcord, "%d",
 			  allocated_block->request->small64);
 		main_xcord += 5;
-#endif
 
 		mvwprintw(text_win, main_ycord,
 			  main_xcord, "%d",
 			  allocated_block->request->small128);
 		main_xcord += 6;
 
-#ifndef HAVE_BGL
 		mvwprintw(text_win, main_ycord,
 			  main_xcord, "%d",
 			  allocated_block->request->small256);
 		main_xcord += 6;
-#endif
 	} else {
-#ifdef HAVE_BGL
-		main_xcord += 11;
-#elif defined HAVE_BGP
-		main_xcord += 27;
-#else
 		main_xcord += 22;
-#endif
 	}
 	mvwprintw(text_win, main_ycord,
 		  main_xcord, "%s",
@@ -1387,7 +1267,7 @@ void get_command(void)
 
 	if (working_cluster_rec) {
 		char *cluster_name = slurm_get_cluster_name();
-		if (strcmp(working_cluster_rec->name, cluster_name)) {
+		if (xstrcmp(working_cluster_rec->name, cluster_name)) {
 			xfree(cluster_name);
 			endwin();
 			printf("To use the configure option you must be on the "
@@ -1421,7 +1301,7 @@ void get_command(void)
 		echo();
 	}
 
-	while (strcmp(com, "quit")) {
+	while (xstrcmp(com, "quit")) {
 		clear_window(grid_win);
 		print_grid();
 		clear_window(text_win);
@@ -1477,58 +1357,58 @@ void get_command(void)
 		wmove(command_win, 1, 1);
 		wgetstr(command_win, com);
 
-		if (!strcmp(com, "exit")) {
+		if (!xstrcmp(com, "exit")) {
 			endwin();
-			if (allocated_blocks)
-				list_destroy(allocated_blocks);
+			FREE_NULL_LIST(allocated_blocks);
 			bg_configure_ba_fini();
 			exit(0);
 		}
 	run_command:
 
-		if (!strcmp(com, "quit") || !strcmp(com, "\\q")) {
+		if (!xstrcmp(com, "quit") || !xstrcmp(com, "\\q")) {
 			break;
-		} else if (!strncasecmp(com, "layout", 6)) {
+		} else if (!xstrncasecmp(com, "layout", 6)) {
 			_set_layout(com);
-		} else if (!strncasecmp(com, "basepartition", 13)) {
-			_set_base_part_cnt(com);
-		} else if (!strncasecmp(com, "nodecard", 8)) {
+		} else if (!xstrncasecmp(com, "midplane", 8) ||
+			   !xstrncasecmp(com, "basepartition", 13)) {
+			_set_midplane_cnode_cnt(com);
+		} else if (!xstrncasecmp(com, "nodecard", 8)) {
 			_set_nodecard_cnt(com);
-		} else if (!strncasecmp(com, "resolve", 7) ||
-			   !strncasecmp(com, "r ", 2)) {
+		} else if (!xstrncasecmp(com, "resolve", 7) ||
+			   !xstrncasecmp(com, "r ", 2)) {
 			_resolve(com);
-		} else if (!strncasecmp(com, "resume", 6)) {
+		} else if (!xstrncasecmp(com, "resume", 6)) {
 			mvwprintw(text_win,
 				main_ycord,
 				main_xcord, "%s", com);
-		} else if (!strncasecmp(com, "drain", 5)) {
+		} else if (!xstrncasecmp(com, "drain", 5)) {
 			mvwprintw(text_win,
 				main_ycord,
 				main_xcord, "%s", com);
-		} else if (!strncasecmp(com, "alldown", 7)) {
+		} else if (!xstrncasecmp(com, "alldown", 7)) {
 			_change_state_all_bps(com, NODE_STATE_DOWN);
-		} else if (!strncasecmp(com, "down", 4)) {
+		} else if (!xstrncasecmp(com, "down", 4)) {
 			_change_state_bps(com, NODE_STATE_DOWN);
-		} else if (!strncasecmp(com, "allup", 5)) {
+		} else if (!xstrncasecmp(com, "allup", 5)) {
 			_change_state_all_bps(com, NODE_STATE_IDLE);
-		} else if (!strncasecmp(com, "up", 2)) {
+		} else if (!xstrncasecmp(com, "up", 2)) {
 			_change_state_bps(com, NODE_STATE_IDLE);
-		} else if (!strncasecmp(com, "remove", 6)
-			|| !strncasecmp(com, "delete", 6)
-			|| !strncasecmp(com, "drop", 4)) {
+		} else if (!xstrncasecmp(com, "remove", 6)
+			|| !xstrncasecmp(com, "delete", 6)
+			|| !xstrncasecmp(com, "drop", 4)) {
 			_remove_allocation(com, allocated_blocks);
-		} else if (!strncasecmp(com, "create", 6)) {
+		} else if (!xstrncasecmp(com, "create", 6)) {
 			_create_allocation(com, allocated_blocks);
-		} else if (!strncasecmp(com, "copy", 4)
-			|| !strncasecmp(com, "c ", 2)
-			|| !strncasecmp(com, "c\0", 2)) {
+		} else if (!xstrncasecmp(com, "copy", 4)
+			|| !xstrncasecmp(com, "c ", 2)
+			|| !xstrncasecmp(com, "c\0", 2)) {
 			_copy_allocation(com, allocated_blocks);
-		} else if (!strncasecmp(com, "save", 4)) {
+		} else if (!xstrncasecmp(com, "save", 4)) {
 			_save_allocation(com, allocated_blocks);
-		} else if (!strncasecmp(com, "load", 4)) {
+		} else if (!xstrncasecmp(com, "load", 4)) {
 			_load_configuration(com, allocated_blocks);
-		} else if (!strncasecmp(com, "clear all", 9)
-			|| !strncasecmp(com, "clear", 5)) {
+		} else if (!xstrncasecmp(com, "clear all", 9)
+			|| !xstrncasecmp(com, "clear", 5)) {
 			list_flush(allocated_blocks);
 		} else {
 			memset(error_string, 0, 255);
@@ -1540,8 +1420,7 @@ void get_command(void)
 			exit(1);
 		}
 	}
-	if (allocated_blocks)
-		list_destroy(allocated_blocks);
+	FREE_NULL_LIST(allocated_blocks);
 	params.display = 0;
 	noecho();
 

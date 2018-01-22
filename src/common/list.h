@@ -1,7 +1,5 @@
 /*****************************************************************************
- *  $Id: list.h,v 1.14 2002/12/11 19:00:36 dun Exp $
- *****************************************************************************
- *  $LSDId: list.h,v 1.14 2002/12/11 19:00:36 dun Exp $
+ *  list.h
  *****************************************************************************
  *  Copyright (C) 2001-2002 The Regents of the University of California.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -35,7 +33,6 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
  *****************************************************************************/
 
-
 #ifndef LSD_LIST_H
 #define LSD_LIST_H
 
@@ -45,38 +42,13 @@
 		_X	= NULL; 		\
 	} while (0)
 
-/***********
- *  Notes  *
- ***********/
-/*
- *  If NDEBUG is not defined, internal debug code will be enabled.  This is
- *  intended for development use only and production code should define NDEBUG.
- *
- *  If WITH_LSD_FATAL_ERROR_FUNC is defined, the linker will expect to
- *  find an external lsd_fatal_error(file,line,mesg) function.  By default,
- *  lsd_fatal_error(file,line,mesg) is a macro definition that outputs an
- *  error message to stderr.  This macro may be redefined to invoke another
- *  routine instead.
- *
- *  If WITH_LSD_NOMEM_ERROR_FUNC is defined, the linker will expect to
- *  find an external lsd_nomem_error(file,line,mesg) function.  By default,
- *  lsd_nomem_error(file,line,mesg) is a macro definition that returns NULL.
- *  This macro may be redefined to invoke another routine instead.
- *
- *  If WITH_PTHREADS is defined, these routines will be thread-safe.
- *
- *  SLURM's versions of these functions write directly to the log file, using
- *  fprintf to avoid consuming more memory.
- */
-
-
 /****************
  *  Data Types  *
  ****************/
 
 #ifndef   __list_datatypes_defined
 #  define __list_datatypes_defined
-typedef struct list * List;
+typedef struct xlist * List;
 
 /* FreeBSD does not define __compar_fn_t
  * and rightfully so!
@@ -298,6 +270,12 @@ void * list_next (ListIterator i);
  *  Example: i=list_iterator_create(i); while ((x=list_next(i))) {...}
  */
 
+void * list_peek_next (ListIterator i);
+/*
+ *  Returns a ptr to the next item's data WITHOUT advancing the pointer,
+ *    or NULL once the end of the list is reached.
+ */
+
 void * list_insert (ListIterator i, void *x);
 /*
  *  Inserts data [x] immediately before the last item returned via list
@@ -333,7 +311,7 @@ int list_delete_item (ListIterator i);
 
 void list_install_fork_handlers (void);
 /*
- *  Install pthread_atfork() handlers if WITH_PTHREADS is defined.
+ *  Install pthread_atfork() handlers.
  *   These handlers will ensure that any mutexes internal to the list
  *   functions are in a proper state after a fork.
  */

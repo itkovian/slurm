@@ -1,14 +1,12 @@
 /*****************************************************************************\
  *  bg_record_functions.c - header for creating blocks in a static environment.
- *
- *  $Id: bg_record_functions.c 12954 2008-01-04 20:37:49Z da $
  *****************************************************************************
  *  Copyright (C) 2008 Lawrence Livermore National Security.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Danny Auble <da@llnl.gov>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -98,20 +96,12 @@ extern void destroy_bg_record(void *object)
 
 	if (bg_record) {
 		bg_record->magic = 0;
-		if (bg_record->ba_mp_list) {
-			list_destroy(bg_record->ba_mp_list);
-			bg_record->ba_mp_list = NULL;
-		}
+		FREE_NULL_LIST(bg_record->ba_mp_list);
 		xfree(bg_record->bg_block_id);
 		xfree(bg_record->blrtsimage);
 		xfree(bg_record->ionode_str);
 		FREE_NULL_BITMAP(bg_record->ionode_bitmap);
-
-		if (bg_record->job_list) {
-			list_destroy(bg_record->job_list);
-			bg_record->job_list = NULL;
-		}
-
+		FREE_NULL_LIST(bg_record->job_list);
 		xfree(bg_record->linuximage);
 		xfree(bg_record->mloaderimage);
 		xfree(bg_record->mp_str);
@@ -272,7 +262,7 @@ extern void process_nodes(bg_record_t *bg_record, bool startup)
 			break;
 	}
 	if (dim < SYSTEM_DIMENSIONS) {
-		/* means we have more than 1 base partition */
+		/* means we have more than 1 midplane */
 		for (dim = 0; dim < SYSTEM_DIMENSIONS; dim++) {
 			if (bg_record->geo[dim] != cluster_dims[dim])
 				break;
@@ -336,8 +326,7 @@ extern void copy_bg_record(bg_record_t *fir_record, bg_record_t *sec_record)
 	sec_record->action = fir_record->action;
 	sec_record->bg_block_id = xstrdup(fir_record->bg_block_id);
 
-	if (sec_record->ba_mp_list)
-		list_destroy(sec_record->ba_mp_list);
+	FREE_NULL_LIST(sec_record->ba_mp_list);
 	sec_record->ba_mp_list = list_create(destroy_ba_mp);
 	if (fir_record->ba_mp_list) {
 		itr = list_iterator_create(fir_record->ba_mp_list);
@@ -400,10 +389,7 @@ extern void copy_bg_record(bg_record_t *fir_record, bg_record_t *sec_record)
 		sec_record->ionode_bitmap = NULL;
 	}
 
-	if (sec_record->job_list) {
-		list_destroy(sec_record->job_list);
-		sec_record->job_list = NULL;
-	}
+	FREE_NULL_LIST(sec_record->job_list);
 
 	if (fir_record->job_list) {
 		struct job_record *job_ptr;
@@ -485,7 +471,7 @@ extern int bg_record_cmpf_inc(void *r1, void *r2)
 	}
 
 	if (rec_a->mp_str && rec_b->mp_str) {
-		size_a = strcmp(rec_a->mp_str, rec_b->mp_str);
+		size_a = xstrcmp(rec_a->mp_str, rec_b->mp_str);
 		if (size_a < 0)
 			return -1;
 		else if (size_a > 0)
@@ -707,7 +693,7 @@ extern void requeue_and_error(bg_record_t *bg_record, char *reason)
 
 	if (kill_job_list) {
 		bg_status_process_kill_job_list(kill_job_list, JOB_FAILED, 0);
-		list_destroy(kill_job_list);
+		FREE_NULL_LIST(kill_job_list);
 	}
 
 	if (rc)
@@ -851,8 +837,7 @@ extern int add_bg_record(List records, List *used_nodes,
 			debug4("add_bg_record: "
 			       "we didn't get a request list so we are "
 			       "destroying this mp list");
-			list_destroy(bg_record->ba_mp_list);
-			bg_record->ba_mp_list = NULL;
+			FREE_NULL_LIST(bg_record->ba_mp_list);
 		} else
 			setup_subblock_structs(bg_record);
 	} else {
@@ -912,7 +897,7 @@ extern int add_bg_record(List records, List *used_nodes,
 			      "There is an error in your bluegene.conf file.\n"
 			      "I am unable to request %d nodes consisting of "
 			      "%u 32CnBlocks and\n%u 128CnBlocks in one "
-			      "base partition with %u nodes.",
+			      "midplane with %u nodes.",
 			      i, blockreq->small32, blockreq->small128,
 			      bg_conf->mp_cnode_cnt);
 #else
@@ -937,7 +922,7 @@ extern int add_bg_record(List records, List *used_nodes,
 			      "%u 16CNBlocks, %u 32CNBlocks,\n"
 			      "%u 64CNBlocks, %u 128CNBlocks, "
 			      "and %u 256CNBlocks\n"
-			      "in one base partition with %u nodes.",
+			      "in one midplane with %u nodes.",
 			      i, blockreq->small16, blockreq->small32,
 			      blockreq->small64, blockreq->small128,
 			      blockreq->small256, bg_conf->mp_cnode_cnt);
@@ -964,7 +949,7 @@ extern int add_bg_record(List records, List *used_nodes,
 		}
 		list_iterator_destroy(itr);
 		destroy_bg_record(bg_record);
-		list_destroy(ba_mp_list);
+		FREE_NULL_LIST(ba_mp_list);
 	}
 
 	return SLURM_SUCCESS;
@@ -1091,7 +1076,7 @@ extern int down_nodecard(char *mp_name, bitoff_t io_start,
 	static select_ba_request_t blockreq;
 	int rc = SLURM_SUCCESS;
 	slurmctld_lock_t job_write_lock = {
-		NO_LOCK, WRITE_LOCK, WRITE_LOCK, NO_LOCK };
+		NO_LOCK, WRITE_LOCK, WRITE_LOCK, NO_LOCK, NO_LOCK };
 
 	xassert(mp_name);
 
@@ -1123,7 +1108,7 @@ extern int down_nodecard(char *mp_name, bitoff_t io_start,
 	   these bits when we set them below. */
 	if (io_start >= bg_conf->ionodes_per_mp
 	    || (io_start+io_cnt) >= bg_conf->ionodes_per_mp) {
-		debug("io %d-%d not configured on this "
+		debug("io %"BITSTR_FMT"-%"BITSTR_FMT" not configured on this "
 		      "system, only %d ionodes per midplane",
 		      io_start, io_start+io_cnt, bg_conf->ionodes_per_mp);
 		return EINVAL;
@@ -1135,7 +1120,7 @@ extern int down_nodecard(char *mp_name, bitoff_t io_start,
 	blockreq.conn_type[0] = SELECT_SMALL;
 	blockreq.save_name = mp_name;
 
-	debug3("here setting node %d of %d and ionodes %d-%d of %d",
+	debug3("here setting node %d of %d and ionodes %"BITSTR_FMT"-%"BITSTR_FMT" of %d",
 	       mp_bit, node_record_count, io_start,
 	       io_start+io_cnt, bg_conf->ionodes_per_mp);
 
@@ -1227,10 +1212,7 @@ extern int down_nodecard(char *mp_name, bitoff_t io_start,
 	if (bg_conf->layout_mode != LAYOUT_DYNAMIC) {
 		debug3("running non-dynamic mode");
 		/* This should never happen, but just in case... */
-		if (delete_list) {
-			list_destroy(delete_list);
-			delete_list = NULL;
-		}
+		FREE_NULL_LIST(delete_list);
 		/* If we found a block that is smaller or equal to a
 		   midplane we will just mark it in an error state as
 		   opposed to draining the node.
@@ -1274,8 +1256,7 @@ extern int down_nodecard(char *mp_name, bitoff_t io_start,
 			cnt_set++;
 		}
 		list_iterator_destroy(itr);
-		list_destroy(delete_list);
-		delete_list = NULL;
+		FREE_NULL_LIST(delete_list);
 
 		if (!cnt_set) {
 			FREE_NULL_BITMAP(iobitmap);
@@ -1474,7 +1455,7 @@ extern int down_nodecard(char *mp_name, bitoff_t io_start,
 			error_bg_record = bg_record;
 		}
 	}
-	list_destroy(requests);
+	FREE_NULL_LIST(requests);
 
 	sort_bg_record_inc_size(bg_lists->main);
 	last_bg_update = time(NULL);
@@ -1483,7 +1464,7 @@ extern int down_nodecard(char *mp_name, bitoff_t io_start,
 cleanup:
 	if (kill_list) {
 		bg_status_process_kill_job_list(kill_list, JOB_NODE_FAIL, 1);
-		list_destroy(kill_list);
+		FREE_NULL_LIST(kill_list);
 	}
 
 	if (!slurmctld_locked)
@@ -1511,8 +1492,7 @@ cleanup:
 		if (bg_conf->layout_mode == LAYOUT_DYNAMIC)
 			delete_it = 1;
 		free_block_list(NO_VAL, delete_list, delete_it, 0);
-		list_destroy(delete_list);
-		delete_list = NULL;
+		FREE_NULL_LIST(delete_list);
 	}
 
 	return rc;
@@ -1665,7 +1645,7 @@ extern int resume_block(bg_record_t *bg_record)
 		while ((ba_mp = list_next(itr))) {
 			node_ptr = &node_record_table_ptr[ba_mp->index];
 			if (node_ptr->reason
-			    && !strncmp(node_ptr->reason, "update_block", 12))
+			    && !xstrncmp(node_ptr->reason, "update_block", 12))
 				xfree(node_ptr->reason);
 		}
 		list_iterator_destroy(itr);
@@ -1836,7 +1816,7 @@ extern void bg_record_hw_failure(bg_record_t *bg_record, List *ret_kill_list)
 		if (jobinfo->cleaning || !IS_JOB_RUNNING(found_job_ptr))
 			continue;
 
-		qos_ptr = (slurmdb_qos_rec_t *)found_job_ptr->qos_ptr;
+		qos_ptr = found_job_ptr->qos_ptr;
 		if (qos_ptr) {
 			/* If we ever get one that
 			   isn't set correctly then we
@@ -1844,10 +1824,7 @@ extern void bg_record_hw_failure(bg_record_t *bg_record, List *ret_kill_list)
 			*/
 			if (!bit_test(bg_conf->reboot_qos_bitmap,
 				      qos_ptr->id)) {
-				if (kill_list) {
-					list_destroy(kill_list);
-					kill_list = NULL;
-				}
+				FREE_NULL_LIST(kill_list);
 				break;
 			}
 			if (!kill_list)
@@ -1862,7 +1839,7 @@ extern void bg_record_hw_failure(bg_record_t *bg_record, List *ret_kill_list)
 			*ret_kill_list = kill_list;
 		} else {
 			list_transfer(*ret_kill_list, kill_list);
-			list_destroy(kill_list);
+			FREE_NULL_LIST(kill_list);
 		}
 		kill_list = NULL;
 	}
@@ -1878,7 +1855,7 @@ extern void bg_record_post_hw_failure(
 	select_jobinfo_t *jobinfo;
 	ListIterator itr;
 	slurmctld_lock_t job_write_lock = {
-		NO_LOCK, WRITE_LOCK, WRITE_LOCK, NO_LOCK };
+		NO_LOCK, WRITE_LOCK, WRITE_LOCK, NO_LOCK, NO_LOCK };
 
 	if (!*kill_list)
 		return;
@@ -1910,7 +1887,7 @@ extern void bg_record_post_hw_failure(
 			       JOB_NODE_FAIL, 1);
 	}
 	list_iterator_destroy(itr);
-	list_destroy(*kill_list);
+	FREE_NULL_LIST(*kill_list);
 	*kill_list = NULL;
 	if (!slurmctld_locked)
 		unlock_slurmctld(job_write_lock);
@@ -1969,7 +1946,7 @@ static int _check_all_blocks_error(int node_inx, time_t event_time,
 			reason = "update_block: setting partial node down.";
 
 		if (!node_ptr->reason
-		    || !strncmp(node_ptr->reason, "update_block", 12)) {
+		    || !xstrncmp(node_ptr->reason, "update_block", 12)) {
 			xfree(node_ptr->reason);
 			node_ptr->reason = xstrdup(reason);
 			node_ptr->reason_time = event_time;

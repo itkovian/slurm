@@ -7,7 +7,7 @@
  *  Written by Morris Jette <jette@schedmd.com>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -36,25 +36,21 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#if HAVE_CONFIG_H
-#  include "config.h"
-#endif
-
-#if !defined(__FreeBSD__)
-#include <net/if.h>
-#endif
-#include <netinet/in.h>
 #include <arpa/inet.h>
-#include <sys/types.h>
-#include <sys/socket.h>
 #include <ifaddrs.h>
 #include <netdb.h>
+#include <netinet/in.h>
 #include <signal.h>
-#include <stdlib.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+
+/* net/if.h must come after sys/types.h on NetBSD */
+#if !defined(__FreeBSD__)
+#include <net/if.h>
+#endif
 
 #include "slurm/slurm_errno.h"
 #include "src/common/slurm_xlator.h"
@@ -120,44 +116,20 @@ typedef struct sw_gen_libstate {
  * of how this plugin satisfies that application.  SLURM will only load
  * a switch plugin if the plugin_type string has a prefix of "switch/".
  *
- * plugin_version - an unsigned 32-bit integer giving the version number
- * of the plugin.  If major and minor revisions are desired, the major
- * version number may be multiplied by a suitable magnitude constant such
- * as 100 or 1000.  Various SLURM versions will likely require a certain
- * minimum version for their plugins as this API matures.
+ * plugin_version - an unsigned 32-bit integer containing the Slurm version
+ * (major.minor.micro combined into a single number).
  */
 const char plugin_name[]        = "switch generic plugin";
 const char plugin_type[]        = "switch/generic";
-const uint32_t plugin_version   = 110;
+const uint32_t plugin_version   = SLURM_VERSION_NUMBER;
+const uint32_t plugin_id	= SWITCH_PLUGIN_GENERIC;
 
-uint32_t	debug_flags = 0;
+uint64_t debug_flags = 0;
 pthread_mutex_t	global_lock = PTHREAD_MUTEX_INITIALIZER;
 sw_gen_libstate_t *libstate = NULL;
 
 extern int switch_p_free_node_info(switch_node_info_t **switch_node);
 extern int switch_p_alloc_node_info(switch_node_info_t **switch_node);
-
-/* The _lock() and _unlock() functions are used to lock/unlock a
- * global mutex.  Used to serialize access to the global library
- * state variable nrt_state.
- */
-static void _lock(void)
-{
-	int err = 1;
-
-	while (err) {
-		err = pthread_mutex_lock(&global_lock);
-	}
-}
-
-static void _unlock(void)
-{
-	int err = 1;
-
-	while (err) {
-		err = pthread_mutex_unlock(&global_lock);
-	}
-}
 
 static void
 _alloc_libstate(void)
@@ -244,7 +216,7 @@ _find_node(char *node_name)
 		n = libstate->hash_table[i];
 		while (n) {
 			xassert(n->magic == SW_GEN_NODE_INFO_MAGIC);
-			if (!strcmp(n->node_name, node_name))
+			if (!xstrcmp(n->node_name, node_name))
 				return n;
 			n = n->next;
 		}
@@ -257,7 +229,7 @@ _find_node(char *node_name)
 		n = libstate->hash_table[i];
 		while (n) {
 			xassert(n->magic == SW_GEN_NODE_INFO_MAGIC);
-			if (!strcmp(n->node_name, node_name))
+			if (!xstrcmp(n->node_name, node_name))
 				return n;
 			n = n->next;
 		}
@@ -295,7 +267,7 @@ static void _cache_node_info(sw_gen_node_info_t *new_node_info)
 	struct sw_gen_node_info *next;
 	bool new_alloc;      /* True if this is new node to be added to cache */
 
-	_lock();
+	slurm_mutex_lock(&global_lock);
 	old_node_info = _find_node(new_node_info->node_name);
 	new_alloc = (old_node_info == NULL);
 	if (new_alloc) {
@@ -317,7 +289,7 @@ static void _cache_node_info(sw_gen_node_info_t *new_node_info)
 
 	if (new_alloc)
 		_hash_add_nodeinfo(old_node_info);
-	_unlock();
+	slurm_mutex_unlock(&global_lock);
 }
 
 /*
@@ -326,16 +298,16 @@ static void _cache_node_info(sw_gen_node_info_t *new_node_info)
  */
 int init(void)
 {
-	verbose("%s loaded", plugin_name);
+	debug("%s loaded", plugin_name);
 	debug_flags = slurm_get_debug_flags();
 	return SLURM_SUCCESS;
 }
 
 int fini(void)
 {
-	_lock();
+	slurm_mutex_lock(&global_lock);
 	_free_libstate();
-	_unlock();
+	slurm_mutex_unlock(&global_lock);
 	return SLURM_SUCCESS;
 }
 
@@ -361,9 +333,9 @@ int switch_p_libstate_restore(char * dir_name, bool recover)
 	if (debug_flags & DEBUG_FLAG_SWITCH)
 		info("switch_p_libstate_restore() starting");
 	/* No state saved or restored for this plugin, just initialize */
-	_lock();
+	slurm_mutex_lock(&global_lock);
 	_alloc_libstate();
-	_unlock();
+	slurm_mutex_unlock(&global_lock);
 
 	return SLURM_SUCCESS;
 }
@@ -464,6 +436,7 @@ void switch_p_free_jobinfo(switch_jobinfo_t *switch_job)
 			xfree(ifa_ptr->ifa_name);
 			xfree(ifa_ptr);
 		}
+		xfree(node_ptr);
 	}
 	xfree(gen_step_info->node_array);
 	xfree(gen_step_info);
@@ -505,14 +478,17 @@ int switch_p_pack_jobinfo(switch_jobinfo_t *switch_job, Buf buffer,
 	return SLURM_SUCCESS;
 }
 
-int switch_p_unpack_jobinfo(switch_jobinfo_t *switch_job, Buf buffer,
+int switch_p_unpack_jobinfo(switch_jobinfo_t **switch_job, Buf buffer,
 			    uint16_t protocol_version)
 {
-	sw_gen_step_info_t *gen_step_info = (sw_gen_step_info_t *) switch_job;
+	sw_gen_step_info_t *gen_step_info;
 	sw_gen_node_t *node_ptr;
 	sw_gen_ifa_t *ifa_ptr;
 	uint32_t uint32_tmp;
 	int i, j;
+
+	switch_p_alloc_jobinfo(switch_job, 0, 0);
+	gen_step_info = (sw_gen_step_info_t *) *switch_job;
 
 	if (debug_flags & DEBUG_FLAG_SWITCH)
 		info("switch_p_unpack_jobinfo() starting");
@@ -547,21 +523,10 @@ int switch_p_unpack_jobinfo(switch_jobinfo_t *switch_job, Buf buffer,
 	return SLURM_SUCCESS;
 
 unpack_error:
-	for (i = 0; i < gen_step_info->node_cnt; i++) {
-		node_ptr = gen_step_info->node_array[i];
-		for (j = 0; j < node_ptr->ifa_cnt; j++) {
-			ifa_ptr = node_ptr->ifa_array[j];
-			xfree(ifa_ptr->ifa_addr);
-			xfree(ifa_ptr->ifa_family);
-			xfree(ifa_ptr->ifa_name);
-			xfree(ifa_ptr);
-		}
-		xfree(node_ptr->ifa_array);
-		xfree(node_ptr->node_name);
-		xfree(node_ptr);
-	}
-	gen_step_info->node_cnt = 0;
-	xfree(gen_step_info->node_array);
+
+	switch_p_free_jobinfo((switch_jobinfo_t *)gen_step_info);
+	*switch_job = NULL;
+
 	return SLURM_ERROR;
 }
 
@@ -732,7 +697,7 @@ extern int switch_p_get_jobinfo(switch_jobinfo_t *switch_job,
 	sw_gen_ifa_t *ifa_ptr;
 	int i, s;
 	int bufsize = 1024;
-	char *buf = xmalloc(bufsize);
+	char *buf;
 
 #if defined(__FreeBSD__)
 #define IFNAMSIZ 16
@@ -754,6 +719,7 @@ extern int switch_p_get_jobinfo(switch_jobinfo_t *switch_job,
 		return SLURM_ERROR;
 	}
 
+	buf = xmalloc(bufsize);
 	s = snprintf(buf, bufsize, "(%s", node_ptr->node_name);
 	/* appends in buf triplets (ifname,ipversion,address) */
 	for (i = 0; i < node_ptr->ifa_cnt; i++) {
@@ -763,10 +729,10 @@ extern int switch_p_get_jobinfo(switch_jobinfo_t *switch_job,
 			xrealloc(buf, bufsize);
 		}
 		s += snprintf(buf+s, bufsize-s, ",(%s,%s,%s)",
-					  ifa_ptr->ifa_name, ifa_ptr->ifa_family,
-					  ifa_ptr->ifa_addr);
+			      ifa_ptr->ifa_name, ifa_ptr->ifa_family,
+			      ifa_ptr->ifa_addr);
 	}
-	s += snprintf(buf+s, bufsize-s, ")");
+	snprintf(buf+s, bufsize-s, ")");
 
 	*(char **)resulting_data = buf; /* return x-alloc'ed data */
 
@@ -837,8 +803,6 @@ extern int switch_p_build_node_info(switch_node_info_t *switch_node)
 	gen_node_info->node_name = xstrdup(hostname);
 	if (getifaddrs(&if_array) == 0) {
 		for (if_rec = if_array; if_rec; if_rec = if_rec->ifa_next) {
-			if (!if_rec->ifa_addr->sa_data)
-				continue;
 #if !defined(__FreeBSD__)
 	   		if (if_rec->ifa_flags & IFF_LOOPBACK)
 				continue;
@@ -901,16 +865,42 @@ extern int switch_p_pack_node_info(switch_node_info_t *switch_node,
 	return SLURM_SUCCESS;
 }
 
-extern int switch_p_unpack_node_info(switch_node_info_t *switch_node,
+extern int switch_p_free_node_info(switch_node_info_t **switch_node)
+{
+	sw_gen_node_info_t *gen_node_info = (sw_gen_node_info_t *) *switch_node;
+	int i;
+
+	if (debug_flags & DEBUG_FLAG_SWITCH)
+		info("switch_p_free_node_info() starting");
+	xassert(gen_node_info);
+	xassert(gen_node_info->magic == SW_GEN_NODE_INFO_MAGIC);
+	for (i = 0; i < gen_node_info->ifa_cnt; i++) {
+		xfree(gen_node_info->ifa_array[i]->ifa_addr);
+		xfree(gen_node_info->ifa_array[i]->ifa_family);
+		xfree(gen_node_info->ifa_array[i]->ifa_name);
+		xfree(gen_node_info->ifa_array[i]);
+	}
+	xfree(gen_node_info->ifa_array);
+	xfree(gen_node_info->node_name);
+	xfree(gen_node_info);
+
+	return SLURM_SUCCESS;
+}
+
+extern int switch_p_unpack_node_info(switch_node_info_t **switch_node,
 				     Buf buffer, uint16_t protocol_version)
 {
-	sw_gen_node_info_t *gen_node_info = (sw_gen_node_info_t *) switch_node;
+	sw_gen_node_info_t *gen_node_info;
 	sw_gen_ifa_t *ifa_ptr;
 	uint32_t uint32_tmp;
 	int i;
 
 	if (debug_flags & DEBUG_FLAG_SWITCH)
 		info("switch_p_unpack_node_info() starting");
+
+	switch_p_alloc_node_info(switch_node);
+	gen_node_info = (sw_gen_node_info_t *) *switch_node;
+
 	safe_unpack16(&gen_node_info->ifa_cnt, buffer);
 	gen_node_info->ifa_array = xmalloc(sizeof(sw_gen_ifa_t *) *
 					   gen_node_info->ifa_cnt);
@@ -936,38 +926,10 @@ extern int switch_p_unpack_node_info(switch_node_info_t *switch_node,
 	return SLURM_SUCCESS;
 
 unpack_error:
-	for (i = 0; i < gen_node_info->ifa_cnt; i++) {
-		xfree(gen_node_info->ifa_array[i]->ifa_addr);
-		xfree(gen_node_info->ifa_array[i]->ifa_family);
-		xfree(gen_node_info->ifa_array[i]->ifa_name);
-		xfree(gen_node_info->ifa_array[i]);
-	}
-	xfree(gen_node_info->ifa_array);
-	xfree(gen_node_info->node_name);
-	gen_node_info->ifa_cnt = 0;
+
+	switch_p_free_node_info(switch_node);
+
 	return SLURM_ERROR;
-}
-
-extern int switch_p_free_node_info(switch_node_info_t **switch_node)
-{
-	sw_gen_node_info_t *gen_node_info = (sw_gen_node_info_t *) *switch_node;
-	int i;
-
-	if (debug_flags & DEBUG_FLAG_SWITCH)
-		info("switch_p_free_node_info() starting");
-	xassert(gen_node_info);
-	xassert(gen_node_info->magic == SW_GEN_NODE_INFO_MAGIC);
-	for (i = 0; i < gen_node_info->ifa_cnt; i++) {
-		xfree(gen_node_info->ifa_array[i]->ifa_addr);
-		xfree(gen_node_info->ifa_array[i]->ifa_family);
-		xfree(gen_node_info->ifa_array[i]->ifa_name);
-		xfree(gen_node_info->ifa_array[i]);
-	}
-	xfree(gen_node_info->ifa_array);
-	xfree(gen_node_info->node_name);
-	xfree(gen_node_info);
-
-	return SLURM_SUCCESS;
 }
 
 extern char *switch_p_sprintf_node_info(switch_node_info_t *switch_node,
@@ -1034,5 +996,33 @@ extern int switch_p_slurmd_step_init(void)
 {
 	if (debug_flags & DEBUG_FLAG_SWITCH)
 		info("switch_p_slurmd_step_init() starting");
+	return SLURM_SUCCESS;
+}
+
+extern int switch_p_job_step_pre_suspend(stepd_step_rec_t *job)
+{
+	if (debug_flags & DEBUG_FLAG_SWITCH)
+		info("switch_p_job_step_pre_suspend() starting");
+	return SLURM_SUCCESS;
+}
+
+extern int switch_p_job_step_post_suspend(stepd_step_rec_t *job)
+{
+	if (debug_flags & DEBUG_FLAG_SWITCH)
+		info("switch_p_job_step_post_suspend() starting");
+	return SLURM_SUCCESS;
+}
+
+extern int switch_p_job_step_pre_resume(stepd_step_rec_t *job)
+{
+	if (debug_flags & DEBUG_FLAG_SWITCH)
+		info("switch_p_job_step_pre_resume() starting");
+	return SLURM_SUCCESS;
+}
+
+extern int switch_p_job_step_post_resume(stepd_step_rec_t *job)
+{
+	if (debug_flags & DEBUG_FLAG_SWITCH)
+		info("switch_p_job_step_post_resume() starting");
 	return SLURM_SUCCESS;
 }

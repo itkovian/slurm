@@ -1,4 +1,4 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Test of SLURM functionality
 #          Tests #SBATCH entry functionality in a batch script
@@ -14,7 +14,7 @@
 # CODE-OCEC-09-009. All rights reserved.
 #
 # This file is part of SLURM, a resource management program.
-# For details, see <http://slurm.schedmd.com/>.
+# For details, see <https://slurm.schedmd.com/>.
 # Please also read the included file: DISCLAIMER.
 #
 # SLURM is free software; you can redistribute it and/or modify it under
@@ -29,7 +29,7 @@
 #
 # You should have received a copy of the GNU General Public License along
 # with SLURM; if not, write to the Free Software Foundation, Inc.,
-# 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA.
+# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 ############################################################################
 source ./globals
 
@@ -41,6 +41,12 @@ set job_name    "TEST_NAME"
 set delay       10
 
 print_header $test_id
+
+set enforce [test_enforce_part_limits]
+if {![string compare $enforce "NO"]} {
+	send_user "\nWARNING: This test is incompatible EnforcePartLimits = $enforce\n"
+	exit 0
+}
 
 make_bash_script $file_in "
 #SBATCH --job-name='$job_name'
@@ -88,8 +94,7 @@ if {$matches != 1} {
 #
 # Build input script file
 #
-make_bash_script $file_in "
-#SBATCH -N1000000k
+make_bash_script $file_in "#SBATCH -N1000000k
 $bin_sleep $delay
 "
 set match 0
@@ -105,7 +110,7 @@ expect {
 		send_user "\nFAILURE: Test B was supposed to fail submission\n"
 		set exit_code 1
 		cancel_job $job_id
-	    exit 1
+		exit 1
 	}
 	timeout {
 		send_user "\nFAILURE: sbatch not responding\n"

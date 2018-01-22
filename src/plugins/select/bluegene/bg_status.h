@@ -7,7 +7,7 @@
  *  Written by Danny Auble <da@llnl.gov>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -49,7 +49,7 @@ extern int bg_status_update_block_state(bg_record_t *bg_record,
 					List kill_job_list);
 extern List bg_status_create_kill_job_list(void);
 extern void bg_status_process_kill_job_list(List kill_job_list,
-					    uint16_t job_state,
+					    uint32_t job_state,
 					    bool slurmctld_locked);
 
 /* defined in the various bridge_status' */

@@ -6,7 +6,7 @@
  *  Written by Yiannis Georgiou <yiannis.georgiou@bull.net>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://www.schedmd.com/slurmdocs/>.
+ *  For details, see <https://slurm.schedmd.com>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -35,9 +35,17 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
+#ifdef HAVE_CONFIG_H
+#  include "config.h"
+#endif
+
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
+
+#if HAVE_SYS_PRCTL_H
+#  include <sys/prctl.h>
+#endif
 
 #include "src/common/macros.h"
 #include "src/common/plugin.h"
@@ -72,15 +80,28 @@ static pthread_mutex_t g_context_lock =	PTHREAD_MUTEX_INITIALIZER;
 static bool init_run = false;
 static bool acct_shutdown = true;
 static int freq = 0;
+static pthread_t watch_node_thread_id = 0;
 
 static void *_watch_node(void *arg)
 {
 	int type = PROFILE_FILESYSTEM;
-	while (!acct_shutdown && acct_gather_profile_running) {
+
+#if HAVE_SYS_PRCTL_H
+	if (prctl(PR_SET_NAME, "acctg_fs", NULL, NULL, NULL) < 0) {
+		error("%s: cannot set my name to %s %m", __func__, "acctg_fs");
+	}
+#endif
+	(void) pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
+	(void) pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
+
+	while (init_run && acct_gather_profile_test()) {
 		/* Do this until shutdown is requested */
+		slurm_mutex_lock(&g_context_lock);
 		(*(ops.node_update))();
+		slurm_mutex_unlock(&g_context_lock);
+
 		slurm_mutex_lock(&acct_gather_profile_timer[type].notify_mutex);
-		pthread_cond_wait(
+		slurm_cond_wait(
 			&acct_gather_profile_timer[type].notify,
 			&acct_gather_profile_timer[type].notify_mutex);
 		slurm_mutex_unlock(&acct_gather_profile_timer[type].
@@ -117,24 +138,32 @@ extern int acct_gather_filesystem_init(void)
 
 done:
 	slurm_mutex_unlock(&g_context_lock);
-	xfree(type);
 	if (retval == SLURM_SUCCESS)
                 retval = acct_gather_conf_init();
-
+	if (retval != SLURM_SUCCESS)
+		fatal("can not open the %s plugin", type);
+	xfree(type);
 
 	return retval;
 }
 
 extern int acct_gather_filesystem_fini(void)
 {
-	int rc;
+	int rc = SLURM_SUCCESS;
 
-	if (!g_context)
-		return SLURM_SUCCESS;
+	slurm_mutex_lock(&g_context_lock);
+	if (g_context) {
+		init_run = false;
 
-	init_run = false;
-	rc = plugin_context_destroy(g_context);
-	g_context = NULL;
+		if (watch_node_thread_id) {
+			pthread_cancel(watch_node_thread_id);
+			pthread_join(watch_node_thread_id, NULL);
+		}
+
+		rc = plugin_context_destroy(g_context);
+		g_context = NULL;
+	}
+	slurm_mutex_unlock(&g_context_lock);
 
 	return rc;
 }
@@ -142,8 +171,6 @@ extern int acct_gather_filesystem_fini(void)
 extern int acct_gather_filesystem_startpoll(uint32_t frequency)
 {
 	int retval = SLURM_SUCCESS;
-	pthread_attr_t attr;
-	pthread_t _watch_node_thread_id;
 
 	if (acct_gather_filesystem_init() < 0)
 		return SLURM_ERROR;
@@ -164,17 +191,9 @@ extern int acct_gather_filesystem_startpoll(uint32_t frequency)
 	}
 
 	/* create polling thread */
-	slurm_attr_init(&attr);
-	if (pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED))
-		error("pthread_attr_setdetachstate error %m");
+	slurm_thread_create(&watch_node_thread_id, _watch_node, NULL);
 
-	if (pthread_create(&_watch_node_thread_id, &attr, &_watch_node, NULL)) {
-		debug("acct_gather_filesystem failed to create _watch_node "
-			"thread: %m");
-		frequency = 0;
-	} else
-		debug3("acct_gather_filesystem dynamic logging enabled");
-	slurm_attr_destroy(&attr);
+	debug3("acct_gather_filesystem dynamic logging enabled");
 
 	return retval;
 }

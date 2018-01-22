@@ -1,4 +1,4 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Test of SLURM functionality
 #          Test priorities assigned to jobs. Uses srun --hold and --batch options.
@@ -13,7 +13,7 @@
 # CODE-OCEC-09-009. All rights reserved.
 #
 # This file is part of SLURM, a resource management program.
-# For details, see <http://slurm.schedmd.com/>.
+# For details, see <https://slurm.schedmd.com/>.
 # Please also read the included file: DISCLAIMER.
 #
 # SLURM is free software; you can redistribute it and/or modify it under
@@ -34,6 +34,7 @@ source ./globals
 
 set test_id              "7.1"
 set exit_code            0
+set file_in              "test$test_id.input"
 set job_id1              0
 set job_id2              0
 set job_id3              0
@@ -44,24 +45,18 @@ set multi                0
 
 print_header $test_id
 
-if {[test_wiki_sched] == 1} {
-	send_user "\nWARNING: not compatable with sched/wiki (Maui)\n"
-	send_user "         or sched/wiki2 (Moab) schedulers\n"
-	exit $exit_code
-}
-
 # expected outcome is different under multifactor rule
 if { ![string compare [priority_type] multifactor] } {
 	set multi 1
 }
 
 
-make_bash_script "pwd_script" { $bin_pwd }
+make_bash_script $file_in { $bin_pwd }
 
 #
 # Spawn three sbatch job, one held
 #
-set sbatch_pid [spawn $sbatch -t1 --output=/dev/null --error=/dev/null  pwd_script]
+set sbatch_pid [spawn $sbatch -t1 --output=/dev/null --error=/dev/null  $file_in]
 expect {
 	-re "Submitted batch job ($number)" {
 		set job_id1 $expect_out(1,string)
@@ -76,7 +71,7 @@ expect {
 		wait
 	}
 }
-set sbatch_pid [spawn $sbatch -t1 --output=/dev/null --error=/dev/null pwd_script]
+set sbatch_pid [spawn $sbatch -t1 --output=/dev/null --error=/dev/null $file_in]
 expect {
 	-re "Submitted batch job ($number)" {
                 set job_id2 $expect_out(1,string)
@@ -91,7 +86,7 @@ expect {
 		wait
         }
 }
-set sbatch_pid [spawn $sbatch -t1 --output=/dev/null --error=/dev/null --hold pwd_script]
+set sbatch_pid [spawn $sbatch -t1 --output=/dev/null --error=/dev/null --hold $file_in]
 expect {
 	-re "Submitted batch job ($number)" {
                 set job_id3 $expect_out(1,string)
@@ -127,7 +122,9 @@ if {$job_id1 != 0} {
 			wait
 		}
 	}
-	cancel_job $job_id1
+        if {[cancel_job $job_id1] != 0} {
+		set exit_code   1
+	}
 } else {
 	set exit_code   1
 }
@@ -147,7 +144,9 @@ if {$job_id2 != 0} {
 			wait
                 }
         }
-        cancel_job $job_id2
+        if {[cancel_job $job_id2] != 0} {
+		set exit_code   1
+	}
 } else {
         set exit_code   1
 }
@@ -167,7 +166,9 @@ if {$job_id3 != 0} {
 			wait
                 }
         }
-        cancel_job $job_id3
+        if {[cancel_job $job_id3] != 0} {
+		set exit_code   1
+	}
 } else {
         set exit_code   1
 }
@@ -192,7 +193,7 @@ if {$prio3 != 0} {
 }
 
 if {$exit_code == 0} {
-	exec $bin_rm -f pwd_script
+	exec $bin_rm -f $file_in
 	send_user "\nSUCCESS\n"
 }
 exit $exit_code

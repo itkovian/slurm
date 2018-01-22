@@ -1,4 +1,4 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Test of SLURM functionality
 #          Validates that the OverTimeLimit value set in the
@@ -13,7 +13,7 @@
 # Written by Nathan Yee <nyee32@schedmd.com>
 #
 # This file is part of SLURM, a resource management program.
-# For details, see <http://slurm.schedmd.com/>.
+# For details, see <https://slurm.schedmd.com/>.
 # Please also read the included file: DISCLAIMER.
 #
 # SLURM is free software; you can redistribute it and/or modify it under
@@ -49,9 +49,13 @@ if {[test_launch_poe]} {
 	send_user "\nWARNING: This test is incompatible with launch/poe systems\n"
 	exit 0
 }
+if {[is_super_user] == 0} {
+	send_user "\nWARNING: This test can't be run except as SlurmUser\n"
+	exit 0
+}
 
 #
-# Slurm time limit enforcement is performed within one minute of the actucal
+# Slurm time limit enforcement is performed within one minute of the actual
 # job time limit, so a one minute limit job will be killed 60 to 120 seconds
 # after initiation. With OverTimeLimit=2, that is moved to 180 to 240 seconds.
 #

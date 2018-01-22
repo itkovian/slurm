@@ -4,7 +4,7 @@
  *  Copyright (C) 2012 CEA/DAM/DIF
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -64,7 +64,7 @@ static void xtree_free_childs(xtree_t* tree, xtree_node_t* node)
 		}
 		current_node = current_node->parent;
 		if (tree->free)
-			tree->free(free_later->data);
+			tree->free(free_later);
 		xfree(free_later);
 		--tree->count;
 	}
@@ -80,7 +80,7 @@ void xtree_free(xtree_t* tree)
 	xtree_free_childs(tree, tree->root);
 
 	if (tree->free)
-		tree->free(tree->root->data);
+		tree->free(tree->root);
 	xfree(tree->root);
 
 	xtree_init(tree, tree->free);
@@ -315,6 +315,14 @@ xtree_node_t* xtree_walk(xtree_t* tree,
 
 	current_node = node;
 	while (current_node) {
+
+		if (level >= min_level && !action(current_node,
+						  XTREE_GROWING,
+						  level,
+						  arg)) {
+			return current_node;
+		}
+
 		/* go down and continue counting */
 		if (current_node->start) {
 			if (level >= min_level && !action(current_node,
@@ -426,7 +434,7 @@ xtree_node_t* xtree_delete(xtree_t* tree, xtree_node_t* node)
 
 	xtree_free_childs(tree, node);
 	if (tree->free)
-		tree->free(node->data);
+		tree->free(node);
 	xfree(node);
 	--tree->count;
 
@@ -465,7 +473,7 @@ xtree_node_t** xtree_get_parents(xtree_t* tree,
 	if (parents_count != 0) {
 		parents_list = (xtree_node_t**)xrealloc(parents_list,
 				sizeof(xtree_node_t*)*(parents_count+1));
-		/* safety mesure, can be used as strlen if users assumes it */
+		/* safety measure, can be used as strlen if users assumes it */
 		parents_list[parents_count] = NULL;
 	}
 	else {
@@ -559,7 +567,7 @@ xtree_node_t** xtree_get_leaves(xtree_t* tree,
 	if (st.list_count != 0) {
 		st.list = (xtree_node_t**)xrealloc(st.list,
 				sizeof(xtree_node_t*)*(st.list_count+1));
-		/* safety mesure, can be used as strlen if users assumes it */
+		/* safety measure, can be used as strlen if users assumes it */
 		st.list[st.list_count] = NULL;
 	}
 	else {

@@ -7,7 +7,7 @@
  *  Matthieu Hautreux
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -36,12 +36,9 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#if HAVE_CONFIG_H
-#include "config.h"
-#endif
-
-#include <sys/types.h>
+#include <limits.h>
 #include <stdlib.h>		/* getenv   */
+#include <sys/types.h>
 
 #include "slurm/slurm_errno.h"
 #include "slurm/slurm.h"
@@ -49,10 +46,6 @@
 #include "src/plugins/jobacct_gather/cgroup/jobacct_gather_cgroup.h"
 #include "src/slurmd/slurmstepd/slurmstepd_job.h"
 #include "src/slurmd/slurmd/slurmd.h"
-
-#ifndef PATH_MAX
-#define PATH_MAX 256
-#endif
 
 static char user_cgroup_path[PATH_MAX];
 static char job_cgroup_path[PATH_MAX];
@@ -239,10 +232,22 @@ jobacct_gather_cgroup_memory_attach_task(pid_t pid, jobacct_id_t *jobacct_id)
 
 	/* build job step cgroup relative path if not set (may not be) */
 	if (*jobstep_cgroup_path == '\0') {
-		if (snprintf(jobstep_cgroup_path, PATH_MAX, "%s/step_%u",
-			     job_cgroup_path, stepid) >= PATH_MAX) {
+		int len;
+		if (stepid == SLURM_BATCH_SCRIPT) {
+			len = snprintf(jobstep_cgroup_path, PATH_MAX,
+				       "%s/step_batch", job_cgroup_path);
+		} else if (stepid == SLURM_EXTERN_CONT) {
+			len = snprintf(jobstep_cgroup_path, PATH_MAX,
+				       "%s/step_extern", job_cgroup_path);
+		} else {
+			len = snprintf(jobstep_cgroup_path, PATH_MAX,
+				       "%s/step_%u",
+				       job_cgroup_path, stepid);
+		}
+		if (len >= PATH_MAX) {
 			error("jobacct_gather/cgroup: unable to build job step "
-			      "%u memory cg relative path : %m", stepid);
+			      "%u.%u memory cg relative path : %m",
+			      jobid, stepid);
 			return SLURM_ERROR;
 		}
 	}
@@ -251,11 +256,9 @@ jobacct_gather_cgroup_memory_attach_task(pid_t pid, jobacct_id_t *jobacct_id)
 	if (snprintf(task_cgroup_path, PATH_MAX, "%s/task_%u",
 		     jobstep_cgroup_path, taskid) >= PATH_MAX) {
 		error("jobacct_gather/cgroup: unable to build task %u "
-		      "memory cg relative path : %m", taskid);
+		      "memory cg relative path: %m", taskid);
 		return SLURM_ERROR;
 	}
-
-	fstatus = SLURM_SUCCESS;
 
 	/*
 	 * create memory root cg and lock it
@@ -297,7 +300,7 @@ jobacct_gather_cgroup_memory_attach_task(pid_t pid, jobacct_id_t *jobacct_id)
 		goto error;
 	}
 
-	if (xcgroup_instanciate(&user_memory_cg) != XCGROUP_SUCCESS) {
+	if (xcgroup_instantiate(&user_memory_cg) != XCGROUP_SUCCESS) {
 		xcgroup_destroy(&user_memory_cg);
 		error("jobacct_gather/cgroup: unable to instanciate user %u "
 		      "memory cgroup", uid);
@@ -318,7 +321,7 @@ jobacct_gather_cgroup_memory_attach_task(pid_t pid, jobacct_id_t *jobacct_id)
 		goto error;
 	}
 
-	if (xcgroup_instanciate(&job_memory_cg) != XCGROUP_SUCCESS) {
+	if (xcgroup_instantiate(&job_memory_cg) != XCGROUP_SUCCESS) {
 		xcgroup_destroy(&user_memory_cg);
 		xcgroup_destroy(&job_memory_cg);
 		error("jobacct_gather/cgroup: unable to instanciate job %u "
@@ -343,7 +346,7 @@ jobacct_gather_cgroup_memory_attach_task(pid_t pid, jobacct_id_t *jobacct_id)
 		goto error;
 	}
 
-	if (xcgroup_instanciate(&step_memory_cg) != XCGROUP_SUCCESS) {
+	if (xcgroup_instantiate(&step_memory_cg) != XCGROUP_SUCCESS) {
 		xcgroup_destroy(&user_memory_cg);
 		xcgroup_destroy(&job_memory_cg);
 		xcgroup_destroy(&step_memory_cg);
@@ -369,7 +372,7 @@ jobacct_gather_cgroup_memory_attach_task(pid_t pid, jobacct_id_t *jobacct_id)
 		goto error;
 	}
 
-	if (xcgroup_instanciate(&task_memory_cg) != XCGROUP_SUCCESS) {
+	if (xcgroup_instantiate(&task_memory_cg) != XCGROUP_SUCCESS) {
 		xcgroup_destroy(&user_memory_cg);
 		xcgroup_destroy(&job_memory_cg);
 		xcgroup_destroy(&step_memory_cg);

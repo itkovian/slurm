@@ -8,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -49,6 +49,9 @@
 #include "slurm/slurm_errno.h"
 #include <sys/types.h>
 #include <pwd.h>
+
+extern int with_slurmdbd;
+extern uid_t db_api_uid;
 
 extern int slurm_acct_storage_init(char *loc); /* load the plugin */
 extern int slurm_acct_storage_fini(void); /* unload the plugin */
@@ -118,12 +121,28 @@ extern int acct_storage_g_add_clusters(void *db_conn, uint32_t uid,
 				       List cluster_list);
 
 /*
- * add associations to accounting system
- * IN:  association_list List of slurmdb_association_rec_t *
+ * add federations to accounting system
+ * IN:  list List of slurmdb_federation_rec_t *
  * RET: SLURM_SUCCESS on success SLURM_ERROR else
  */
-extern int acct_storage_g_add_associations(void *db_conn, uint32_t uid,
-					   List association_list);
+extern int acct_storage_g_add_federations(void *db_conn, uint32_t uid,
+					  List federation_list);
+
+/*
+ * add tres to accounting system
+ * IN:  tres_list List of slurmdb_tres_rec_t *
+ * RET: SLURM_SUCCESS on success SLURM_ERROR else
+ */
+extern int acct_storage_g_add_tres(void *db_conn, uint32_t uid,
+				   List tres_list_in);
+
+/*
+ * add associations to accounting system
+ * IN:  assoc_list List of slurmdb_assoc_rec_t *
+ * RET: SLURM_SUCCESS on success SLURM_ERROR else
+ */
+extern int acct_storage_g_add_assocs(void *db_conn, uint32_t uid,
+					   List assoc_list);
 
 /*
  * add qos's to accounting system
@@ -189,14 +208,25 @@ extern List acct_storage_g_modify_clusters(void *db_conn, uint32_t uid,
 
 /*
  * modify existing associations in the accounting system
- * IN:  slurmdb_association_cond_t *assoc_cond
- * IN:  slurmdb_association_rec_t *assoc
+ * IN:  slurmdb_assoc_cond_t *assoc_cond
+ * IN:  slurmdb_assoc_rec_t *assoc
  * RET: List containing (char *'s) else NULL on error
  */
-extern List acct_storage_g_modify_associations(
+extern List acct_storage_g_modify_assocs(
 	void *db_conn, uint32_t uid,
-	slurmdb_association_cond_t *assoc_cond,
-	slurmdb_association_rec_t *assoc);
+	slurmdb_assoc_cond_t *assoc_cond,
+	slurmdb_assoc_rec_t *assoc);
+
+/*
+ * modify existing federations in the accounting system
+ * IN:  slurmdb_federation_cond_t *fed_cond
+ * IN:  slurmdb_federation_rec_t  *fed
+ * RET: List containing (char *'s) else NULL on error
+ */
+extern List acct_storage_g_modify_federations(
+				void *db_conn, uint32_t uid,
+				slurmdb_federation_cond_t *fed_cond,
+				slurmdb_federation_rec_t *fed);
 
 /*
  * modify existing job in the accounting system
@@ -281,11 +311,20 @@ extern List acct_storage_g_remove_clusters(void *db_conn, uint32_t uid,
 
 /*
  * remove associations from accounting system
- * IN:  slurmdb_association_cond_t *assoc_cond
+ * IN:  slurmdb_assoc_cond_t *assoc_cond
  * RET: List containing (char *'s) else NULL on error
  */
-extern List acct_storage_g_remove_associations(
-	void *db_conn, uint32_t uid, slurmdb_association_cond_t *assoc_cond);
+extern List acct_storage_g_remove_assocs(
+	void *db_conn, uint32_t uid, slurmdb_assoc_cond_t *assoc_cond);
+
+/*
+ * remove federations from accounting system
+ * IN:  slurmdb_federation_cond_t *fed_cond
+ * RET: List containing (char *'s) else NULL on error
+ */
+extern List acct_storage_g_remove_federations(
+					void *db_conn, uint32_t uid,
+					slurmdb_federation_cond_t *fed_cond);
 
 /*
  * remove qos from accounting system
@@ -350,6 +389,15 @@ extern List acct_storage_g_get_clusters(
 
 /*
  * get info from the storage
+ * IN:  slurmdb_federation_cond_t *
+ * RET: returns List of slurmdb_federation_rec_t *
+ * note List needs to be freed when called
+ */
+extern List acct_storage_g_get_federations(void *db_conn, uint32_t uid,
+					   slurmdb_federation_cond_t *fed_cond);
+
+/*
+ * get info from the storage
  * RET: List of config_key_pairs_t *
  * note List needs to be freed when called
  */
@@ -357,12 +405,21 @@ extern List acct_storage_g_get_config(void *db_conn, char *config_name);
 
 /*
  * get info from the storage
- * IN:  slurmdb_association_cond_t *
- * RET: List of slurmdb_association_rec_t *
+ * IN:  slurmdb_tres_cond_t *
+ * RET: List of slurmdb_tres_rec_t *
  * note List needs to be freed when called
  */
-extern List acct_storage_g_get_associations(
-	void *db_conn, uint32_t uid, slurmdb_association_cond_t *assoc_cond);
+extern List acct_storage_g_get_tres(
+	void *db_conn, uint32_t uid, slurmdb_tres_cond_t *tres_cond);
+
+/*
+ * get info from the storage
+ * IN:  slurmdb_assoc_cond_t *
+ * RET: List of slurmdb_assoc_rec_t *
+ * note List needs to be freed when called
+ */
+extern List acct_storage_g_get_assocs(
+	void *db_conn, uint32_t uid, slurmdb_assoc_cond_t *assoc_cond);
 
 /*
  * get info from the storage
@@ -375,12 +432,12 @@ extern List acct_storage_g_get_events(
 
 /*
  * get info from the storage
- * IN:  slurmdb_association_cond_t *
- * RET: List of slurmdb_association_rec_t *
+ * IN:  slurmdb_assoc_cond_t *
+ * RET: List of slurmdb_assoc_rec_t *
  * note List needs to be freed when called
  */
 extern List acct_storage_g_get_problems(
-	void *db_conn, uint32_t uid, slurmdb_association_cond_t *assoc_cond);
+	void *db_conn, uint32_t uid, slurmdb_assoc_cond_t *assoc_cond);
 
 /*
  * get info from the storage
@@ -430,7 +487,7 @@ extern List acct_storage_g_get_txn(void *db_conn,  uint32_t uid,
 
 /*
  * get info from the storage
- * IN/OUT:  in void * (acct_association_rec_t *) or
+ * IN/OUT:  in void * (acct_assoc_rec_t *) or
  *          (acct_wckey_rec_t *) with the id set
  * IN:  type what type is 'in'
  * IN:  start time stamp for records >=
@@ -450,7 +507,17 @@ extern int acct_storage_g_get_usage(
  */
 extern int acct_storage_g_roll_usage(void *db_conn,
 				     time_t sent_start, time_t sent_end,
-				     uint16_t archive_data);
+				     uint16_t archive_data,
+				     rollup_stats_t *rollup_stats);
+
+/*
+ * Fix runaway jobs
+ * IN: jobs, a list of all the runaway jobs
+ * RET: SLURM_SUCCESS on success SLURM_ERROR else
+ */
+extern int acct_storage_g_fix_runaway_jobs(void *db_conn,
+					   uint32_t uid, List jobs);
+
 /*
  * record shares used information for backup in case slurmctld restarts
  * IN:  account_list List of shares_used_object_t *
@@ -469,6 +536,35 @@ extern int acct_storage_g_update_shares_used(void *db_conn, List acct_list);
 extern int acct_storage_g_flush_jobs_on_cluster(
 	void *db_conn, time_t event_time);
 
+ /* Reconfig the plugin, if dbd is true forward reconfig to the DBD */
+
+extern int acct_storage_g_reconfig(void *db_conn, bool dbd);
+
+/*
+ * Reset the lft and rights of an association table.
+ * RET: SLURM_SUCCESS on success SLURM_ERROR else
+ */
+extern int acct_storage_g_reset_lft_rgt(void *db_conn, uid_t uid,
+					List cluster_list);
+
+/*
+ * Get performance statistics.
+ * RET: SLURM_SUCCESS on success SLURM_ERROR else
+ */
+extern int acct_storage_g_get_stats(void *db_conn, slurmdb_stats_rec_t **stats);
+
+/*
+ * Clear performance statistics.
+ * RET: SLURM_SUCCESS on success SLURM_ERROR else
+ */
+extern int acct_storage_g_clear_stats(void *db_conn);
+
+/*
+ * Shutdown database server.
+ * RET: SLURM_SUCCESS on success SLURM_ERROR else
+ */
+extern int acct_storage_g_shutdown(void *db_conn);
+
 /*********************** CLUSTER ACCOUNTING STORAGE **************************/
 
 extern int clusteracct_storage_g_node_down(void *db_conn,
@@ -480,16 +576,23 @@ extern int clusteracct_storage_g_node_up(void *db_conn,
 					 struct node_record *node_ptr,
 					 time_t event_time);
 
-extern int clusteracct_storage_g_cluster_cpus(void *db_conn,
+extern int clusteracct_storage_g_cluster_tres(void *db_conn,
 					      char *cluster_nodes,
-					      uint32_t cpus,
-					      time_t event_time);
+					      char *tres_str_in,
+					      time_t event_time,
+					      uint16_t rpc_version);
 
 extern int clusteracct_storage_g_register_ctld(void *db_conn, uint16_t port);
 extern int clusteracct_storage_g_register_disconn_ctld(
 	void *db_conn, char *control_host);
 extern int clusteracct_storage_g_fini_ctld(void *db_conn,
 					   slurmdb_cluster_rec_t *cluster_rec);
+
+/*
+ * load into the storage the start of a job
+ */
+extern int jobacct_storage_job_start_direct(void *db_conn,
+					    struct job_record *job_ptr);
 
 /*
  * load into the storage the start of a job

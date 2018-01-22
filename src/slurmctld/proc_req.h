@@ -7,7 +7,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -53,6 +53,9 @@ typedef struct connection_arg {
 	slurm_addr_t cli_addr;
 } connection_arg_t;
 
+/* Free memory used to track RPC usage by type and user */
+extern void free_rpc_stats(void);
+
 /*
  * slurmctld_req  - Process an individual RPC request
  * IN/OUT msg - the request message, data associated with the message is freed
@@ -81,7 +84,7 @@ extern int slurm_drain_nodes(char *node_list, char *reason,
  * NOTE: This is utilzed by plugins and not via RPC and it sets its
  *	own locks.
  */
-extern int slurm_fail_job(uint32_t job_id, uint16_t job_state);
+extern int slurm_fail_job(uint32_t job_id, uint32_t job_state);
 
 /* Copy an array of type char **, xmalloc() the array and xstrdup() the
  * strings in the array */

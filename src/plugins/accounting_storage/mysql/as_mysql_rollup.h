@@ -10,7 +10,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -45,18 +45,14 @@
 #include "accounting_storage_mysql.h"
 
 extern int as_mysql_hourly_rollup(mysql_conn_t *mysql_conn,
-				  char *cluster_name, 
+				  char *cluster_name,
 				  time_t start,
 				  time_t end,
 				  uint16_t archive_data);
-extern int as_mysql_daily_rollup(mysql_conn_t *mysql_conn,
-			      char *cluster_name,
-				 time_t start, 
-				 time_t end,
-				 uint16_t archive_data);
-extern int as_mysql_monthly_rollup(mysql_conn_t *mysql_conn,
-				char *cluster_name,
+extern int as_mysql_nonhour_rollup(mysql_conn_t *mysql_conn,
+				   bool run_month,
+				   char *cluster_name,
 				   time_t start,
 				   time_t end,
-				uint16_t archive_data);
+				   uint16_t archive_data);
 #endif

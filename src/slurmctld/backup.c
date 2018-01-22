@@ -8,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -37,15 +37,10 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#ifdef HAVE_CONFIG_H
-#  include "config.h"
-#endif
-
-#ifdef WITH_PTHREADS
-#  include <pthread.h>
-#endif				/* WITH_PTHREADS */
+#include "config.h"
 
 #include <errno.h>
+#include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -65,18 +60,11 @@
 #include "src/common/xsignal.h"
 #include "src/common/xstring.h"
 
+#include "src/slurmctld/heartbeat.h"
 #include "src/slurmctld/locks.h"
 #include "src/slurmctld/read_config.h"
 #include "src/slurmctld/slurmctld.h"
 #include "src/slurmctld/trigger_mgr.h"
-
-#ifndef VOLATILE
-#if defined(__STDC__) || defined(__cplusplus)
-#define VOLATILE volatile
-#else
-#define VOLATILE
-#endif
-#endif
 
 #define SHUTDOWN_WAIT     2	/* Time to wait for primary server shutdown */
 
@@ -91,7 +79,7 @@ inline static void  _update_cred_key(void);
 
 /* Local variables */
 static bool          dump_core = false;
-static VOLATILE bool takeover = false;
+static volatile bool takeover = false;
 static time_t last_controller_response;
 
 /*
@@ -111,11 +99,10 @@ void run_backup(slurm_trigger_callbacks_t *callbacks)
 	int i;
 	uint32_t trigger_type;
 	time_t last_ping = 0;
-	pthread_attr_t thread_attr_sig, thread_attr_rpc;
 	slurmctld_lock_t config_read_lock = {
-		READ_LOCK, NO_LOCK, NO_LOCK, NO_LOCK };
+		READ_LOCK, NO_LOCK, NO_LOCK, NO_LOCK, NO_LOCK };
 	slurmctld_lock_t config_write_lock = {
-		WRITE_LOCK, WRITE_LOCK, WRITE_LOCK, WRITE_LOCK };
+		WRITE_LOCK, WRITE_LOCK, WRITE_LOCK, WRITE_LOCK, NO_LOCK };
 
 	info("slurmctld running in background mode");
 	takeover = false;
@@ -129,25 +116,14 @@ void run_backup(slurm_trigger_callbacks_t *callbacks)
 	/*
 	 * create attached thread to process RPCs
 	 */
-	slurm_attr_init(&thread_attr_rpc);
-	while (pthread_create(&slurmctld_config.thread_id_rpc,
-			      &thread_attr_rpc, _background_rpc_mgr, NULL)) {
-		error("pthread_create error %m");
-		sleep(1);
-	}
-	slurm_attr_destroy(&thread_attr_rpc);
+	slurm_thread_create(&slurmctld_config.thread_id_rpc,
+			    _background_rpc_mgr, NULL);
 
 	/*
 	 * create attached thread for signal handling
 	 */
-	slurm_attr_init(&thread_attr_sig);
-	while (pthread_create(&slurmctld_config.thread_id_sig,
-			      &thread_attr_sig, _background_signal_hand,
-			      NULL)) {
-		error("pthread_create %m");
-		sleep(1);
-	}
-	slurm_attr_destroy(&thread_attr_sig);
+	slurm_thread_create(&slurmctld_config.thread_id_sig,
+			    _background_signal_hand, NULL);
 	trigger_type = TRIGGER_TYPE_BU_CTLD_RES_OP;
 	_trigger_slurmctld_event(trigger_type);
 
@@ -161,7 +137,7 @@ void run_backup(slurm_trigger_callbacks_t *callbacks)
 		/* Lock of slurmctld_conf below not important */
 		if (slurmctld_conf.slurmctld_timeout &&
 		    (takeover == false) &&
-		    (difftime(time(NULL), last_ping) <
+		    ((time(NULL) - last_ping) <
 		     (slurmctld_conf.slurmctld_timeout / 3)))
 			continue;
 
@@ -173,15 +149,25 @@ void run_backup(slurm_trigger_callbacks_t *callbacks)
 			/* primary no longer respond */
 			break;
 		} else {
-			uint32_t timeout;
-			lock_slurmctld(config_read_lock);
-			timeout = slurmctld_conf.slurmctld_timeout;
-			unlock_slurmctld(config_read_lock);
+			time_t use_time, last_heartbeat;
 
-			if (difftime(time(NULL), last_controller_response) >
-			    timeout) {
+			last_heartbeat = get_last_heartbeat();
+			debug("%s: last_heartbeat %ld", __func__,
+			      last_heartbeat);
+
+			if (last_heartbeat > last_controller_response) {
+				error("Last message to the controller was at %ld,"
+				      " but the last heartbeat was written at %ld,"
+				      " trusting the filesystem instead of the network"
+				      " and not asserting control at this time.",
+				      last_controller_response, last_heartbeat);
+				use_time = last_heartbeat;
+			} else
+				use_time = last_controller_response;
+
+			if ((time(NULL) - use_time) >
+			    slurmctld_conf.slurmctld_timeout)
 				break;
-			}
 		}
 	}
 
@@ -253,7 +239,7 @@ static void *_background_signal_hand(void *no_data)
 	sigset_t set;
 	/* Locks: Write configuration, job, node, and partition */
 	slurmctld_lock_t config_write_lock = {
-		WRITE_LOCK, WRITE_LOCK, WRITE_LOCK, WRITE_LOCK };
+		WRITE_LOCK, WRITE_LOCK, WRITE_LOCK, WRITE_LOCK, NO_LOCK };
 
 	(void) pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
 	(void) pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
@@ -314,16 +300,16 @@ static void _sig_handler(int signal)
  *	controller (that's us) */
 static void *_background_rpc_mgr(void *no_data)
 {
-	slurm_fd_t newsockfd;
-	slurm_fd_t sockfd;
+	int newsockfd;
+	int sockfd;
 	slurm_addr_t cli_addr;
-	slurm_msg_t *msg = NULL;
+	slurm_msg_t msg;
 	int error_code;
 	char* node_addr = NULL;
 
 	/* Read configuration only */
 	slurmctld_lock_t config_read_lock = {
-		READ_LOCK, NO_LOCK, NO_LOCK, NO_LOCK };
+		READ_LOCK, NO_LOCK, NO_LOCK, NO_LOCK, NO_LOCK };
 	int sigarray[] = {SIGUSR1, 0};
 
 	(void) pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
@@ -334,8 +320,8 @@ static void *_background_rpc_mgr(void *no_data)
 	lock_slurmctld(config_read_lock);
 
 	/* set node_addr to bind to (NULL means any) */
-	if ((strcmp(slurmctld_conf.backup_controller,
-		    slurmctld_conf.backup_addr) != 0)) {
+	if ((xstrcmp(slurmctld_conf.backup_controller,
+		     slurmctld_conf.backup_addr) != 0)) {
 		node_addr = slurmctld_conf.backup_addr ;
 	}
 
@@ -369,24 +355,23 @@ static void *_background_rpc_mgr(void *no_data)
 			continue;
 		}
 
-		msg = xmalloc(sizeof(slurm_msg_t));
-		slurm_msg_t_init(msg);
-		if (slurm_receive_msg(newsockfd, msg, 0) != 0)
+		slurm_msg_t_init(&msg);
+		if (slurm_receive_msg(newsockfd, &msg, 0) != 0)
 			error("slurm_receive_msg: %m");
 
-		error_code = _background_process_msg(msg);
+		error_code = _background_process_msg(&msg);
 		if ((error_code == SLURM_SUCCESS)			&&
-		    (msg->msg_type == REQUEST_SHUTDOWN_IMMEDIATE)	&&
+		    (msg.msg_type == REQUEST_SHUTDOWN_IMMEDIATE)	&&
 		    (slurmctld_config.shutdown_time == 0))
 			slurmctld_config.shutdown_time = time(NULL);
 
-		slurm_free_msg(msg);
+		slurm_free_msg_members(&msg);
 
-		slurm_close_accepted_conn(newsockfd);	/* close new socket */
+		close(newsockfd);	/* close new socket */
 	}
 
 	debug3("_background_rpc_mgr shutting down");
-	slurm_close_accepted_conn(sockfd);	/* close the main socket */
+	close(sockfd);	/* close the main socket */
 	pthread_exit((void *) 0);
 	return NULL;
 }
@@ -398,8 +383,11 @@ static int _background_process_msg(slurm_msg_t * msg)
 
 	if (msg->msg_type != REQUEST_PING) {
 		bool super_user = false;
-		uid_t uid = g_slurm_auth_get_uid(msg->auth_cred, NULL);
-		if ((uid == 0) || (uid == getuid()))
+		char *auth_info = slurm_get_auth_info();
+		uid_t uid = g_slurm_auth_get_uid(msg->auth_cred, auth_info);
+
+		xfree(auth_info);
+		if (validate_slurm_user(uid))
 			super_user = true;
 
 		if (super_user &&
@@ -439,7 +427,7 @@ static int _ping_controller(void)
 	slurm_msg_t req;
 	/* Locks: Read configuration */
 	slurmctld_lock_t config_read_lock = {
-		READ_LOCK, NO_LOCK, NO_LOCK, NO_LOCK };
+		READ_LOCK, NO_LOCK, NO_LOCK, NO_LOCK, NO_LOCK };
 
 	/*
 	 *  Set address of controller to ping

@@ -8,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -37,8 +37,11 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
+#include "config.h"
+
 #include "src/smap/smap.h"
 #include "src/common/proc_args.h"
+#include "src/common/slurm_time.h"
 #include "src/common/xstring.h"
 
 /* FUNCTIONS */
@@ -48,7 +51,7 @@ static void _usage(void);
 /*
  * parse_command_line, fill in params data structure with data
  */
-extern void parse_command_line(int argc, char *argv[])
+extern void parse_command_line(int argc, char **argv)
 {
 	int opt_char;
 	int option_index;
@@ -86,21 +89,21 @@ extern void parse_command_line(int argc, char *argv[])
 			exit(1);
 			break;
 		case 'c':
-			params.commandline = TRUE;
+			params.commandline = true;
 			break;
 		case 'C':
 			params.command = xstrdup(optarg);
 			break;
 		case 'D':
-			if (!strcmp(optarg, "j"))
+			if (!xstrcmp(optarg, "j"))
 				tmp = JOBS;
-			else if (!strcmp(optarg, "s"))
+			else if (!xstrcmp(optarg, "s"))
 				tmp = SLURMPART;
-			else if (!strcmp(optarg, "b"))
+			else if (!xstrcmp(optarg, "b"))
 				tmp = BGPART;
-			else if (!strcmp(optarg, "c"))
+			else if (!xstrcmp(optarg, "c"))
 				tmp = COMMANDS;
-			else if (!strcmp(optarg, "r"))
+			else if (!xstrcmp(optarg, "r"))
 				tmp = RESERVATIONS;
 
 			params.display = tmp;
@@ -133,10 +136,9 @@ extern void parse_command_line(int argc, char *argv[])
 			}
 			break;
 		case 'M':
-			if (params.clusters)
-				list_destroy(params.clusters);
+			FREE_NULL_LIST(params.clusters);
 			if (!(params.clusters =
-			     slurmdb_get_info_cluster(optarg))) {
+			      slurmdb_get_info_cluster(optarg))) {
 				print_db_notok(optarg, 0);
 				exit(1);
 			}
@@ -157,7 +159,7 @@ extern void parse_command_line(int argc, char *argv[])
 			quiet_flag = 1;
 			break;
 		case 'R':
-			params.commandline = TRUE;
+			params.commandline = true;
 			params.resolve = xstrdup(optarg);
 			break;
 		case 'v':
@@ -187,11 +189,11 @@ extern void print_date(void)
 	time_t now_time = time(NULL);
 
 	if (params.commandline) {
-		printf("%s", ctime(&now_time));
+		printf("%s", slurm_ctime(&now_time));
 	} else {
 		mvwprintw(text_win, main_ycord,
 			  main_xcord, "%s",
-			  slurm_ctime(&now_time));
+			  slurm_ctime2(&now_time));
 		main_ycord++;
 	}
 }
@@ -249,11 +251,11 @@ extern char *resolve_mp(char *desc, node_info_msg_t *node_info_ptr)
 			if (!rack_mid)
 				break;
 			if (desc[0] != 'R') {
-				if (!strcasecmp(name, node_geo))
+				if (!xstrcasecmp(name, node_geo))
 					ret_str = xstrdup_printf(
 						"%s resolves to %s\n",
 						node_geo, rack_mid);
-			} else if (!strcasecmp(name, rack_mid))
+			} else if (!xstrcasecmp(name, rack_mid))
 				ret_str = xstrdup_printf(
 					"%s resolves to %s\n",
 					rack_mid, node_geo);
@@ -333,6 +335,7 @@ Usage: smap [OPTIONS]\n\
   -M, --cluster=cluster_name cluster to issue commands to.  Default is\n\
                              current cluster.  cluster with no name will\n\
                              reset to default.\n\
+                             NOTE: SlurmDBD must be up.\n\
   -n, --nodes=[nodes]        only show objects with these nodes.\n\
                              If querying to the ionode level use the -I\n\
                              option in conjunction with this option.\n\

@@ -1,4 +1,4 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Test of SLURM functionality
 #          sacctmgr +=, -= modify QoS test
@@ -13,7 +13,7 @@
 # Written by Joseph Donaghy <donaghy1@llnl.gov>
 #
 # This file is part of SLURM, a resource management program.
-# For details, see <http://slurm.schedmd.com/>.
+# For details, see <https://slurm.schedmd.com/>.
 # Please also read the included file: DISCLAIMER.
 #
 # SLURM is free software; you can redistribute it and/or modify it under
@@ -34,12 +34,44 @@ source ./globals_accounting
 
 set test_id     "21.26"
 set exit_code   0
-set tc1		[get_cluster_name]
-set ta1		slurm_test-account.1
-set ta2		slurm_test-account.2
+set tc1		"test$test_id\_cluster"
+set ta1		"test$test_id-account.1"
+set ta2		"test$test_id-account.2"
 set qos1	qqostest
-set tu1         slurm_test-user.1
+set tu1         "test$test_id-user.1"
 set access_err  0
+
+# Cluster
+array set clus_req {}
+set clus_req(qos) "''"
+
+# Accounts
+array set acct_req1 {}
+set acct_req1(cluster) $tc1
+
+array set acct_req2 {}
+set acct_req2(parent) $ta1
+set acct_req2(cluster) $tc1
+
+# User
+array set user_req {}
+set user_req(cluster) $tc1
+set user_req(account) $ta1,$ta2
+set user_req(defaultaccount) $ta1
+
+# Mod Account for ta1 and ta2
+array set mod_acct_desc3 {}
+set mod_acct_desc3(cluster) $tc1
+array set mod_acct_vals3 {}
+array set mod_assoc_vals3 {}
+set mod_assoc_vals3(qos) "+$qos1"
+
+# Mod Account for ta1 and ta2
+array set mod_acct_desc4 {}
+set mod_acct_desc4(cluster) $tc1
+array set mod_acct_vals4 {}
+array set mod_assoc_vals4 {}
+set mod_assoc_vals4(qos) "-$qos1"
 
 print_header $test_id
 
@@ -57,22 +89,26 @@ if { [test_account_storage] == 0 } {
 # Make sure we have permission to do this work
 #
 if { [string compare [check_accounting_admin_level] "Administrator"] } {
-	send_user "\nWARNING: This test can't be run without being an Accounting administrator.\nUse sacctmgr mod user \$USER_NAME admin=admin.\n"
+	send_user "\nWARNING: This test can't be run without being an Accounting administrator.\nUse: sacctmgr mod user \$USER set admin=admin.\n"
 	exit 0
 }
 
 proc end_test { } {
-	global tu1 ta1 ta2 tc1 qos1 qos_val
+	global tu1 ta1 ta2 tc1 qos1 mod_acct_desc1 mod_acct_vals1 mod_assoc_vals1
 	set exit_code 0
+	incr exit_code [remove_cluster $tc1]
 	incr exit_code [remove_user "" "" "$tu1"]
 	incr exit_code [remove_acct "" "$ta1,$ta2"]
 	incr exit_code [remove_qos "$qos1"]
-	if { [string length $qos_val] } {
-		incr exit_code [mod_acct "$tc1" "" "root" "" "" "$qos_val" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" ""]
-	}
 	return $exit_code
 }
 
+#
+# Remove any residual clusters and
+# Add a test cluster for testing
+#
+remove_cluster $tc1
+add_cluster $tc1 ""
 
 #
 # remove test associations to make sure we have a clean system
@@ -84,7 +120,6 @@ remove_qos "$qos1"
 # get the qos of root on the cluster since we are going to set it to
 # nothing here.  And put it back at the end of the test.
 set match 0
-set qos_val ""
 set my_pid [eval spawn $sacctmgr list cluster $tc1 format=cluster,qos -np]
 expect {
 	-re "There was a problem" {
@@ -92,7 +127,7 @@ expect {
 		exit 1
 	}
 	-re "$tc1.(\[a-z,\]*)." {
-		set qos_val $expect_out(1,string)
+		set mod_assoc_vals1(qoslevel) $expect_out(1,string)
 		set match 1
 		exp_continue
 	}
@@ -106,46 +141,50 @@ expect {
 		wait
 	}
 }
+
 if { !$match } {
 	send_user "\nFAILURE: couldn't query qos\n"
 	exit 1
 }
 
 #now set default for cluster to ""
-incr exit_code [mod_acct "$tc1" "" "root" "" "" " " "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" ""]
+incr exit_code [mod_cluster $tc1 [array get clus_req]]
 if { $exit_code } {
 	remove_qos "$qos1"
 	exit $exit_code
 }
 
+# send_user "moded the cluster to qos = ''"
+# exit
 
 #add qos
-incr exit_code [add_qos "$qos1"]
+incr exit_code [add_qos "$qos1" ""]
 if { $exit_code } {
 	remove_qos "$qos1"
 	exit $exit_code
 }
 #====Done Add QoS===========Begin Add First Account========
 #add default account
-incr exit_code [add_acct "$tc1" "" "$ta1" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" ""]
+incr exit_code [add_acct $ta1 [array get acct_req1]]
 if { $exit_code } {
 	end_test
 	exit $exit_code
 }
 #====Done Add First Account====Begin Add Second Account====
 #add account
-incr exit_code [add_acct "$tc1" "$ta1" "$ta2" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" ""]
+incr exit_code [add_acct $ta2 [array get acct_req2]]
 if { $exit_code } {
 	end_test
 	exit $exit_code
 }
 #=====Done Add Second Account========Begin Add User=========
 #add user
-incr exit_code [add_user "$tc1" "$ta1,$ta2" "$tu1" "" "" "$ta1" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" ""]
+incr exit_code [add_user $tu1 [array get user_req]]
 if { $exit_code } {
 	end_test
 	exit $exit_code
 }
+
 #====Done add user====Done building test associations===Begin test section=======
 
 # Verify initial associations
@@ -199,7 +238,7 @@ if {$matches != 6} {
 
 #======Begin Modification to Add $qos1 to $ta1=======
 #modify test1 account to add test QoS
-incr exit_code [mod_acct "$tc1" "" "$ta1" "" "" "+$qos1" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" ""]
+incr exit_code [mod_acct $ta1 [array get mod_acct_desc3] [array get mod_acct_vals3] [array get mod_assoc_vals3]]
 if { $exit_code } {
 	end_test
 	exit $exit_code
@@ -254,7 +293,7 @@ if {$matches != 6} {
 
 #======Begin Modification to Subtract $qos1 from $account2=======
 #modify test2 account to remove test QoS
-incr exit_code [mod_acct "$tc1" "" "$ta2" "" "" "-$qos1" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" ""]
+incr exit_code [mod_acct $ta2 [array get mod_acct_desc4] [array get mod_acct_vals4] [array get mod_assoc_vals4]]
 if { $exit_code } {
 	end_test
 	exit $exit_code
@@ -310,7 +349,7 @@ if {$matches != 6} {
 
 #======Begin Modification to Subtract $qos1 from $ta1=======
 #modify test1 account to remove test QoS
-incr exit_code [mod_acct "$tc1" "" "$ta1" "" "" "-$qos1" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" ""]
+incr exit_code [mod_acct $ta1 [array get mod_acct_desc4] [array get mod_acct_vals4] [array get mod_assoc_vals4]]
 if { $exit_code } {
 	end_test
 	exit $exit_code
@@ -365,7 +404,7 @@ if {$matches != 6} {
 
 #=====Begin Modification to Add $qos1 from $ta2=======
 #modify test2 account to add test QoS
-incr exit_code [mod_acct "$tc1" "" "$ta2" "" "" "+$qos1" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" ""]
+incr exit_code [mod_acct $ta2 [array get mod_acct_desc3] [array get mod_acct_vals3] [array get mod_assoc_vals3]]
 if { $exit_code } {
 	end_test
 	exit $exit_code
@@ -421,7 +460,7 @@ if {$matches != 6} {
 
 #=======Begin Modification to Add $qos1 from $account2=======
 #modify root account to add test QoS
-incr exit_code [mod_acct "$tc1" "" "root" "" "" "+$qos1" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" ""]
+incr exit_code [mod_acct "root" [array get mod_acct_desc3] [array get mod_acct_vals3] [array get mod_assoc_vals3]]
 if { $exit_code } {
 	end_test
 	exit $exit_code
@@ -476,8 +515,7 @@ if {$matches != 6} {
 }
 
 #======Begin Modification to Add $qos1 from $account2=======
-#modify test2 account to remove test QoS
-incr exit_code [mod_acct "$tc1" "" "$ta2" "" "" "-$qos1" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" "" ""]
+incr exit_code [mod_acct $ta2 [array get mod_acct_desc4] [array get mod_acct_vals4] [array get mod_assoc_vals4]]
 if { $exit_code } {
 	end_test
 	exit $exit_code

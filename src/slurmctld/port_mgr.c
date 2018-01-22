@@ -8,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -37,12 +37,8 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#ifdef HAVE_CONFIG_H
-#  include "config.h"
-#endif
-
-#include <string.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "src/common/bitstring.h"
 #include "src/common/hostlist.h"
@@ -87,13 +83,16 @@ static void _rebuild_port_array(struct step_record *step_ptr)
 	char *tmp_char;
 	hostlist_t hl;
 
-	i = strlen(step_ptr->resv_ports);
-	tmp_char = xmalloc(i+3);
-	sprintf(tmp_char, "[%s]", step_ptr->resv_ports);
+	tmp_char = xstrdup_printf("[%s]", step_ptr->resv_ports);
 	hl = hostlist_create(tmp_char);
-	if (!hl)
-		fatal("Invalid reserved ports: %s", step_ptr->resv_ports);
 	xfree(tmp_char);
+	if (!hl) {
+		error("Step %u.%u has invalid reserved ports: %s",
+		      step_ptr->job_ptr->job_id, step_ptr->step_id,
+		      step_ptr->resv_ports);
+		xfree(step_ptr->resv_ports);
+		return;
+	}
 
 	step_ptr->resv_port_array = xmalloc(sizeof(int) *
 					    step_ptr->resv_port_cnt);
@@ -222,9 +221,13 @@ extern int resv_port_alloc(struct step_record *step_ptr)
 {
 	int i, port_inx;
 	int *port_array = NULL;
-	char port_str[16], *tmp_str;
+	char port_str[16];
 	hostlist_t hl;
 	static int last_port_alloc = 0;
+	static int dims = -1;
+
+	if (dims == -1)
+		dims = slurmdb_setup_cluster_name_dims();
 
 	if (step_ptr->resv_port_cnt > port_resv_cnt) {
 		info("step %u.%u needs %u reserved ports, but only %d exist",
@@ -264,19 +267,10 @@ extern int resv_port_alloc(struct step_record *step_ptr)
 		hostlist_push_host(hl, port_str);
 	}
 	hostlist_sort(hl);
-	step_ptr->resv_ports = hostlist_ranged_string_xmalloc(hl);
+	/* get the ranged string with no brackets on it */
+	step_ptr->resv_ports = hostlist_ranged_string_xmalloc_dims(hl, dims, 0);
 	hostlist_destroy(hl);
 	step_ptr->resv_port_array = port_array;
-
-	if (step_ptr->resv_ports[0] == '[') {
-		/* Remove brackets from hostlist */
-		i = strlen(step_ptr->resv_ports);
-		step_ptr->resv_ports[i-1] = '\0';
-		tmp_str = xmalloc(i);
-		strcpy(tmp_str, step_ptr->resv_ports + 1);
-		xfree(step_ptr->resv_ports);
-		step_ptr->resv_ports = tmp_str;
-	}
 
 	debug("reserved ports %s for step %u.%u",
 	      step_ptr->resv_ports,
@@ -294,16 +288,14 @@ extern void resv_port_free(struct step_record *step_ptr)
 	if (step_ptr->resv_port_array == NULL)
 		return;
 
-	bit_not(step_ptr->step_node_bitmap);
 	for (i=0; i<step_ptr->resv_port_cnt; i++) {
 		if ((step_ptr->resv_port_array[i] < port_resv_min) ||
 		    (step_ptr->resv_port_array[i] > port_resv_max))
 			continue;
 		j = step_ptr->resv_port_array[i] - port_resv_min;
-		bit_and(port_resv_table[j], step_ptr->step_node_bitmap);
+		bit_and_not(port_resv_table[j], step_ptr->step_node_bitmap);
 
 	}
-	bit_not(step_ptr->step_node_bitmap);
 	xfree(step_ptr->resv_port_array);
 
 	debug("freed ports %s for step %u.%u",

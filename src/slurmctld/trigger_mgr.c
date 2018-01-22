@@ -3,12 +3,13 @@
  *****************************************************************************
  *  Copyright (C) 2007 The Regents of the University of California.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
+ *  Portions Copyright (C) 2010-2016 SchedMD <https://www.schedmd.com>.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Morris Jette <jette1@llnl.gov> et. al.
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -37,29 +38,17 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#ifdef HAVE_CONFIG_H
-#  include "config.h"
-#endif
-
-#ifdef WITH_PTHREADS
-#  include <pthread.h>
-#endif
-
-#if defined(__NetBSD__)
-#include <sys/types.h> /* for pid_t */
-#include <sys/signal.h> /* for SIGKILL */
-#endif
-#if defined(__FreeBSD__)
-#include <signal.h>
-#endif
+#include "config.h"
 
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <grp.h>
+#include <pthread.h>
+#include <signal.h>
 #include <stdlib.h>
-#include <sys/types.h>
 #include <sys/stat.h>
+#include <sys/types.h>
 
 #include "src/common/bitstring.h"
 #include "src/common/list.h"
@@ -77,10 +66,7 @@
 #define MAX_PROG_TIME 300	/* maximum run time for program */
 
 /* Change TRIGGER_STATE_VERSION value when changing the state save format */
-#define TRIGGER_STATE_VERSION        "VER004"
-#define TRIGGER_14_03_STATE_VERSION  "VER004"	/* SLURM version 14.03 */
-#define TRIGGER_2_6_STATE_VERSION    "VER004"	/* SLURM version 2.6 */
-#define TRIGGER_2_5_STATE_VERSION    "VER004"	/* SLURM version 2.5 */
+#define TRIGGER_STATE_VERSION        "PROTOCOL_VERSION"
 
 List trigger_list;
 uint32_t next_trigger_id = 1;
@@ -91,6 +77,7 @@ bitstr_t *trigger_down_nodes_bitmap = NULL;
 bitstr_t *trigger_drained_nodes_bitmap = NULL;
 bitstr_t *trigger_fail_nodes_bitmap = NULL;
 bitstr_t *trigger_up_nodes_bitmap   = NULL;
+static bool trigger_bb_error = false;
 static bool trigger_block_err = false;
 static bool trigger_node_reconfig = false;
 static bool trigger_pri_ctld_fail = false;
@@ -176,12 +163,6 @@ static void _dump_trigger_msg(char *header, trigger_info_msg_t *msg)
 		     msg->trigger_array[i].user_id,
 		     msg->trigger_array[i].program);
 	}
-}
-
-
-static int _match_all_triggers(void *x, void *key)
-{
-	return 1;
 }
 
 /* Validate trigger program */
@@ -400,8 +381,8 @@ static bool _duplicate_trigger(trigger_info_t *trig_desc)
 		    (trig_desc->trig_type == trig_rec->trig_type)  &&
 		    (trig_desc->offset    == trig_rec->trig_time)  &&
 		    (trig_desc->user_id   == trig_rec->user_id)    &&
-		    !strcmp(trig_desc->program, trig_rec->program) &&
-		    !strcmp(trig_desc->res_id, trig_rec->res_id)) {
+		    !xstrcmp(trig_desc->program, trig_rec->program) &&
+		    !xstrcmp(trig_desc->res_id, trig_rec->res_id)) {
 			found_dup = true;
 			break;
 		}
@@ -420,7 +401,7 @@ extern int trigger_set(uid_t uid, gid_t gid, trigger_info_msg_t *msg)
 	struct job_record *job_ptr;
 	/* Read config and job info */
 	slurmctld_lock_t job_read_lock =
-		{ READ_LOCK, READ_LOCK, NO_LOCK, NO_LOCK };
+		{ READ_LOCK, READ_LOCK, NO_LOCK, NO_LOCK, NO_LOCK };
 
 	lock_slurmctld(job_read_lock);
 	slurm_mutex_lock(&trigger_mutex);
@@ -446,7 +427,7 @@ extern int trigger_set(uid_t uid, gid_t gid, trigger_info_msg_t *msg)
 	}
 
 	_dump_trigger_msg("trigger_set", msg);
-	for (i=0; i<msg->record_count; i++) {
+	for (i = 0; i < msg->record_count; i++) {
 		if (msg->trigger_array[i].res_type ==
 		    TRIGGER_RES_TYPE_JOB) {
 			job_id = (uint32_t) atol(
@@ -467,12 +448,14 @@ extern int trigger_set(uid_t uid, gid_t gid, trigger_info_msg_t *msg)
 			    (msg->trigger_array[i].res_id[0] != '*') &&
 			    (node_name2bitmap(msg->trigger_array[i].res_id,
 					      false, &bitmap) != 0)) {
+				FREE_NULL_BITMAP(bitmap);
 				rc = ESLURM_INVALID_NODE_NAME;
 				continue;
 			}
 		}
 		msg->trigger_array[i].user_id = (uint32_t) uid;
 		if (_duplicate_trigger(&msg->trigger_array[i])) {
+			FREE_NULL_BITMAP(bitmap);
 			rc = ESLURM_TRIGGER_DUP;
 			continue;
 		}
@@ -503,6 +486,8 @@ extern int trigger_set(uid_t uid, gid_t gid, trigger_info_msg_t *msg)
 		msg->trigger_array[i].program = NULL;
 		if (!_validate_trigger(trig_add)) {
 			rc = ESLURM_ACCESS_DENIED;
+			FREE_NULL_BITMAP(trig_add->nodes_bitmap);
+			FREE_NULL_BITMAP(trig_add->orig_bitmap);
 			xfree(trig_add->program);
 			xfree(trig_add->res_id);
 			xfree(trig_add);
@@ -708,13 +693,20 @@ extern void trigger_block_error(void)
 	slurm_mutex_unlock(&trigger_mutex);
 }
 
+extern void trigger_burst_buffer(void)
+{
+	slurm_mutex_lock(&trigger_mutex);
+	trigger_bb_error = true;
+	slurm_mutex_unlock(&trigger_mutex);
+}
+
 static void _dump_trigger_state(trig_mgr_info_t *trig_ptr, Buf buffer)
 {
 	/* write trigger pull state flags */
-	safe_pack8(ctld_failure,    buffer);
-	safe_pack8(bu_ctld_failure, buffer);
-	safe_pack8(dbd_failure,     buffer);
-	safe_pack8(db_failure,      buffer);
+	pack8(ctld_failure,    buffer);
+	pack8(bu_ctld_failure, buffer);
+	pack8(dbd_failure,     buffer);
+	pack8(db_failure,      buffer);
 
 	pack16   (trig_ptr->flags,     buffer);
 	pack32   (trig_ptr->trig_id,   buffer);
@@ -738,7 +730,7 @@ static int _load_trigger_state(Buf buffer, uint16_t protocol_version)
 
 	trig_ptr = xmalloc(sizeof(trig_mgr_info_t));
 
-	if (protocol_version >= SLURM_2_5_PROTOCOL_VERSION) {
+	if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
 		/* restore trigger pull state flags */
 		safe_unpack8(&ctld_failure, buffer);
 		safe_unpack8(&bu_ctld_failure, buffer);
@@ -765,7 +757,7 @@ static int _load_trigger_state(Buf buffer, uint16_t protocol_version)
 	}
 
 	if ((trig_ptr->res_type < TRIGGER_RES_TYPE_JOB)  ||
-	    (trig_ptr->res_type > TRIGGER_RES_TYPE_DATABASE) ||
+	    (trig_ptr->res_type > TRIGGER_RES_TYPE_OTHER) ||
 	    (trig_ptr->state > 2))
 		goto unpack_error;
 	if (trig_ptr->res_type == TRIGGER_RES_TYPE_JOB) {
@@ -818,10 +810,11 @@ extern int trigger_state_save(void)
 	trig_mgr_info_t *trig_in;
 	/* Locks: Read config */
 	slurmctld_lock_t config_read_lock =
-		{ READ_LOCK, NO_LOCK, NO_LOCK, NO_LOCK };
+		{ READ_LOCK, NO_LOCK, NO_LOCK, NO_LOCK, NO_LOCK };
 
 	/* write header: version, time */
 	packstr(TRIGGER_STATE_VERSION, buffer);
+	pack16(SLURM_PROTOCOL_VERSION, buffer);
 	pack_time(time(NULL), buffer);
 
 	/* write individual trigger records */
@@ -928,7 +921,7 @@ extern void trigger_state_restore(void)
 {
 	int data_allocated, data_read = 0;
 	uint32_t data_size = 0;
-	uint16_t protocol_version = (uint16_t) NO_VAL;
+	uint16_t protocol_version = NO_VAL16;
 	int state_fd, trigger_cnt = 0;
 	char *data = NULL, *state_file;
 	Buf buffer;
@@ -941,6 +934,9 @@ extern void trigger_state_restore(void)
 	state_fd = _open_resv_state_file(&state_file);
 	if (state_fd < 0) {
 		info("No trigger state file (%s) to recover", state_file);
+		xfree(state_file);
+		unlock_state_files();
+		return;
 	} else {
 		data_allocated = BUF_SIZE;
 		data = xmalloc(data_allocated);
@@ -968,16 +964,12 @@ extern void trigger_state_restore(void)
 
 	buffer = create_buf(data, data_size);
 	safe_unpackstr_xmalloc(&ver_str, &ver_str_len, buffer);
-	if (ver_str) {
-		if (!strcmp(ver_str, TRIGGER_STATE_VERSION))
-			protocol_version = SLURM_PROTOCOL_VERSION;
-		else if (!strcmp(ver_str, TRIGGER_2_6_STATE_VERSION))
-			protocol_version = SLURM_2_6_PROTOCOL_VERSION;
-		else if (!strcmp(ver_str, TRIGGER_2_5_STATE_VERSION))
-			protocol_version = SLURM_2_5_PROTOCOL_VERSION;
-	}
+	if (ver_str && !xstrcmp(ver_str, TRIGGER_STATE_VERSION))
+		safe_unpack16(&protocol_version, buffer);
 
-	if (protocol_version == (uint16_t) NO_VAL) {
+	if (protocol_version == NO_VAL16) {
+		if (!ignore_state_errors)
+			fatal("Can't recover trigger state, data version incompatible, start with '-i' to ignore this");
 		error("Can't recover trigger state, data version "
 		      "incompatible");
 		xfree(ver_str);
@@ -988,7 +980,7 @@ extern void trigger_state_restore(void)
 
 	safe_unpack_time(&buf_time, buffer);
 	if (trigger_list)
-		list_delete_all (trigger_list, _match_all_triggers, NULL);
+		list_flush(trigger_list);
 	while (remaining_buf(buffer) > 0) {
 		if (_load_trigger_state(buffer, protocol_version) !=
 		    SLURM_SUCCESS)
@@ -998,6 +990,8 @@ extern void trigger_state_restore(void)
 	goto fini;
 
 unpack_error:
+	if (!ignore_state_errors)
+		fatal("Incomplete trigger data checkpoint file, start with '-i' to ignore this");
 	error("Incomplete trigger data checkpoint file");
 fini:	verbose("State of %d triggers recovered", trigger_cnt);
 	free_buf(buffer);
@@ -1014,7 +1008,7 @@ static bool _front_end_job_test(bitstr_t *front_end_bitmap,
 
 	for (i = 0; i < front_end_node_cnt; i++) {
 		if (bit_test(front_end_bitmap, i) &&
-		    !strcmp(front_end_nodes[i].name, job_ptr->batch_host)) {
+		    !xstrcmp(front_end_nodes[i].name, job_ptr->batch_host)) {
 			return true;
 		}
 	}
@@ -1025,10 +1019,7 @@ static bool _front_end_job_test(bitstr_t *front_end_bitmap,
 /* Test if the event has been triggered, change trigger state as needed */
 static void _trigger_job_event(trig_mgr_info_t *trig_in, time_t now)
 {
-	if ((trig_in->job_ptr == NULL) ||
-	    (trig_in->job_ptr->magic != JOB_MAGIC) ||
-	    (trig_in->job_ptr->job_id != trig_in->job_id))
-		trig_in->job_ptr = find_job_record(trig_in->job_id);
+	trig_in->job_ptr = find_job_record(trig_in->job_id);
 
 	if ((trig_in->trig_type & TRIGGER_TYPE_FINI) &&
 	    ((trig_in->job_ptr == NULL) ||
@@ -1168,6 +1159,18 @@ static void _trigger_front_end_event(trig_mgr_info_t *trig_in, time_t now)
 			info("trigger[%u] for node %s up",
 			     trig_in->trig_id, trig_in->res_id);
 		}
+		return;
+	}
+}
+
+static void _trigger_other_event(trig_mgr_info_t *trig_in, time_t now)
+{
+	if ((trig_in->trig_type & TRIGGER_TYPE_BURST_BUFFER) &&
+	    trigger_bb_error) {
+		trig_in->state = 1;
+		trig_in->trig_time = now;
+		if (slurmctld_conf.debug_flags & DEBUG_FLAG_TRIGGERS)
+			info("trigger[%u] for burst buffer", trig_in->trig_id);
 		return;
 	}
 }
@@ -1541,15 +1544,11 @@ static void _trigger_run_program(trig_mgr_info_t *trig_in)
 		trig_in->child_pid = child_pid;
 	} else if (child_pid == 0) {
 		int i;
-		bool run_as_self = (uid == getuid());
+		bool run_as_self = (uid == slurmctld_conf.slurm_user_id);
 
 		for (i = 0; i < 1024; i++)
 			(void) close(i);
-#ifdef SETPGRP_TWO_ARGS
-		setpgrp(0, 0);
-#else
-		setpgrp();
-#endif
+		setpgid(0, 0);
 		setsid();
 		if ((initgroups(user_name, gid) == -1) && !run_as_self) {
 			error("trigger: initgroups: %m");
@@ -1596,6 +1595,7 @@ static void _clear_event_triggers(void)
 			   0, (bit_size(trigger_up_nodes_bitmap) - 1));
 	}
 	trigger_node_reconfig = false;
+	trigger_bb_error = false;
 	trigger_block_err = false;
 	trigger_pri_ctld_fail = false;
 	trigger_pri_ctld_res_op = false;
@@ -1654,7 +1654,9 @@ extern void trigger_process(void)
 	trig_iter = list_iterator_create(trigger_list);
 	while ((trig_in = list_next(trig_iter))) {
 		if (trig_in->state == 0) {
-			if (trig_in->res_type == TRIGGER_RES_TYPE_JOB)
+			if (trig_in->res_type == TRIGGER_RES_TYPE_OTHER)
+				_trigger_other_event(trig_in, now);
+			else if (trig_in->res_type == TRIGGER_RES_TYPE_JOB)
 				_trigger_job_event(trig_in, now);
 			else if (trig_in->res_type == TRIGGER_RES_TYPE_NODE)
 				_trigger_node_event(trig_in, now);
@@ -1744,10 +1746,7 @@ extern void trigger_process(void)
 /* Free all allocated memory */
 extern void trigger_fini(void)
 {
-	if (trigger_list != NULL) {
-		list_destroy(trigger_list);
-		trigger_list = NULL;
-	}
+	FREE_NULL_LIST(trigger_list);
 	FREE_NULL_BITMAP(trigger_down_front_end_bitmap);
 	FREE_NULL_BITMAP(trigger_up_front_end_bitmap);
 	FREE_NULL_BITMAP(trigger_down_nodes_bitmap);

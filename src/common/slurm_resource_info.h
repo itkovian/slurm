@@ -1,13 +1,12 @@
 /*****************************************************************************\
  *  resource_info.h - Functions to determine number of available resources
- *  $Id: slurm_resource_info.h,v 1.6 2006/10/04 18:53:13 palermo Exp $
  *****************************************************************************
  *  Copyright (C) 2006 Hewlett-Packard Development Company, L.P.
  *  Written by Susanne M. Balle, <susanne.balle@hp.com>
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -39,16 +38,7 @@
 #ifndef _RES_INFO_H
 #define _RES_INFO_H
 
-#if HAVE_CONFIG_H
-#  include "config.h"
-#  if HAVE_INTTYPES_H
-#    include <inttypes.h>
-#  else
-#    if HAVE_STDINT_H
-#      include <stdint.h>
-#    endif
-#  endif			/* HAVE_INTTYPES_H */
-#endif
+#include <stdint.h>
 
 void slurm_print_cpu_bind_help(void);
 void slurm_print_mem_bind_help(void);

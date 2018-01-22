@@ -7,7 +7,7 @@
  *  Written by Morris Jette <jette1@llnl.gov>.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -36,16 +36,15 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#if HAVE_CONFIG_H
-#  include "config.h"
-#endif
+#include "config.h"
 
 #include <fcntl.h>
 #include <pthread.h>
-#include <unistd.h>
+#include <signal.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <signal.h>
+#include <unistd.h>
+
 #ifdef HAVE_LINUX_SCHED_H
 #  include <linux/sched.h>
 #endif
@@ -66,9 +65,6 @@
 #include "src/slurmd/common/proctrack.h"
 #include "src/slurmd/slurmstepd/slurmstepd_job.h"
 
-/* ************************************************************************ */
-/*  TAG(                        slurm_proctrack_ops_t                    )  */
-/* ************************************************************************ */
 typedef struct slurm_proctrack_ops {
 	int              (*create)    (stepd_step_rec_t * job);
 	int              (*add)       (stepd_step_rec_t * job, pid_t pid);
@@ -99,12 +95,10 @@ static plugin_context_t *g_context = NULL;
 static pthread_mutex_t g_context_lock = PTHREAD_MUTEX_INITIALIZER;
 static bool init_run = false;
 
-/* *********************************************************************** */
-/*  TAG(                    slurm_proctrack_init                        )  */
-/*                                                                         */
-/*  NOTE: The proctrack plugin can only be changed by restarting slurmd    */
-/*        without preserving state (-c option).                            */
-/* *********************************************************************** */
+/*
+ * The proctrack plugin can only be changed by restarting slurmd
+ * without preserving state (-c option).
+ */
 extern int slurm_proctrack_init(void)
 {
 	int retval = SLURM_SUCCESS;
@@ -136,9 +130,6 @@ done:
 	return retval;
 }
 
-/* *********************************************************************** */
-/*  TAG(                    slurm_proctrack_fini                        )  */
-/* *********************************************************************** */
 extern int slurm_proctrack_fini(void)
 {
 	int rc;
@@ -179,10 +170,23 @@ extern int proctrack_g_create(stepd_step_rec_t * job)
  */
 extern int proctrack_g_add(stepd_step_rec_t * job, pid_t pid)
 {
+	int i = 0, max_retry = 3, rc;
+
 	if (slurm_proctrack_init() < 0)
 		return SLURM_ERROR;
 
-	return (*(ops.add)) (job, pid);
+	/* Sometimes a plugin is transient in adding a pid, so lets
+	 * try a few times before we call it quits.
+	 */
+	while ((rc = (*(ops.add)) (job, pid)) != SLURM_SUCCESS) {
+		if (i++ > max_retry)
+			break;
+		debug("%s: %u.%u couldn't add pid %u, sleeping and trying again",
+		      __func__, job->jobid, job->stepid, pid);
+		sleep(1);
+	}
+
+	return rc;
 }
 
 /* Determine if core dump in progress
@@ -207,22 +211,41 @@ static bool _test_core_dumping(char* stat_fname)
 	int proc_fd, proc_stat_size = BUF_SIZE;
 	bool dumping_results = false;
 
-	proc_stat = (char *) xmalloc(proc_stat_size);
 	proc_fd = open(stat_fname, O_RDONLY, 0);
 	if (proc_fd == -1)
 		return false;  /* process is now gone */
-	while ((num = read(proc_fd, proc_stat, proc_stat_size)) > 0) {
-		if (num < (proc_stat_size-1))
+	proc_stat = xmalloc_nz(proc_stat_size + 1);
+	while (1) {
+		num = read(proc_fd, proc_stat, proc_stat_size);
+		if (num <= 0) {
+			proc_stat[0] = '\0';
+			break;
+		}
+		proc_stat[num] = '\0';
+		if (num < proc_stat_size)
 			break;
 		proc_stat_size += BUF_SIZE;
-		xrealloc(proc_stat, proc_stat_size);
+		xrealloc_nz(proc_stat, proc_stat_size + 1);
 		if (lseek(proc_fd, (off_t) 0, SEEK_SET) != 0)
 			break;
 	}
 	close(proc_fd);
 
+	/* race condition at process termination */
+	if (proc_stat[0] == '\0') {
+		debug("%s: %s is empty", __func__, stat_fname);
+		xfree(proc_stat);
+		return false;
+	}
+
 	/* split into "PID (cmd" and "<rest>" */
 	str_ptr = (char *)strrchr(proc_stat, ')');
+	if (str_ptr == NULL) {
+		error("%s: unexpected format of %s (%s) bracket missing?",
+		      __func__, stat_fname, proc_stat);
+		xfree(proc_stat);
+		return false;
+	}
 	*str_ptr = '\0';		/* replace trailing ')' with NULL */
 	/* parse these two strings separately, skipping the leading "(". */
 	memset (cmd, 0, sizeof(cmd));
@@ -303,18 +326,12 @@ static void *_sig_agent(void *args)
 static void _spawn_signal_thread(uint64_t cont_id, int signal)
 {
 	agent_arg_t *agent_arg_ptr;
-	pthread_attr_t attr_agent;
-	pthread_t thread_agent;
 
-	slurm_attr_init(&attr_agent);
-	if (pthread_attr_setdetachstate(&attr_agent, PTHREAD_CREATE_DETACHED))
-		error("pthread_attr_setdetachstate error %m");
 	agent_arg_ptr = xmalloc(sizeof(agent_arg_t));
 	agent_arg_ptr->cont_id = cont_id;
 	agent_arg_ptr->signal  = signal;
-	(void) pthread_create(&thread_agent, &attr_agent,
-			     _sig_agent, (void *) agent_arg_ptr);
-	slurm_attr_destroy(&attr_agent);
+
+	slurm_thread_create_detached(NULL, _sig_agent, agent_arg_ptr);
 }
 
 /*
@@ -327,8 +344,6 @@ static void _spawn_signal_thread(uint64_t cont_id, int signal)
  */
 extern int proctrack_g_signal(uint64_t cont_id, int signal)
 {
-
-
 	if (slurm_proctrack_init() < 0)
 		return SLURM_ERROR;
 
@@ -445,8 +460,7 @@ extern int proctrack_g_wait(uint64_t cont_id)
  *   pids NULL), return SLURM_ERROR if container does not exist, or
  *   plugin does not implement the call.
  */
-extern int
-proctrack_g_get_pids(uint64_t cont_id, pid_t ** pids, int *npids)
+extern int proctrack_g_get_pids(uint64_t cont_id, pid_t **pids, int *npids)
 {
 	if (slurm_proctrack_init() < 0)
 		return SLURM_ERROR;

@@ -6,7 +6,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -34,32 +34,32 @@
  *  with SLURM; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
-#ifdef HAVE_CONFIG_H
-#  include "config.h"
-#endif
 
-#include <stdint.h>
-#include <stdio.h>
-#include <signal.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <string.h>
+#include "config.h"
+
 #include <errno.h>
-#include <time.h>
+#include <inttypes.h>
+#include <libcr.h>
 #include <poll.h>
 #include <pthread.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <sys/un.h>
-#include <sys/time.h>
+#include <signal.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
 #include <sys/resource.h>
+#include <sys/socket.h>
+#include <sys/time.h>
+#include <sys/types.h>
+#include <sys/un.h>
 #include <sys/wait.h>
-#include <libcr.h>
+#include <unistd.h>
 
 #include "slurm/slurm.h"
 
 #include "src/common/fd.h"
 #include "src/common/log.h"
+#include "src/common/macros.h"
 #include "src/common/read_config.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
@@ -120,11 +120,11 @@ signal_child (int sig, siginfo_t *siginfo, void *context)
 	}
 
 	if ((siginfo->si_code > 0) &&	/* si_code > 0 indicates sent by kernel */
-	    (sig == SIGILL || sig == SIGFPE ||
-	     sig == SIGBUS || sig == SIGSEGV )) {
+	    ((sig == SIGILL) || (sig == SIGFPE) ||
+	     (sig == SIGBUS) || (sig == SIGSEGV) )) {
 		/* This signal is OUR error, so we don't forward */
 		signal_self(sig);
-	} else if (sig == SIGTSTP || sig == SIGTTIN || sig == SIGTTOU) {
+	} else if ((sig == SIGTSTP) || (sig == SIGTTIN) || (sig == SIGTTOU)) {
 		/* The catchable stop signals go to child AND self */
 		(void)kill(srun_pid, sig);
 		signal_self(sig);
@@ -149,7 +149,7 @@ mimic_exit(int status)
 		/* now raise the signal */
 		signal_self(WTERMSIG(status));
 	} else {
-		error("Unexpected status from child");
+		error("%s: Unexpected status from child", __func__);
 		exit(-1);
 	}
 }
@@ -165,7 +165,8 @@ on_child_exit(int signum, siginfo_t *siginfo, void *arg)
 	 */
 	cr_enter_cs(cr_id);
 	if (waitpid(srun_pid, &status, WNOHANG) == srun_pid) {
-		verbose("srun(%d) exited, status: %d", srun_pid, status);
+		verbose("%s: srun(%d) exited, status: %d",
+			__func__, srun_pid, status);
 		mimic_exit(status);
 	}
 	kill(srun_pid, SIGKILL);
@@ -195,9 +196,8 @@ update_env(char *name, char *val)
 	char *buf = NULL;
 
 	xstrfmtcat (buf, "%s=%s", name, val);
-	if (putenv(buf)) {
-		fatal("failed to update env: %m");
-	}
+	if (putenv(buf))
+		fatal("%s: failed to update env: %m", __func__);
 }
 
 static int
@@ -244,7 +244,7 @@ create_listen_socket(void)
 
 	listen_fd = socket(AF_UNIX, SOCK_STREAM, 0);
 	if (listen_fd < 0) {
-		error("failed to create listen socket: %m");
+		error("%s: failed to create listen socket: %m", __func__);
 		return -1;
 	}
 
@@ -254,17 +254,19 @@ create_listen_socket(void)
 
 	unlink(sa.sun_path);	/* remove possible old socket */
 
-	setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR,
-		   (void*)&re_use_addr, sizeof(int));
+	if (setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR,
+		       (void*)&re_use_addr, sizeof(int)) == -1) {
+		error("%s: setsockopt: %m", __func__);
+	}
 
 	if (bind(listen_fd, (struct sockaddr *)&sa, sa_len) < 0) {
-		error("failed to bind listen socket: %m");
+		error("%s: failed to bind listen socket: %m", __func__);
 		unlink(sa.sun_path);
 		return -1;
 	}
 
 	if (listen(listen_fd, 2) < 0) {
-		error("failed to listen: %m");
+		error("%s: failed to listen: %m", __func__);
 		unlink(sa.sun_path);
 		return -1;
 	}
@@ -299,7 +301,7 @@ fork_exec_srun(void)
 		 * remove srun from the foreground process group,
 		 * or Ctrl-C will cause SIGINT duplicated
 		 */
-		setpgrp();
+		setpgid(0, 0);
 
 		update_env("SLURM_SRUN_CR_SOCKET", cr_sock_addr);
 
@@ -410,7 +412,7 @@ cr_callback(void *unused)
 
 		debug2("step not launched.");
 
-		pthread_cond_broadcast(&step_launch_cond);
+		slurm_cond_broadcast(&step_launch_cond);
 	}
 
 	return 0;
@@ -464,13 +466,12 @@ main(int argc, char **argv)
 	cr_leave_cs(cr_id); /* END CS */
 
 	while (1) {
-		pthread_mutex_lock(&step_launch_mutex);
+		slurm_mutex_lock(&step_launch_mutex);
 		while (step_launched) {
 			/* just avoid busy waiting */
-			pthread_cond_wait(&step_launch_cond,
-					  &step_launch_mutex);
+			slurm_cond_wait(&step_launch_cond, &step_launch_mutex);
 		}
-		pthread_mutex_unlock(&step_launch_mutex);
+		slurm_mutex_unlock(&step_launch_mutex);
 
 		if (_wait_for_srun_connect() < 0)
 			continue;
@@ -532,21 +533,19 @@ _read_info_from_srun(int srun_fd)
 {
 	int len;
 
-	if (read(srun_fd, &jobid, sizeof(uint32_t)) != sizeof(uint32_t)) {
-		fatal("failed to read jobid: %m");
-	}
+	if (read(srun_fd, &jobid, sizeof(uint32_t)) != sizeof(uint32_t))
+		fatal("%s: failed to read jobid: %m", __func__);
 
-	if (read(srun_fd, &stepid, sizeof(uint32_t)) != sizeof(uint32_t)) {
-		fatal("failed to read stepid: %m");
-	}
+	if (read(srun_fd, &stepid, sizeof(uint32_t)) != sizeof(uint32_t))
+		fatal("%s: failed to read stepid: %m", __func__);
 
-	if (read(srun_fd, &len, sizeof(int)) != sizeof(int)) {
-		fatal("failed to read nodelist length: %m");
-	}
+	if (read(srun_fd, &len, sizeof(int)) != sizeof(int))
+		fatal("%s: failed to read nodelist length: %m", __func__);
+	if (len > (32 * 1024))
+		fatal("%s: nodelist length too large (%d)", __func__, len);
 
 	xfree(nodelist);
 	nodelist = (char *)xmalloc(len + 1);
-	if (read(srun_fd, nodelist, len + 1) != len + 1) {
-		fatal("failed to read nodelist: %m");
-	}
+	if (read(srun_fd, nodelist, len + 1) != len + 1)
+		fatal("%s: failed to read nodelist: %m", __func__);
 }

@@ -1,4 +1,4 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Test of SLURM functionality
 #          Validate scontrol create, delete, and update for partitions.
@@ -13,7 +13,7 @@
 # CODE-OCEC-09-009. All rights reserved.
 #
 # This file is part of SLURM, a resource management program.
-# For details, see <http://slurm.schedmd.com/>.
+# For details, see <https://slurm.schedmd.com/>.
 # Please also read the included file: DISCLAIMER.
 #
 # SLURM is free software; you can redistribute it and/or modify it under
@@ -116,7 +116,7 @@ if {[string compare $def_node ""] == 0} {
 spawn $scontrol create PartitionName=$part_name Nodes=$def_node
 expect {
 	-re "error" {
-		send_user "\nFAILURE: something bad happened on partitiion create\n"
+		send_user "\nFAILURE: something bad happened on partition create\n"
 		set exit_code 1
 		exp_continue
 	}
@@ -220,7 +220,7 @@ set sleep_time 300
 set timeout [expr $max_job_delay + $sleep_time]
 set srun_pid [spawn $srun -t1 -p $part_name $bin_sleep $sleep_time]
 expect {
-	-re "(time limit|TIME LIMIT|TERMINATED)" {
+	-re "(time limit|TIME LIMIT|Terminated)" {
 		set timed_out 1
 		exp_continue
 	}

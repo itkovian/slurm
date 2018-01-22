@@ -5,7 +5,7 @@
  *  Written by Bull- Thomas Cadeau/Martin Perry/Yiannis Georgiou
   *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -80,7 +80,7 @@ extern int ext_sensors_p_get_stependdata(struct step_record *step_rec);
 extern List ext_sensors_p_get_config(void);
 
 /* consolidate RRD data */
-extern uint32_t RRD_consolidate(time_t step_starttime, time_t step_endtime,
+extern uint64_t RRD_consolidate(time_t step_starttime, time_t step_endtime,
 				bitstr_t* bitmap_of_nodes);
 
 extern int init(void);

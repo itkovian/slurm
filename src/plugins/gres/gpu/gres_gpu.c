@@ -7,7 +7,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -36,38 +36,16 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#if HAVE_CONFIG_H
-#  include "config.h"
-#  if STDC_HEADERS
-#    include <string.h>
-#  endif
-#  if HAVE_SYS_TYPES_H
-#    include <sys/types.h>
-#  endif /* HAVE_SYS_TYPES_H */
-#  if HAVE_UNISTD_H
-#    include <unistd.h>
-#  endif
-#  if HAVE_INTTYPES_H
-#    include <inttypes.h>
-#  else /* ! HAVE_INTTYPES_H */
-#    if HAVE_STDINT_H
-#      include <stdint.h>
-#    endif
-#  endif /* HAVE_INTTYPES_H */
-#else /* ! HAVE_CONFIG_H */
-#  include <sys/types.h>
-#  include <unistd.h>
-#  include <stdint.h>
-#  include <string.h>
-#endif /* HAVE_CONFIG_H */
+#define _GNU_SOURCE
 
-#ifdef HAVE_HWLOC
-#  include <hwloc.h>
-#endif /* HAVE_HWLOC */
-
+#include <ctype.h>
+#include <inttypes.h>
+#include <sched.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <ctype.h>
+#include <string.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 #include "slurm/slurm.h"
 #include "slurm/slurm_errno.h"
@@ -77,7 +55,10 @@
 #include "src/common/env.h"
 #include "src/common/gres.h"
 #include "src/common/list.h"
+#include "src/common/xcgroup_read_config.c"
 #include "src/common/xstring.h"
+
+#include "../common/gres_common.h"
 
 /*
  * These variables are required by the generic plugin interface.  If they
@@ -101,17 +82,55 @@
  * only load authentication plugins if the plugin_type string has a prefix
  * of "auth/".
  *
- * plugin_version   - Specifies the version number of the plugin. This would
- * typically be the same for all plugins.
+ * plugin_version - an unsigned 32-bit integer containing the Slurm version
+ * (major.minor.micro combined into a single number).
  */
 const char	plugin_name[]		= "Gres GPU plugin";
 const char	plugin_type[]		= "gres/gpu";
-const uint32_t	plugin_version		= 120;
+const uint32_t	plugin_version		= SLURM_VERSION_NUMBER;
 
 static char	gres_name[]		= "gpu";
 
-static int *gpu_devices = NULL;
-static int nb_available_files = 0;
+static List gres_devices = NULL;
+
+static void _set_env(char ***env_ptr, void *gres_ptr, int node_inx,
+		     bitstr_t *usable_gres,
+		     bool *already_seen, int *local_inx,
+		     bool reset, bool is_job)
+{
+	char *global_list = NULL, *local_list = NULL;
+	char *slurm_env_var = NULL;
+
+	if (is_job)
+			slurm_env_var = "SLURM_JOB_GPUS";
+	else
+			slurm_env_var = "SLURM_STEP_GPUS";
+
+	if (*already_seen) {
+		global_list = xstrdup(getenvp(*env_ptr, slurm_env_var));
+		local_list = xstrdup(getenvp(*env_ptr,
+					     "CUDA_VISIBLE_DEVICES"));
+	}
+
+	common_gres_set_env(gres_devices, env_ptr, gres_ptr, node_inx,
+			    usable_gres, "", local_inx,
+			    &local_list, &global_list,
+			    reset, is_job);
+
+	if (global_list) {
+		env_array_overwrite(env_ptr, slurm_env_var, global_list);
+		xfree(global_list);
+	}
+
+	if (local_list) {
+		env_array_overwrite(
+			env_ptr, "CUDA_VISIBLE_DEVICES", local_list);
+		env_array_overwrite(
+			env_ptr, "GPU_DEVICE_ORDINAL", local_list);
+		xfree(local_list);
+		*already_seen = true;
+	}
+}
 
 extern int init(void)
 {
@@ -122,11 +141,11 @@ extern int init(void)
 extern int fini(void)
 {
 	debug("%s: unloading %s", __func__, plugin_name);
-	xfree(gpu_devices);
-	nb_available_files = 0;
+	FREE_NULL_LIST(gres_devices);
 
 	return SLURM_SUCCESS;
 }
+
 /*
  * We could load gres state or validate it using various mechanisms here.
  * This only validates that the configuration was specified in gres.conf.
@@ -134,78 +153,16 @@ extern int fini(void)
  */
 extern int node_config_load(List gres_conf_list)
 {
-	int i, rc = SLURM_SUCCESS;
-	ListIterator iter;
-	gres_slurmd_conf_t *gres_slurmd_conf;
-	int nb_gpu = 0;	/* Number of GPUs in the list */
-	int available_files_index = 0;
+	int rc = SLURM_SUCCESS;
 
-	xassert(gres_conf_list);
-	iter = list_iterator_create(gres_conf_list);
-	while ((gres_slurmd_conf = list_next(iter))) {
-		if (strcmp(gres_slurmd_conf->name, gres_name))
-			continue;
-		if (gres_slurmd_conf->file)
-			nb_gpu++;
-	}
-	list_iterator_destroy(iter);
-	xfree(gpu_devices);	/* No-op if NULL */
-	nb_available_files = -1;
-	/* (Re-)Allocate memory if number of files changed */
-	if (nb_gpu > nb_available_files) {
-		gpu_devices = (int *) xmalloc(sizeof(int) * nb_gpu);
-		nb_available_files = nb_gpu;
-		for (i = 0; i < nb_available_files; i++)
-			gpu_devices[i] = -1;
-	}
+	if (gres_devices)
+		return rc;
 
-	iter = list_iterator_create(gres_conf_list);
-	while ((gres_slurmd_conf = list_next(iter))) {
-		if ((strcmp(gres_slurmd_conf->name, gres_name) == 0) &&
-		    gres_slurmd_conf->file) {
-			/* Populate gpu_devices array with number
-			 * at end of the file name */
-			char *bracket, *fname, *tmp_name;
-			hostlist_t hl;
-			bracket = strrchr(gres_slurmd_conf->file, '[');
-			if (bracket)
-				tmp_name = xstrdup(bracket);
-			else
-				tmp_name = xstrdup(gres_slurmd_conf->file);
-			hl = hostlist_create(tmp_name);
-			xfree(tmp_name);
-			if (!hl) {
-				rc = EINVAL;
-				break;
-			}
-			while ((fname = hostlist_shift(hl))) {
-				if (available_files_index ==
-				    nb_available_files) {
-					nb_available_files++;
-					xrealloc(gpu_devices, sizeof(int) *
-						 nb_available_files);
-					gpu_devices[available_files_index] = -1;
-				}
-				for (i = 0; fname[i]; i++) {
-					if (!isdigit(fname[i]))
-						continue;
-					gpu_devices[available_files_index] =
-						atoi(fname + i);
-					break;
-				}
-				available_files_index++;
-				free(fname);
-			}
-			hostlist_destroy(hl);
-		}
-	}
-	list_iterator_destroy(iter);
+	rc = common_node_config_load(gres_conf_list, gres_name,
+				     &gres_devices);
 
 	if (rc != SLURM_SUCCESS)
 		fatal("%s failed to load configuration", plugin_name);
-
-	for (i = 0; i < nb_available_files; i++)
-		info("gpu %d is device number %d", i, gpu_devices[i]);
 
 	return rc;
 }
@@ -214,122 +171,52 @@ extern int node_config_load(List gres_conf_list)
  * Set environment variables as appropriate for a job (i.e. all tasks) based
  * upon the job's GRES state.
  */
-extern void job_set_env(char ***job_env_ptr, void *gres_ptr)
+extern void job_set_env(char ***job_env_ptr, void *gres_ptr, int node_inx)
 {
-	int i, len;
-	char *dev_list = NULL;
-	gres_job_state_t *gres_job_ptr = (gres_job_state_t *) gres_ptr;
+	static int local_inx = 0;
+	static bool already_seen = false;
 
-	if ((gres_job_ptr != NULL) &&
-	    (gres_job_ptr->node_cnt == 1) &&
-	    (gres_job_ptr->gres_bit_alloc != NULL) &&
-	    (gres_job_ptr->gres_bit_alloc[0] != NULL)) {
-		len = bit_size(gres_job_ptr->gres_bit_alloc[0]);
-		for (i=0; i<len; i++) {
-			if (!bit_test(gres_job_ptr->gres_bit_alloc[0], i))
-				continue;
-			if (!dev_list)
-				dev_list = xmalloc(128);
-			else
-				xstrcat(dev_list, ",");
-			if (gpu_devices && (i < nb_available_files) &&
-			    (gpu_devices[i] >= 0))
-				xstrfmtcat(dev_list, "%d", gpu_devices[i]);
-			else
-				xstrfmtcat(dev_list, "%d", i);
-		}
-	} else if (gres_job_ptr && (gres_job_ptr->gres_cnt_alloc > 0)) {
-		/* The gres.conf file must identify specific device files
-		 * in order to set the CUDA_VISIBLE_DEVICES env var */
-		error("gres/gpu unable to set CUDA_VISIBLE_DEVICES, "
-		      "no device files configured");
-	} else {
-		xstrcat(dev_list, "NoDevFiles");
-	}
-
-	if (dev_list) {
-		env_array_overwrite(job_env_ptr,"CUDA_VISIBLE_DEVICES",
-				    dev_list);
-		env_array_overwrite(job_env_ptr,"GPU_DEVICE_ORDINAL",
-				    dev_list);
-		xfree(dev_list);
-	}
+	_set_env(job_env_ptr, gres_ptr, node_inx, NULL,
+		 &already_seen, &local_inx, false, true);
 }
 
 /*
  * Set environment variables as appropriate for a job (i.e. all tasks) based
  * upon the job step's GRES state.
  */
-extern void step_set_env(char ***job_env_ptr, void *gres_ptr)
+extern void step_set_env(char ***step_env_ptr, void *gres_ptr)
 {
-	int i, len;
-	char *dev_list = NULL;
-	gres_step_state_t *gres_step_ptr = (gres_step_state_t *) gres_ptr;
+	static int local_inx = 0;
+	static bool already_seen = false;
 
-	if ((gres_step_ptr != NULL) &&
-	    (gres_step_ptr->node_cnt == 1) &&
-	    (gres_step_ptr->gres_bit_alloc != NULL) &&
-	    (gres_step_ptr->gres_bit_alloc[0] != NULL)) {
-		len = bit_size(gres_step_ptr->gres_bit_alloc[0]);
-		for (i=0; i<len; i++) {
-			if (!bit_test(gres_step_ptr->gres_bit_alloc[0], i))
-				continue;
-			if (!dev_list)
-				dev_list = xmalloc(128);
-			else
-				xstrcat(dev_list, ",");
-			if (gpu_devices && (i < nb_available_files) &&
-			    (gpu_devices[i] >= 0))
-				xstrfmtcat(dev_list, "%d", gpu_devices[i]);
-			else
-				xstrfmtcat(dev_list, "%d", i);
-		}
-	} else if (gres_step_ptr && (gres_step_ptr->gres_cnt_alloc > 0)) {
-		/* The gres.conf file must identify specific device files
-		 * in order to set the CUDA_VISIBLE_DEVICES env var */
-		error("gres/gpu unable to set CUDA_VISIBLE_DEVICES, "
-		      "no device files configured");
-	} else {
-		xstrcat(dev_list, "NoDevFiles");
-	}
+	_set_env(step_env_ptr, gres_ptr, 0, NULL,
+		 &already_seen, &local_inx, false, false);
+}
 
-	if (dev_list) {
-		env_array_overwrite(job_env_ptr,"CUDA_VISIBLE_DEVICES",
-				    dev_list);
-		env_array_overwrite(job_env_ptr,"GPU_DEVICE_ORDINAL",
-				    dev_list);
-		xfree(dev_list);
-	}
+/*
+ * Reset environment variables as appropriate for a job (i.e. this one tasks)
+ * based upon the job step's GRES state and assigned CPUs.
+ */
+extern void step_reset_env(char ***step_env_ptr, void *gres_ptr,
+			   bitstr_t *usable_gres)
+{
+	static int local_inx = 0;
+	static bool already_seen = false;
+
+	_set_env(step_env_ptr, gres_ptr, 0, usable_gres,
+		 &already_seen, &local_inx, true, false);
 }
 
 /* Send GRES information to slurmstepd on the specified file descriptor */
 extern void send_stepd(int fd)
 {
-	int i;
-
-	safe_write(fd, &nb_available_files, sizeof(int));
-	for (i = 0; i < nb_available_files; i++)
-		safe_write(fd, &gpu_devices[i], sizeof(int));
-	return;
-
-rwfail:	error("gres_plugin_send_stepd failed");
+	common_send_stepd(fd, gres_devices);
 }
 
 /* Receive GRES information from slurmd on the specified file descriptor */
 extern void recv_stepd(int fd)
 {
-	int i;
-
-	safe_read(fd, &nb_available_files, sizeof(int));
-	if (nb_available_files > 0) {
-		xfree(gpu_devices);	/* No-op if NULL */
-		gpu_devices = xmalloc(sizeof(int) * nb_available_files);
-	}
-	for (i = 0; i < nb_available_files; i++)
-		safe_read(fd, &gpu_devices[i], sizeof(int));
-	return;
-
-rwfail:	error("gres_plugin_recv_stepd failed");
+	common_recv_stepd(fd, &gres_devices);
 }
 
 extern int job_info(gres_job_state_t *job_gres_data, uint32_t node_inx,
@@ -342,4 +229,9 @@ extern int step_info(gres_step_state_t *step_gres_data, uint32_t node_inx,
 		     enum gres_step_data_type data_type, void *data)
 {
 	return EINVAL;
+}
+
+extern List get_devices(void)
+{
+	return gres_devices;
 }

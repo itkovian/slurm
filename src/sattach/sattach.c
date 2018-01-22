@@ -8,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -23,12 +23,8 @@
  *
  *  You should have received a copy of the GNU General Public License along
  *  with SLURM; if not, write to the Free Software Foundation, Inc.,
- *  59 Temple Place, Suite 330, Boston, MA  02111-1307  USA.
+ *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
-
-#if HAVE_CONFIG_H
-#  include "config.h"
-#endif
 
 #include <netinet/in.h>
 #include <pthread.h>
@@ -53,6 +49,7 @@
 #include "src/common/fd.h"
 #include "src/common/forward.h"
 #include "src/common/hostlist.h"
+#include "src/common/macros.h"
 #include "src/common/net.h"
 #include "src/common/slurm_auth.h"
 #include "src/common/slurm_cred.h"
@@ -117,7 +114,7 @@ static struct termios termdefaults;
 /**********************************************************************
  * sattach
  **********************************************************************/
-int sattach(int argc, char *argv[])
+int sattach(int argc, char **argv)
 {
 	log_options_t logopt = LOG_OPTS_STDERR_ONLY;
 	slurm_step_layout_t *layout;
@@ -140,7 +137,7 @@ int sattach(int argc, char *argv[])
 		log_alter(logopt, 0, NULL);
 	}
 	launch_type = slurm_get_launch_type();
-	if (launch_type && strcmp(launch_type, "launch/slurm")) {
+	if (launch_type && xstrcmp(launch_type, "launch/slurm")) {
 		error("sattach does not support LaunchType=%s", launch_type);
 		exit(error_exit);
 	}
@@ -158,10 +155,13 @@ int sattach(int argc, char *argv[])
 
 	totalview_jobid = NULL;
 	xstrfmtcat(totalview_jobid, "%u", opt.jobid);
+	totalview_stepid = NULL;
+	xstrfmtcat(totalview_stepid, "%u", opt.stepid);
+
 	_mpir_init(layout->task_cnt);
 	if (opt.input_filter_set) {
-		opt.fds.in.nodeid =
-			_nodeid_from_layout(layout, opt.fds.in.taskid);
+		opt.fds.input.nodeid =
+			_nodeid_from_layout(layout, opt.fds.input.taskid);
 	}
 
 	if (layout->front_end)
@@ -174,7 +174,7 @@ int sattach(int argc, char *argv[])
 
 	io = client_io_handler_create(opt.fds, layout->task_cnt,
 				      layout->node_cnt, fake_cred,
-				      opt.labelio);
+				      opt.labelio, NO_VAL, NO_VAL);
 	client_io_handler_start(io);
 
 	if (opt.pty) {
@@ -270,6 +270,7 @@ static void print_layout_info(slurm_step_layout_t *layout)
 		printf("\n");
 		free(name);
 	}
+	hostlist_destroy(nl);
 }
 
 
@@ -281,6 +282,7 @@ static slurm_cred_t *_generate_fake_cred(uint32_t jobid, uint32_t stepid,
 	slurm_cred_arg_t arg;
 	slurm_cred_t *cred;
 
+	memset(&arg, 0, sizeof(slurm_cred_arg_t));
 	arg.jobid    = jobid;
 	arg.stepid   = stepid;
 	arg.uid      = uid;
@@ -405,6 +407,7 @@ static int _attach_to_tasks(uint32_t jobid,
 
 	msg.msg_type = REQUEST_REATTACH_TASKS;
 	msg.data = &reattach_msg;
+	msg.protocol_version = layout->start_protocol_ver;
 
 	if (layout->front_end)
 		hosts = layout->front_end;
@@ -417,7 +420,7 @@ static int _attach_to_tasks(uint32_t jobid,
 	}
 
 	_handle_response_msg_list(nodes_resp, tasks_started);
-	list_destroy(nodes_resp);
+	FREE_NULL_LIST(nodes_resp);
 
 	return SLURM_SUCCESS;
 }
@@ -445,19 +448,18 @@ _estimate_nports(int nclients, int cli_per_port)
 static message_thread_state_t *_msg_thr_create(int num_nodes, int num_tasks)
 {
 	int sock = -1;
-	short port = -1;
+	uint16_t port;
 	eio_obj_t *obj;
 	int i;
 	message_thread_state_t *mts;
-	pthread_attr_t attr;
 
 	debug("Entering _msg_thr_create()");
 	mts = (message_thread_state_t *)xmalloc(sizeof(message_thread_state_t));
-	pthread_mutex_init(&mts->lock, NULL);
-	pthread_cond_init(&mts->cond, NULL);
+	slurm_mutex_init(&mts->lock);
+	slurm_cond_init(&mts->cond, NULL);
 	mts->tasks_started = bit_alloc(num_tasks);
 	mts->tasks_exited = bit_alloc(num_tasks);
-	mts->msg_handle = eio_handle_create();
+	mts->msg_handle = eio_handle_create(0);
 	mts->num_resp_port = _estimate_nports(num_nodes, 48);
 	mts->resp_port = xmalloc(sizeof(uint16_t) * mts->num_resp_port);
 	for (i = 0; i < mts->num_resp_port; i++) {
@@ -471,14 +473,7 @@ static message_thread_state_t *_msg_thr_create(int num_nodes, int num_tasks)
 		eio_new_initial_obj(mts->msg_handle, obj);
 	}
 
-	slurm_attr_init(&attr);
-	if (pthread_create(&mts->msg_thread, &attr,
-			   _msg_thr_internal, (void *)mts) != 0) {
-		error("pthread_create of message thread: %m");
-		slurm_attr_destroy(&attr);
-		goto fail;
-	}
-	slurm_attr_destroy(&attr);
+	slurm_thread_create(&mts->msg_thread, _msg_thr_internal, mts);
 
 	return mts;
 fail:
@@ -491,12 +486,12 @@ fail:
 static void _msg_thr_wait(message_thread_state_t *mts)
 {
 	/* Wait for all known running tasks to complete */
-	pthread_mutex_lock(&mts->lock);
+	slurm_mutex_lock(&mts->lock);
 	while (bit_set_count(mts->tasks_exited)
 	       < bit_set_count(mts->tasks_started)) {
-		pthread_cond_wait(&mts->cond, &mts->lock);
+		slurm_cond_wait(&mts->cond, &mts->lock);
 	}
-	pthread_mutex_unlock(&mts->lock);
+	slurm_mutex_unlock(&mts->lock);
 }
 
 static void _msg_thr_destroy(message_thread_state_t *mts)
@@ -504,8 +499,8 @@ static void _msg_thr_destroy(message_thread_state_t *mts)
 	eio_signal_shutdown(mts->msg_handle);
 	pthread_join(mts->msg_thread, NULL);
 	eio_handle_destroy(mts->msg_handle);
-	pthread_mutex_destroy(&mts->lock);
-	pthread_cond_destroy(&mts->cond);
+	slurm_mutex_destroy(&mts->lock);
+	slurm_cond_destroy(&mts->cond);
 	FREE_NULL_BITMAP(mts->tasks_started);
 	FREE_NULL_BITMAP(mts->tasks_exited);
 }
@@ -516,14 +511,14 @@ _launch_handler(message_thread_state_t *mts, slurm_msg_t *resp)
 	launch_tasks_response_msg_t *msg = resp->data;
 	int i;
 
-	pthread_mutex_lock(&mts->lock);
+	slurm_mutex_lock(&mts->lock);
 
 	for (i = 0; i < msg->count_of_pids; i++) {
 		bit_set(mts->tasks_started, msg->task_ids[i]);
 	}
 
-	pthread_cond_signal(&mts->cond);
-	pthread_mutex_unlock(&mts->lock);
+	slurm_cond_signal(&mts->cond);
+	slurm_mutex_unlock(&mts->lock);
 
 }
 
@@ -540,7 +535,7 @@ _exit_handler(message_thread_state_t *mts, slurm_msg_t *exit_msg)
 		return;
 	}
 
-	pthread_mutex_lock(&mts->lock);
+	slurm_mutex_lock(&mts->lock);
 
 	for (i = 0; i < msg->num_tasks; i++) {
 		debug("task %d done", msg->task_id_list[i]);
@@ -564,21 +559,24 @@ _exit_handler(message_thread_state_t *mts, slurm_msg_t *exit_msg)
 				msg->task_id_list[i],
 				WTERMSIG(msg->return_code));
 		}
-		rc = 1;
 	}
 
-	pthread_cond_signal(&mts->cond);
-	pthread_mutex_unlock(&mts->lock);
+	slurm_cond_signal(&mts->cond);
+	slurm_mutex_unlock(&mts->lock);
 }
 
 static void
 _handle_msg(void *arg, slurm_msg_t *msg)
 {
-	message_thread_state_t *mts = (message_thread_state_t *)arg;
-	uid_t req_uid = g_slurm_auth_get_uid(msg->auth_cred, NULL);
 	static uid_t slurm_uid;
 	static bool slurm_uid_set = false;
+	message_thread_state_t *mts = (message_thread_state_t *)arg;
+	char *auth_info = slurm_get_auth_info();
+	uid_t req_uid;
 	uid_t uid = getuid();
+
+	req_uid = g_slurm_auth_get_uid(msg->auth_cred, auth_info);
+	xfree(auth_info);
 
 	if (!slurm_uid_set) {
 		slurm_uid = slurm_get_slurm_user_id();
@@ -595,17 +593,14 @@ _handle_msg(void *arg, slurm_msg_t *msg)
 	case RESPONSE_LAUNCH_TASKS:
 		debug2("received task launch");
 		_launch_handler(mts, msg);
-		slurm_free_launch_tasks_response_msg(msg->data);
 		break;
 	case MESSAGE_TASK_EXIT:
 		debug2("received task exit");
 		_exit_handler(mts, msg);
-		slurm_free_task_exit_msg(msg->data);
 		break;
 	case SRUN_JOB_COMPLETE:
 		debug2("received job step complete message");
 		/* FIXME - does nothing yet */
-		slurm_free_srun_job_complete_msg(msg->data);
 		break;
 	default:
 		error("received spurious message type: %d",
@@ -650,8 +645,6 @@ _mpir_dump_proctable()
 
 	for (i = 0; i < MPIR_proctable_size; i++) {
 		tv = &MPIR_proctable[i];
-		if (!tv)
-			break;
 		info("task:%d, host:%s, pid:%d, executable:%s",
 		     i, tv->host_name, tv->pid, tv->executable_name);
 	}

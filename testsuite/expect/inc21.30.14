@@ -7,7 +7,7 @@
 # Written by Nathan Yee <nyee32@schedmd.com>
 #
 # This file is part of SLURM, a resource management program.
-# For details, see <http://slurm.schedmd.com/>.
+# For details, see <https://slurm.schedmd.com/>.
 # Please also read the included file: DISCLAIMER.
 #
 # SLURM is free software; you can redistribute it and/or modify it under
@@ -33,13 +33,16 @@ proc inc21_30_14 { } {
 
 	spawn $salloc --account=$acct -N1 -t$maxwall_num $srun $bin_sleep 10
 	expect {
+		-re "Pending job allocation ($number)" {
+			set job_id $expect_out(1,string)
+			exp_continue
+		}
 		-re "Granted job allocation ($number)" {
 			set job_id $expect_out(1,string)
 			send_user "\nJob $job_id has been submitted\n"
 		}
-		-re "Pending job allocation ($number)" {
-			set job_id $expect_out(1,string)
-			send_user "\nFAILURE: job $job_id should not be waiting for resources (Within: inc21.30.14)\n"
+		-re "error" {
+			send_user "\nFAILURE: Job allocation should not have failed. (Within: inc21.30.14)\n"
 			set exit_code 1
 		}
 		timeout {

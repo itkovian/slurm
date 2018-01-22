@@ -1,4 +1,4 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Test of SLURM functionality
 #          Basic sattach functionality test (--layout, --verbose, --label
@@ -14,7 +14,7 @@
 # CODE-OCEC-09-009. All rights reserved.
 #
 # This file is part of SLURM, a resource management program.
-# For details, see <http://slurm.schedmd.com/>.
+# For details, see <https://slurm.schedmd.com/>.
 # Please also read the included file: DISCLAIMER.
 #
 # SLURM is free software; you can redistribute it and/or modify it under
@@ -108,6 +108,10 @@ if {$matches != $task_cnt} {
 	exit 1
 }
 
+# Wait for startup to complete (including RESPONSE_LAUNCH_TASKS message to srun)
+# before attempting to attach
+sleep 0.1
+
 #
 # Get task layout information
 #
@@ -153,7 +157,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user \nFAILURE: sattach not responding\n"
+		send_user "\nFAILURE: sattach not responding\n"
 		set exit_code 1
 	}
 	eof {

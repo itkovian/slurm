@@ -1,6 +1,5 @@
 /*****************************************************************************\
  *  src/slurmd/slurmstepd/slurmstepd.c - SLURM job-step manager.
- *  $Id$
  *****************************************************************************
  *  Copyright (C) 2002-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2009 Lawrence Livermore National Security.
@@ -10,7 +9,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -39,25 +38,28 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#if HAVE_CONFIG_H
-#  include "config.h"
-#endif
+#include "config.h"
 
-#include <unistd.h>
-#include <stdlib.h>
 #include <signal.h>
+#include <stdlib.h>
+#include <sys/mman.h>
+#include <unistd.h>
 
 #include "src/common/cpu_frequency.h"
 #include "src/common/gres.h"
+#include "src/common/node_select.h"
+#include "src/common/plugstack.h"
+#include "src/common/slurm_auth.h"
 #include "src/common/slurm_jobacct_gather.h"
 #include "src/common/slurm_acct_gather_profile.h"
+#include "src/common/slurm_mpi.h"
+#include "src/common/slurm_protocol_api.h"
 #include "src/common/slurm_rlimits_info.h"
 #include "src/common/stepd_api.h"
 #include "src/common/switch.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xsignal.h"
-#include "src/common/plugstack.h"
-#include "src/common/node_select.h"
+#include "src/common/xstring.h"
 
 #include "src/slurmd/common/core_spec_plugin.h"
 #include "src/slurmd/common/slurmstepd_init.h"
@@ -70,18 +72,18 @@
 #include "src/slurmd/slurmstepd/slurmstepd_job.h"
 
 static int _init_from_slurmd(int sock, char **argv, slurm_addr_t **_cli,
-			     slurm_addr_t **_self, slurm_msg_t **_msg,
-			     int *_ngids, gid_t **_gids);
+			     slurm_addr_t **_self, slurm_msg_t **_msg);
 
 static void _dump_user_env(void);
 static void _send_ok_to_slurmd(int sock);
 static void _send_fail_to_slurmd(int sock);
+static void _got_ack_from_slurmd(int);
 static stepd_step_rec_t *_step_setup(slurm_addr_t *cli, slurm_addr_t *self,
-				 slurm_msg_t *msg);
+				     slurm_msg_t *msg);
 #ifdef MEMORY_LEAK_DEBUG
 static void _step_cleanup(stepd_step_rec_t *job, slurm_msg_t *msg, int rc);
 #endif
-static int process_cmdline (int argc, char *argv[]);
+static int _process_cmdline (int argc, char **argv);
 
 int slurmstepd_blocked_signals[] = {
 	SIGPIPE, 0
@@ -92,17 +94,16 @@ slurmd_conf_t * conf;
 extern char  ** environ;
 
 int
-main (int argc, char *argv[])
+main (int argc, char **argv)
 {
 	slurm_addr_t *cli;
 	slurm_addr_t *self;
 	slurm_msg_t *msg;
 	stepd_step_rec_t *job;
-	int ngids;
-	gid_t *gids;
 	int rc = 0;
+	char *launch_params;
 
-	if (process_cmdline (argc, argv) < 0)
+	if (_process_cmdline (argc, argv) < 0)
 		fatal ("Error in slurmstepd command line");
 
 	xsignal_block(slurmstepd_blocked_signals);
@@ -112,15 +113,11 @@ main (int argc, char *argv[])
 	init_setproctitle(argc, argv);
 	if (slurm_select_init(1) != SLURM_SUCCESS )
 		fatal( "failed to initialize node selection plugin" );
+	if (slurm_auth_init(NULL) != SLURM_SUCCESS)
+		fatal( "failed to initialize authentication plugin" );
 
 	/* Receive job parameters from the slurmd */
-	_init_from_slurmd(STDIN_FILENO, argv, &cli, &self, &msg,
-			  &ngids, &gids);
-
-	/* Fancy way of closing stdin that keeps STDIN_FILENO from being
-	 * allocated to any random file.  The slurmd already opened /dev/null
-	 * on STDERR_FILENO for us. */
-	dup2(STDERR_FILENO, STDIN_FILENO);
+	_init_from_slurmd(STDIN_FILENO, argv, &cli, &self, &msg);
 
 	/* Create the stepd_step_rec_t, mostly from info in a
 	 * launch_tasks_request_msg_t or a batch_job_launch_msg_t */
@@ -129,8 +126,6 @@ main (int argc, char *argv[])
 		rc = SLURM_FAILURE;
 		goto ending;
 	}
-	job->ngids = ngids;
-	job->gids = gids;
 
 	/* fork handlers cause mutexes on some global data structures
 	 * to be re-initialized after the fork. */
@@ -144,25 +139,52 @@ main (int argc, char *argv[])
 		goto ending;
 	}
 
-	_send_ok_to_slurmd(STDOUT_FILENO);
+	if (job->stepid != SLURM_EXTERN_CONT)
+		close_slurmd_conn();
 
-	/* Fancy way of closing stdout that keeps STDOUT_FILENO from being
-	 * allocated to any random file.  The slurmd already opened /dev/null
-	 * on STDERR_FILENO for us. */
-	dup2(STDERR_FILENO, STDOUT_FILENO);
+	/* slurmstepd is the only daemon that should survive upgrade. If it
+	 * had been swapped out before upgrade happened it could easily lead
+	 * to SIGBUS at any time after upgrade. Avoid that by locking it
+	 * in-memory. */
+	launch_params = slurm_get_launch_params();
+	if (launch_params && strstr(launch_params, "slurmstepd_memlock")) {
+#ifdef _POSIX_MEMLOCK
+		int flags = MCL_CURRENT;
+		if (strstr(launch_params, "slurmstepd_memlock_all"))
+			flags |= MCL_FUTURE;
+		if (mlockall(flags) < 0)
+			info("failed to mlock() slurmstepd pages: %m");
+		else
+			debug("slurmstepd locked in memory");
+#else
+		info("mlockall() system call does not appear to be available");
+#endif
+	}
+	xfree(launch_params);
 
 	/* This does most of the stdio setup, then launches all the tasks,
 	 * and blocks until the step is complete */
 	rc = job_manager(job);
 
-	if (job->batch)
-		batch_finish(job, rc); /* sends batch complete message */
-
-	/* signal the message thread to shutdown, and wait for it */
-	eio_signal_shutdown(job->msg_handle);
-	pthread_join(job->msgid, NULL);
-
+	return stepd_cleanup(msg, job, cli, self, rc, 0);
 ending:
+	return stepd_cleanup(msg, job, cli, self, rc, 1);
+}
+
+extern int stepd_cleanup(slurm_msg_t *msg, stepd_step_rec_t *job,
+			 slurm_addr_t *cli, slurm_addr_t *self,
+			 int rc, bool only_mem)
+{
+	if (!only_mem) {
+		if (job->batch)
+			batch_finish(job, rc); /* sends batch complete message */
+
+		/* signal the message thread to shutdown, and wait for it */
+		eio_signal_shutdown(job->msg_handle);
+		pthread_join(job->msgid, NULL);
+	}
+
+	mpi_fini();	/* Remove stale PMI2 sockets */
 #ifdef MEMORY_LEAK_DEBUG
 	acct_gather_conf_destroy();
 	(void) core_spec_g_fini();
@@ -172,33 +194,57 @@ ending:
 
 	xfree(cli);
 	xfree(self);
-	xfree(conf->hostname);
 	xfree(conf->block_map);
 	xfree(conf->block_map_inv);
-	xfree(conf->spooldir);
+	xfree(conf->hostname);
+	xfree(conf->job_acct_gather_freq);
+	xfree(conf->job_acct_gather_type);
+	xfree(conf->logfile);
 	xfree(conf->node_name);
 	xfree(conf->node_topo_addr);
 	xfree(conf->node_topo_pattern);
-	xfree(conf->logfile);
+	xfree(conf->spooldir);
+	xfree(conf->task_epilog);
+	xfree(conf->task_prolog);
 	xfree(conf);
 #endif
 	info("done with job");
 	return rc;
 }
 
+extern void close_slurmd_conn(void)
+{
+	_send_ok_to_slurmd(STDOUT_FILENO);
+	_got_ack_from_slurmd(STDIN_FILENO);
 
-static slurmd_conf_t * read_slurmd_conf_lite (int fd)
+	/* Fancy way of closing stdin that keeps STDIN_FILENO from being
+	 * allocated to any random file.  The slurmd already opened /dev/null
+	 * on STDERR_FILENO for us. */
+	dup2(STDERR_FILENO, STDIN_FILENO);
+
+	/* Fancy way of closing stdout that keeps STDOUT_FILENO from being
+	 * allocated to any random file.  The slurmd already opened /dev/null
+	 * on STDERR_FILENO for us. */
+	dup2(STDERR_FILENO, STDOUT_FILENO);
+}
+
+static slurmd_conf_t *read_slurmd_conf_lite(int fd)
 {
 	int rc;
 	int len;
-	Buf buffer;
-	slurmd_conf_t *confl;
+	Buf buffer = NULL;
+	slurmd_conf_t *confl, *local_conf = NULL;
 	int tmp_int = 0;
 
 	/*  First check to see if we've already initialized the
 	 *   global slurmd_conf_t in 'conf'. Allocate memory if not.
 	 */
-	confl = conf ? conf : xmalloc (sizeof (*confl));
+	if (conf) {
+		confl = conf;
+	} else {
+		local_conf = xmalloc(sizeof(slurmd_conf_t));
+		confl = local_conf;
+	}
 
 	safe_read(fd, &len, sizeof(int));
 
@@ -211,6 +257,7 @@ static slurmd_conf_t * read_slurmd_conf_lite (int fd)
 
 	free_buf(buffer);
 
+	confl->log_opts.prefix_level = 1;
 	confl->log_opts.stderr_level = confl->debug_level;
 	confl->log_opts.logfile_level = confl->debug_level;
 	confl->log_opts.syslog_level = confl->debug_level;
@@ -228,7 +275,7 @@ static slurmd_conf_t * read_slurmd_conf_lite (int fd)
 	} else
 		confl->log_opts.syslog_level  = LOG_LEVEL_QUIET;
 
-	confl->acct_freq_task = (uint16_t)NO_VAL;
+	confl->acct_freq_task = NO_VAL16;
 	tmp_int = acct_gather_parse_freq(PROFILE_TASK,
 				       confl->job_acct_gather_freq);
 	if (tmp_int != -1)
@@ -236,7 +283,10 @@ static slurmd_conf_t * read_slurmd_conf_lite (int fd)
 
 
 	return (confl);
+
 rwfail:
+	FREE_NULL_BUFFER(buffer);
+	xfree(local_conf);
 	return (NULL);
 }
 
@@ -262,9 +312,9 @@ static int get_jobid_uid_from_env (uint32_t *jobidp, uid_t *uidp)
 	return (0);
 }
 
-static int handle_spank_mode (int argc, char *argv[])
+static int _handle_spank_mode (int argc, char **argv)
 {
-	char prefix[64] = "spank-";
+	char *prefix = NULL;
 	const char *mode = argv[2];
 	uid_t uid = (uid_t) -1;
 	uint32_t jobid = (uint32_t) -1;
@@ -278,8 +328,9 @@ static int handle_spank_mode (int argc, char *argv[])
 	/*
 	 *  Make our log prefix into spank-prolog: or spank-epilog:
 	 */
-	strcat (prefix, mode);
+	xstrfmtcat(prefix, "spank-%s", mode);
 	log_init(prefix, lopts, LOG_DAEMON, NULL);
+	xfree(prefix);
 
 	/*
 	 *  When we are started from slurmd, a lightweight config is
@@ -300,11 +351,11 @@ static int handle_spank_mode (int argc, char *argv[])
 
 	debug("Running spank/%s for jobid [%u] uid [%u]", mode, jobid, uid);
 
-	if (strcmp (mode, "prolog") == 0) {
+	if (xstrcmp (mode, "prolog") == 0) {
 		if (spank_job_prolog (jobid, uid) < 0)
 			return (-1);
 	}
-	else if (strcmp (mode, "epilog") == 0) {
+	else if (xstrcmp (mode, "epilog") == 0) {
 		if (spank_job_epilog (jobid, uid) < 0)
 			return (-1);
 	}
@@ -318,15 +369,15 @@ static int handle_spank_mode (int argc, char *argv[])
 /*
  *  Process special "modes" of slurmstepd passed as cmdline arguments.
  */
-static int process_cmdline (int argc, char *argv[])
+static int _process_cmdline (int argc, char **argv)
 {
-	if ((argc == 2) && (strcmp(argv[1], "getenv") == 0)) {
+	if ((argc == 2) && (xstrcmp(argv[1], "getenv") == 0)) {
 		print_rlimits();
 		_dump_user_env();
 		exit(0);
 	}
-	if ((argc == 3) && (strcmp(argv[1], "spank") == 0)) {
-		if (handle_spank_mode (argc, argv) < 0)
+	if ((argc == 3) && (xstrcmp(argv[1], "spank") == 0)) {
+		if (_handle_spank_mode(argc, argv) < 0)
 			exit (1);
 		exit (0);
 	}
@@ -339,7 +390,7 @@ _send_ok_to_slurmd(int sock)
 {
 	/* If running under valgrind/memcheck, this pipe doesn't work correctly
 	 * so just skip it. */
-#ifndef SLURMSTEPD_MEMCHECK
+#if (SLURMSTEPD_MEMCHECK == 0)
 	int ok = SLURM_SUCCESS;
 	safe_write(sock, &ok, sizeof(int));
 	return;
@@ -353,7 +404,7 @@ _send_fail_to_slurmd(int sock)
 {
 	/* If running under valgrind/memcheck, this pipe doesn't work correctly
 	 * so just skip it. */
-#ifndef SLURMSTEPD_MEMCHECK
+#if (SLURMSTEPD_MEMCHECK == 0)
 	int fail = SLURM_FAILURE;
 
 	if (errno)
@@ -366,27 +417,57 @@ rwfail:
 #endif
 }
 
+static void
+_got_ack_from_slurmd(int sock)
+{
+	/* If running under valgrind/memcheck, this pipe doesn't work correctly
+	 * so just skip it. */
+#if (SLURMSTEPD_MEMCHECK == 0)
+	int ok;
+	safe_read(sock, &ok, sizeof(int));
+	return;
+rwfail:
+	error("Unable to receive \"ok ack\" to slurmd");
+#endif
+}
+
+static void _set_job_log_prefix(uint32_t jobid, uint32_t stepid)
+{
+	char *buf;
+
+	if (stepid == SLURM_BATCH_SCRIPT)
+		buf = xstrdup_printf("[%u.batch]", jobid);
+	else if (stepid == SLURM_EXTERN_CONT)
+		buf = xstrdup_printf("[%u.extern]", jobid);
+	else
+		buf = xstrdup_printf("[%u.%u]", jobid, stepid);
+
+	setproctitle("%s", buf);
+
+	/* note: will claim ownership of buf, do not free */
+	xstrcat(buf, " ");
+	log_set_fpfx(&buf);
+}
+
 /*
  *  This function handles the initialization information from slurmd
  *  sent by _send_slurmstepd_init() in src/slurmd/slurmd/req.c.
  */
 static int
 _init_from_slurmd(int sock, char **argv,
-		  slurm_addr_t **_cli, slurm_addr_t **_self, slurm_msg_t **_msg,
-		  int *_ngids, gid_t **_gids)
+		  slurm_addr_t **_cli, slurm_addr_t **_self, slurm_msg_t **_msg)
 {
 	char *incoming_buffer = NULL;
 	Buf buffer;
 	int step_type;
-	int len;
+	int len, proto;
 	slurm_addr_t *cli = NULL;
 	slurm_addr_t *self = NULL;
 	slurm_msg_t *msg = NULL;
-	int ngids = 0;
-	gid_t *gids = NULL;
 	uint16_t port;
 	char buf[16];
 	log_options_t lopts = LOG_OPTS_INITIALIZER;
+	uint32_t jobid = 0, stepid = 0;
 
 	log_init(argv[0], lopts, LOG_DAEMON, NULL);
 
@@ -395,7 +476,7 @@ _init_from_slurmd(int sock, char **argv,
 	debug3("step_type = %d", step_type);
 
 	/* receive reverse-tree info from slurmd */
-	pthread_mutex_lock(&step_complete.lock);
+	slurm_mutex_lock(&step_complete.lock);
 	safe_read(sock, &step_complete.rank, sizeof(int));
 	safe_read(sock, &step_complete.parent_rank, sizeof(int));
 	safe_read(sock, &step_complete.children, sizeof(int));
@@ -404,12 +485,16 @@ _init_from_slurmd(int sock, char **argv,
 	safe_read(sock, &step_complete.parent_addr, sizeof(slurm_addr_t));
 	step_complete.bits = bit_alloc(step_complete.children);
 	step_complete.jobacct = jobacctinfo_create(NULL);
-	pthread_mutex_unlock(&step_complete.lock);
+	slurm_mutex_unlock(&step_complete.lock);
 
 	/* receive conf from slurmd */
 	if ((conf = read_slurmd_conf_lite (sock)) == NULL)
 		fatal("Failed to read conf from slurmd");
 
+	/*
+	 * LOGGING BEFORE THIS WILL NOT WORK!  Only afterwards will it show
+	 * up in the log.
+	 */
 	log_alter(conf->log_opts, 0, conf->logfile);
 	log_set_timefmt(conf->log_fmt);
 
@@ -450,8 +535,14 @@ _init_from_slurmd(int sock, char **argv,
 	/* Receive GRES information from slurmd */
 	gres_plugin_recv_stepd(sock);
 
+	/* Grab the slurmd's spooldir. Has %n expanded. */
+	cpu_freq_init(conf);
+
 	/* Receive cpu_frequency info from slurmd */
 	cpu_freq_recv_info(sock);
+
+	/* get the protocol version of the srun */
+	safe_read(sock, &proto, sizeof(int));
 
 	/* receive req from slurmd */
 	safe_read(sock, &len, sizeof(int));
@@ -461,9 +552,10 @@ _init_from_slurmd(int sock, char **argv,
 
 	msg = xmalloc(sizeof(slurm_msg_t));
 	slurm_msg_t_init(msg);
+	/* Always unpack as the current version. */
 	msg->protocol_version = SLURM_PROTOCOL_VERSION;
 
-	switch(step_type) {
+	switch (step_type) {
 	case LAUNCH_BATCH_JOB:
 		msg->msg_type = REQUEST_BATCH_JOB_LAUNCH;
 		break;
@@ -471,32 +563,40 @@ _init_from_slurmd(int sock, char **argv,
 		msg->msg_type = REQUEST_LAUNCH_TASKS;
 		break;
 	default:
-		fatal("Unrecognized launch RPC");
+		fatal("%s: Unrecognized launch RPC (%d)", __func__, step_type);
 		break;
 	}
 	if (unpack_msg(msg, buffer) == SLURM_ERROR)
 		fatal("slurmstepd: we didn't unpack the request correctly");
 	free_buf(buffer);
 
-	/* receive cached group ids array for the relevant uid */
-	safe_read(sock, &ngids, sizeof(int));
-	if (ngids > 0) {
-		int i;
-		uint32_t tmp32;
-
-		gids = (gid_t *)xmalloc(sizeof(gid_t) * ngids);
-		for (i = 0; i < ngids; i++) {
-			safe_read(sock, &tmp32, sizeof(uint32_t));
-			gids[i] = (gid_t)tmp32;
-			debug2("got gid %d", gids[i]);
-		}
+	switch (step_type) {
+	case LAUNCH_BATCH_JOB:
+		jobid = ((batch_job_launch_msg_t *)msg->data)->job_id;
+		stepid = ((batch_job_launch_msg_t *)msg->data)->step_id;
+		break;
+	case LAUNCH_TASKS:
+		jobid = ((launch_tasks_request_msg_t *)msg->data)->job_id;
+		stepid = ((launch_tasks_request_msg_t *)msg->data)->job_step_id;
+		break;
+	default:
+		fatal("%s: Unrecognized launch RPC (%d)", __func__, step_type);
+		break;
 	}
+
+	_set_job_log_prefix(jobid, stepid);
+
+	/*
+	 * Swap the field to the srun client version, which will eventually
+	 * end up stored as protocol_version in srun_info_t. It's a hack to
+	 * pass it in-band, while still using the correct version to unpack
+	 * the launch request message above.
+	 */
+	msg->protocol_version = proto;
 
 	*_cli = cli;
 	*_self = self;
 	*_msg = msg;
-	*_ngids = ngids;
-	*_gids = gids;
 
 	return 1;
 
@@ -510,14 +610,15 @@ _step_setup(slurm_addr_t *cli, slurm_addr_t *self, slurm_msg_t *msg)
 {
 	stepd_step_rec_t *job = NULL;
 
-	switch(msg->msg_type) {
+	switch (msg->msg_type) {
 	case REQUEST_BATCH_JOB_LAUNCH:
 		debug2("setup for a batch_job");
 		job = mgr_launch_batch_job_setup(msg->data, cli);
 		break;
 	case REQUEST_LAUNCH_TASKS:
 		debug2("setup for a launch_task");
-		job = mgr_launch_tasks_setup(msg->data, cli, self);
+		job = mgr_launch_tasks_setup(msg->data, cli, self,
+					     msg->protocol_version);
 		break;
 	default:
 		fatal("handle_launch_message: Unrecognized launch RPC");
@@ -539,9 +640,9 @@ _step_setup(slurm_addr_t *cli, slurm_addr_t *self, slurm_msg_t *msg)
 					   job->stepid);
 	}
 	if (msg->msg_type == REQUEST_BATCH_JOB_LAUNCH)
-		gres_plugin_job_set_env(&job->env, job->job_gres_list);
+		gres_plugin_job_set_env(&job->env, job->job_gres_list, 0);
 	else if (msg->msg_type == REQUEST_LAUNCH_TASKS)
-		gres_plugin_step_set_env(&job->env, job->step_gres_list);
+		gres_plugin_step_set_env(&job->env, job->step_gres_list, 0);
 
 	/*
 	 * Add slurmd node topology informations to job env array
@@ -550,6 +651,8 @@ _step_setup(slurm_addr_t *cli, slurm_addr_t *self, slurm_msg_t *msg)
 			    conf->node_topo_addr);
 	env_array_overwrite(&job->env,"SLURM_TOPOLOGY_ADDR_PATTERN",
 			    conf->node_topo_pattern);
+
+	set_msg_node_id(job);
 
 	return job;
 }
@@ -563,25 +666,27 @@ _step_cleanup(stepd_step_rec_t *job, slurm_msg_t *msg, int rc)
 		if (!job->batch)
 			stepd_step_rec_destroy(job);
 	}
-	/*
-	 * The message cannot be freed until the jobstep is complete
-	 * because the job struct has pointers into the msg, such
-	 * as the switch jobinfo pointer.
-	 */
-	switch(msg->msg_type) {
-	case REQUEST_BATCH_JOB_LAUNCH:
-		slurm_free_job_launch_msg(msg->data);
-		break;
-	case REQUEST_LAUNCH_TASKS:
-		slurm_free_launch_tasks_request_msg(msg->data);
-		break;
-	default:
-		fatal("handle_launch_message: Unrecognized launch RPC");
-		break;
+
+	if (msg) {
+		/*
+		 * The message cannot be freed until the jobstep is complete
+		 * because the job struct has pointers into the msg, such
+		 * as the switch jobinfo pointer.
+		 */
+		switch(msg->msg_type) {
+		case REQUEST_BATCH_JOB_LAUNCH:
+			slurm_free_job_launch_msg(msg->data);
+			break;
+		case REQUEST_LAUNCH_TASKS:
+			slurm_free_launch_tasks_request_msg(msg->data);
+			break;
+		default:
+			fatal("handle_launch_message: Unrecognized launch RPC");
+			break;
+		}
+		xfree(msg);
 	}
 	jobacctinfo_destroy(step_complete.jobacct);
-
-	xfree(msg);
 }
 #endif
 

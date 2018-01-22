@@ -20,12 +20,14 @@ hv_to_slurm_step_ctx_params(HV *hv, slurm_step_ctx_params_t *params)
 
 	FETCH_FIELD(hv, params, ckpt_interval, uint16_t, FALSE);
 	FETCH_FIELD(hv, params, cpu_count, uint32_t, FALSE);
-	FETCH_FIELD(hv, params, cpu_freq, uint32_t, FALSE);
+	FETCH_FIELD(hv, params, cpu_freq_min, uint32_t, FALSE);
+	FETCH_FIELD(hv, params, cpu_freq_max, uint32_t, FALSE);
+	FETCH_FIELD(hv, params, cpu_freq_gov, uint32_t, FALSE);
 	FETCH_FIELD(hv, params, exclusive, uint16_t, FALSE);
 	FETCH_FIELD(hv, params, features, charp, FALSE);
 	FETCH_FIELD(hv, params, immediate, uint16_t, FALSE);
 	FETCH_FIELD(hv, params, job_id, uint32_t, FALSE); /* for slurm_step_ctx_create_no_alloc */
-	FETCH_FIELD(hv, params, pn_min_memory, uint32_t, FALSE);
+	FETCH_FIELD(hv, params, pn_min_memory, uint64_t, FALSE);
 	FETCH_FIELD(hv, params, ckpt_dir, charp, FALSE);
 	FETCH_FIELD(hv, params, gres, charp, FALSE);
 	FETCH_FIELD(hv, params, name, charp, FALSE);
@@ -150,9 +152,9 @@ hv_to_slurm_step_launch_params(HV *hv, slurm_step_launch_params_t *params)
 			if ((svp = hv_fetch(local_fds_hv, "in", 2, FALSE))) {
 				if (SvROK(*svp) && SvTYPE(SvRV(*svp)) == SVt_PVHV) {
 					fd_hv = (HV*)SvRV(*svp);
-					FETCH_FIELD(fd_hv, (&params->local_fds.in), fd, int, TRUE);
-					FETCH_FIELD(fd_hv, (&params->local_fds.in), taskid, uint32_t, TRUE);
-					FETCH_FIELD(fd_hv, (&params->local_fds.in), nodeid, uint32_t, TRUE);
+					FETCH_FIELD(fd_hv, (&params->local_fds.input), fd, int, TRUE);
+					FETCH_FIELD(fd_hv, (&params->local_fds.input), taskid, uint32_t, TRUE);
+					FETCH_FIELD(fd_hv, (&params->local_fds.input), nodeid, uint32_t, TRUE);
 				} else {
 					Perl_warn(aTHX_ "`in' of local_fds is not a hash reference, ignored");
 				}
@@ -190,7 +192,9 @@ hv_to_slurm_step_launch_params(HV *hv, slurm_step_launch_params_t *params)
 	FETCH_FIELD(hv, params, task_epilog, charp, FALSE);
 	FETCH_FIELD(hv, params, cpu_bind_type, uint16_t, FALSE);
 	FETCH_FIELD(hv, params, cpu_bind, charp, FALSE);
-	FETCH_FIELD(hv, params, cpu_freq, uint32_t, FALSE);
+	FETCH_FIELD(hv, params, cpu_freq_min, uint32_t, FALSE);
+	FETCH_FIELD(hv, params, cpu_freq_max, uint32_t, FALSE);
+	FETCH_FIELD(hv, params, cpu_freq_gov, uint32_t, FALSE);
 	FETCH_FIELD(hv, params, mem_bind_type, uint16_t, FALSE);
 	FETCH_FIELD(hv, params, mem_bind, charp, FALSE);
 

@@ -7,7 +7,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -64,10 +64,10 @@ scontrol_load_partitions (partition_info_msg_t **part_buffer_pptr)
 			if (quiet_flag == -1)
 				printf ("slurm_load_part no change in data\n");
 		}
-	}
-	else
+	} else {
 		error_code = slurm_load_partitions((time_t) NULL,
 						   &part_info_ptr, show_flags);
+	}
 
 	if (error_code == SLURM_SUCCESS) {
 		old_part_info_ptr = part_info_ptr;
@@ -108,7 +108,7 @@ scontrol_print_part (char *partition_name)
 	part_ptr = part_info_ptr->partition_array;
 	for (i = 0; i < part_info_ptr->record_count; i++) {
 		if (partition_name &&
-		    strcmp (partition_name, part_ptr[i].name) != 0)
+		    xstrcmp (partition_name, part_ptr[i].name) != 0)
 			continue;
 		print_cnt++;
 		slurm_print_partition_info (stdout, & part_ptr[i],

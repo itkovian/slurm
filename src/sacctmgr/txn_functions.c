@@ -9,7 +9,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -41,7 +41,7 @@
 #include "src/sacctmgr/sacctmgr.h"
 #include "src/common/slurmdbd_defs.h"
 
-static int _set_cond(int *start, int argc, char *argv[],
+static int _set_cond(int *start, int argc, char **argv,
 		     slurmdb_txn_cond_t *txn_cond,
 		     List format_list)
 {
@@ -60,18 +60,18 @@ static int _set_cond(int *start, int argc, char *argv[],
 			}
 		}
 
-		if (!end && !strncasecmp(argv[i], "where",
+		if (!end && !xstrncasecmp(argv[i], "where",
 					MAX(command_len, 5))) {
 			continue;
-		} else if (!end && !strncasecmp(argv[i], "withassocinfo",
+		} else if (!end && !xstrncasecmp(argv[i], "withassocinfo",
 					  MAX(command_len, 5))) {
 			txn_cond->with_assoc_info = 1;
 			set = 1;
 		} else if (!end
-			  || (!strncasecmp (argv[i], "Ids",
-					    MAX(command_len, 1)))
-			  || (!strncasecmp (argv[i], "Txn",
-					    MAX(command_len, 1)))) {
+			   || (!xstrncasecmp(argv[i], "Ids",
+					     MAX(command_len, 1)))
+			   || (!xstrncasecmp(argv[i], "Txn",
+					     MAX(command_len, 1)))) {
 			ListIterator itr = NULL;
 			char *temp = NULL;
 			uint32_t id = 0;
@@ -94,7 +94,7 @@ static int _set_cond(int *start, int argc, char *argv[],
 				}
 			}
 			list_iterator_destroy(itr);
-		} else if (!strncasecmp (argv[i], "Accounts",
+		} else if (!xstrncasecmp(argv[i], "Accounts",
 					 MAX(command_len, 3))) {
 			if (!txn_cond->acct_list)
 				txn_cond->acct_list =
@@ -102,7 +102,7 @@ static int _set_cond(int *start, int argc, char *argv[],
 			if (slurm_addto_char_list(txn_cond->acct_list,
 						 argv[i]+end))
 				set = 1;
-		} else if (!strncasecmp (argv[i], "Action",
+		} else if (!xstrncasecmp(argv[i], "Action",
 					 MAX(command_len, 4))) {
 			if (!txn_cond->action_list)
 				txn_cond->action_list =
@@ -113,7 +113,7 @@ static int _set_cond(int *start, int argc, char *argv[],
 				set = 1;
 			else
 				exit_code=1;
-		} else if (!strncasecmp (argv[i], "Actors",
+		} else if (!xstrncasecmp(argv[i], "Actors",
 					 MAX(command_len, 4))) {
 			if (!txn_cond->actor_list)
 				txn_cond->actor_list =
@@ -121,7 +121,7 @@ static int _set_cond(int *start, int argc, char *argv[],
 			if (slurm_addto_char_list(txn_cond->actor_list,
 						 argv[i]+end))
 				set = 1;
-		} else if (!strncasecmp (argv[i], "Clusters",
+		} else if (!xstrncasecmp(argv[i], "Clusters",
 					 MAX(command_len, 3))) {
 			if (!txn_cond->cluster_list)
 				txn_cond->cluster_list =
@@ -129,18 +129,18 @@ static int _set_cond(int *start, int argc, char *argv[],
 			if (slurm_addto_char_list(txn_cond->cluster_list,
 						 argv[i]+end))
 				set = 1;
-		} else if (!strncasecmp (argv[i], "End", MAX(command_len, 1))) {
+		} else if (!xstrncasecmp(argv[i], "End", MAX(command_len, 1))) {
 			txn_cond->time_end = parse_time(argv[i]+end, 1);
 			set = 1;
-		} else if (!strncasecmp (argv[i], "Format",
+		} else if (!xstrncasecmp(argv[i], "Format",
 					 MAX(command_len, 1))) {
 			if (format_list)
 				slurm_addto_char_list(format_list, argv[i]+end);
-		} else if (!strncasecmp (argv[i], "Start",
+		} else if (!xstrncasecmp(argv[i], "Start",
 					 MAX(command_len, 1))) {
 			txn_cond->time_start = parse_time(argv[i]+end, 1);
 			set = 1;
-		} else if (!strncasecmp (argv[i], "Users",
+		} else if (!xstrncasecmp(argv[i], "Users",
 					 MAX(command_len, 1))) {
 			if (!txn_cond->user_list)
 				txn_cond->user_list =
@@ -159,7 +159,7 @@ static int _set_cond(int *start, int argc, char *argv[],
 }
 
 
-extern int sacctmgr_list_txn(int argc, char *argv[])
+extern int sacctmgr_list_txn(int argc, char **argv)
 {
 	int rc = SLURM_SUCCESS;
 	slurmdb_txn_cond_t *txn_cond = xmalloc(sizeof(slurmdb_txn_cond_t));
@@ -177,15 +177,15 @@ extern int sacctmgr_list_txn(int argc, char *argv[])
 
 	for (i=0; i<argc; i++) {
 		int command_len = strlen(argv[i]);
-		if (!strncasecmp (argv[i], "Where", MAX(command_len, 5))
-		    || !strncasecmp (argv[i], "Set", MAX(command_len, 3)))
+		if (!xstrncasecmp(argv[i], "Where", MAX(command_len, 5))
+		    || !xstrncasecmp(argv[i], "Set", MAX(command_len, 3)))
 			i++;
 		_set_cond(&i, argc, argv, txn_cond, format_list);
 	}
 
 	if (exit_code) {
 		slurmdb_destroy_txn_cond(txn_cond);
-		list_destroy(format_list);
+		FREE_NULL_LIST(format_list);
 		return SLURM_ERROR;
 	}
 
@@ -198,21 +198,21 @@ extern int sacctmgr_list_txn(int argc, char *argv[])
 	}
 
 	print_fields_list = sacctmgr_process_format_list(format_list);
-	list_destroy(format_list);
+	FREE_NULL_LIST(format_list);
 
 	if (exit_code) {
-		list_destroy(print_fields_list);
+		FREE_NULL_LIST(print_fields_list);
 		return SLURM_ERROR;
 	}
 
-	txn_list = acct_storage_g_get_txn(db_conn, my_uid, txn_cond);
+	txn_list = slurmdb_txn_get(db_conn, txn_cond);
 	slurmdb_destroy_txn_cond(txn_cond);
 
 	if (!txn_list) {
 		exit_code=1;
 		fprintf(stderr, " Error with request: %s\n",
 			slurm_strerror(errno));
-		list_destroy(print_fields_list);
+		FREE_NULL_LIST(print_fields_list);
 		return SLURM_ERROR;
 	}
 	itr = list_iterator_create(txn_list);
@@ -288,7 +288,7 @@ extern int sacctmgr_list_txn(int argc, char *argv[])
 
 	list_iterator_destroy(itr2);
 	list_iterator_destroy(itr);
-	list_destroy(txn_list);
-	list_destroy(print_fields_list);
+	FREE_NULL_LIST(txn_list);
+	FREE_NULL_LIST(print_fields_list);
 	return rc;
 }

@@ -1,6 +1,4 @@
 ##*****************************************************************************
-## $Id$
-##*****************************************************************************
 #  AUTHOR:
 #    Morris Jette  <jette1@llnl.gov>
 #
@@ -20,6 +18,9 @@ AC_DEFUN([X_AC_NCURSES],
    AC_CHECK_LIB([curses],
 	[initscr],
 	[ac_have_curses=yes])
+   AC_CHECK_LIB([tinfo],
+	[tgetent],
+	[ac_have_tinfo=yes])
 
    AC_SUBST(NCURSES)
    if test "$ac_have_ncurses" = "yes"; then
@@ -30,6 +31,9 @@ AC_DEFUN([X_AC_NCURSES],
       NCURSES="-lcurses"
       NCURSES_HEADER="curses.h"
       ac_have_some_curses="yes"
+   fi
+   if test "$ac_have_tinfo" = "yes"; then
+     NCURSES="$NCURSES -ltinfo"
    fi
 
    if test "$ac_have_some_curses" = "yes"; then
@@ -45,7 +49,7 @@ AC_DEFUN([X_AC_NCURSES],
 	    AC_MSG_WARN([*** NCURSES test program execution failed.])
 	fi
    else
-      AC_MSG_WARN([Can not build smap without curses or ncurses library])
+      AC_MSG_WARN([cannot build smap without curses or ncurses library])
       ac_have_some_curses="no"
    fi
 ])

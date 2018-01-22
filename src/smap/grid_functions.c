@@ -9,7 +9,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -37,6 +37,8 @@
  *  with SLURM; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
+
+#include "config.h"
 
 #include "src/smap/smap.h"
 
@@ -75,7 +77,7 @@ extern int *get_cluster_dims(node_info_msg_t *node_info_ptr)
 		return cray_dim_size;
 	}
 
-	if (dim_size == NULL) {
+	if ((dim_size == NULL) && node_info_ptr) {
 		static int default_dim_size[1];
 		default_dim_size[0] = node_info_ptr->record_count;
 		return default_dim_size;

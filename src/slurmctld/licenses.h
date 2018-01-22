@@ -7,7 +7,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -107,18 +107,22 @@ extern int license_job_return(struct job_record *job_ptr);
  * license_job_test - Test if the licenses required for a job are available
  * IN job_ptr - job identification
  * IN when    - time to check
+ * IN reboot    - true if node reboot required to start job
  * RET: SLURM_SUCCESS, EAGAIN (not available now), SLURM_ERROR (never runnable)
  */
-extern int license_job_test(struct job_record *job_ptr, time_t when);
+extern int license_job_test(struct job_record *job_ptr, time_t when,
+			    bool reboot);
 
 /*
  * license_validate - Test if the required licenses are valid
  * IN licenses - required licenses
+ * OUT tres_req_cnt - appropriate counts for each requested gres
  * OUT valid - true if required licenses are valid and a sufficient number
  *             are configured (though not necessarily available now)
  * RET license_list, must be destroyed by caller
  */
-extern List license_validate(char *licenses, bool *valid);
+extern List license_validate(char *licenses,
+			     uint64_t *tres_req_cnt, bool *valid);
 
 /*
  * license_list_overlap - test if there is any overlap in licenses
@@ -136,5 +140,25 @@ get_all_license_info(char **buffer_ptr,
                      int *buffer_size,
                      uid_t uid,
                      uint16_t protocol_version);
+
+/*
+ * get_total_license_cnt - give me the total count of a given license name.
+ *
+ */
+extern uint32_t get_total_license_cnt(char *name);
+
+/* node_read should be locked before coming in here
+ * returns tres_str of the license_list.
+ */
+extern char *licenses_2_tres_str(List license_list);
+
+
+/* node_read should be locked before coming in here
+ * fills in tres_cnt of the license_list.
+ * locked if assoc_mgr tres read lock is locked or not.
+ */
+extern void license_set_job_tres_cnt(List license_list,
+				     uint64_t *tres_cnt,
+				     bool locked);
 
 #endif /* !_LICENSES_H */

@@ -7,7 +7,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -68,5 +68,17 @@ extern uint32_t slurmdb_str_2_cluster_flags(char *flags_in);
  * NOTE: Call xfree() to release memory allocated to the return value
  */
 extern char *slurmdb_cluster_flags_2_str(uint32_t flags_in);
+
+/*
+ * Return the plugin select id of the cluster working or current
+ */
+extern uint32_t slurmdb_setup_plugin_id_select(void);
+
+/*
+ * Setup the working_cluster_rec with the working_cluster_rec and node_addrs
+ * returned in an allocation response msg.
+ */
+extern void
+slurm_setup_remote_working_cluster(resource_allocation_response_msg_t *msg);
 
 #endif

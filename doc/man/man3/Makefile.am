@@ -1,10 +1,10 @@
 man3_MANS = slurm_hostlist_create.3 \
 	slurm_hostlist_destroy.3 \
 	slurm_hostlist_shift.3 \
+	slurm_allocate_pack_job_blocking.3 \
 	slurm_allocate_resources.3 \
 	slurm_allocate_resources_blocking.3 \
 	slurm_allocation_lookup.3 \
-	slurm_allocation_lookup_lite.3 \
 	slurm_allocation_msg_thr_create.3 \
 	slurm_allocation_msg_thr_destroy.3 \
 	slurm_api_version.3 \
@@ -31,6 +31,7 @@ man3_MANS = slurm_hostlist_create.3 \
 	slurm_free_front_end_info_msg.3 \
 	slurm_free_job_info_msg.3 \
 	slurm_free_job_alloc_info_response_msg.3 \
+	slurm_free_job_array_resp.3 \
 	slurm_free_job_step_create_response_msg.3 \
 	slurm_free_job_step_info_response_msg.3 \
 	slurm_free_node_info.3 \
@@ -62,6 +63,7 @@ man3_MANS = slurm_hostlist_create.3 \
 	slurm_job_step_layout_get.3 \
 	slurm_job_step_layout_free.3 \
 	slurm_job_will_run.3 \
+	slurm_job_will_run2.3 \
 	slurm_jobinfo_ctx_get.3 \
 	slurm_kill_job.3 \
 	slurm_kill_job_step.3 \
@@ -76,6 +78,8 @@ man3_MANS = slurm_hostlist_create.3 \
 	slurm_load_reservations.3 \
 	slurm_load_slurmd_status.3 \
 	slurm_notify_job.3 \
+	slurm_pack_job_lookup.3 \
+	slurm_pack_job_will_run.3 \
 	slurm_perror.3 \
 	slurm_pid2jobid.3 \
 	slurm_ping.3 \
@@ -96,7 +100,9 @@ man3_MANS = slurm_hostlist_create.3 \
 	slurm_read_hostfile.3 \
 	slurm_reconfigure.3 \
 	slurm_resume.3 \
+	slurm_resume2.3 \
 	slurm_requeue.3 \
+	slurm_requeue2.3 \
 	slurm_set_debug_level.3 \
 	slurm_set_trigger.3 \
 	slurm_shutdown.3 \
@@ -123,11 +129,13 @@ man3_MANS = slurm_hostlist_create.3 \
 	slurm_strerror.3 \
 	slurm_submit_batch_job.3 \
 	slurm_suspend.3 \
+	slurm_suspend2.3 \
 	slurm_takeover.3 \
 	slurm_terminate_job.3 \
 	slurm_terminate_job_step.3 \
 	slurm_update_front_end.3 \
 	slurm_update_job.3 \
+	slurm_update_job2.3 \
 	slurm_update_node.3 \
 	slurm_update_partition.3 \
 	slurm_update_reservation.3 \

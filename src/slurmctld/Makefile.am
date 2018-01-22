@@ -15,13 +15,19 @@ slurmctld_SOURCES =     \
 	agent.c  	\
 	agent.h		\
 	backup.c	\
+	burst_buffer.c	\
+	burst_buffer.h	\
 	controller.c 	\
+	fed_mgr.c 	\
+	fed_mgr.h 	\
 	front_end.c	\
 	front_end.h	\
 	gang.c		\
 	gang.h		\
 	groups.c	\
 	groups.h	\
+	heartbeat.c	\
+	heartbeat.h	\
 	job_mgr.c 	\
 	job_scheduler.c	\
 	job_scheduler.h	\
@@ -37,11 +43,12 @@ slurmctld_SOURCES =     \
 	partition_mgr.c \
 	ping_nodes.c	\
 	ping_nodes.h	\
-	slurmctld_plugstack.c \
-	slurmctld_plugstack.h \
 	port_mgr.c	\
 	port_mgr.h	\
 	power_save.c	\
+	power_save.h	\
+	powercapping.c	\
+	powercapping.h	\
 	preempt.c	\
 	preempt.h	\
 	proc_req.c	\
@@ -53,6 +60,8 @@ slurmctld_SOURCES =     \
 	sched_plugin.c	\
 	sched_plugin.h	\
 	slurmctld.h	\
+	slurmctld_plugstack.c \
+	slurmctld_plugstack.h \
 	srun_comm.c	\
 	srun_comm.h	\
 	state_save.c	\
@@ -65,12 +74,13 @@ slurmctld_SOURCES =     \
 
 sbin_PROGRAMS = slurmctld
 
-slurmctld_LDADD = 				    \
-	$(top_builddir)/src/common/libdaemonize.la  \
-	$(top_builddir)/src/api/libslurm.o $(DL_LIBS)
-slurmctld_LDFLAGS = -export-dynamic $(CMD_LDFLAGS) \
-	$(HWLOC_LDFLAGS) $(HWLOC_LIBS)
+depend_libs = $(top_builddir)/src/common/libdaemonize.la
+
+slurmctld_LDADD = $(depend_libs) $(LIB_SLURM) $(DL_LIBS)
+slurmctld_LDFLAGS = -export-dynamic $(CMD_LDFLAGS)
+
+slurmctld_DEPENDENCIES = $(LIB_SLURM_BUILD) $(depend_libs)
 
 force:
-$(slurmctld_LDADD) : force
+$(slurmctld_DEPENDENCIES) : force
 	@cd `dirname $@` && $(MAKE) `basename $@`

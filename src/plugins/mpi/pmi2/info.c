@@ -6,7 +6,7 @@
  *  All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -51,6 +51,7 @@
 #include <unistd.h>
 #include "slurm/slurm.h"
 #include "src/srun/libsrun/launch.h"
+#include "src/common/strlcpy.h"
 #include "src/common/switch.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/xmalloc.h"
@@ -76,12 +77,6 @@ static char **node_attr = NULL;
 
 static char *ifconfig(void);
 
-static void inline
-_free_nag_req(nag_req_t *req)
-{
-	xfree (req);
-}
-
 extern int
 enqueue_nag_req(int fd, int rank, char *key)
 {
@@ -90,7 +85,7 @@ enqueue_nag_req(int fd, int rank, char *key)
 	req = xmalloc(sizeof(nag_req_t));
 	req->fd = fd;
 	req->rank = rank;
-	strncpy(req->key, key, PMI2_MAX_KEYLEN);
+	strlcpy(req->key, key, PMI2_MAX_KEYLEN);
 
 	/* insert in the head */
 	req->next = nag_req_list;
@@ -119,7 +114,7 @@ node_attr_put(char *key, char *val)
 	pprev = &nag_req_list;
 	req = *pprev;
 	while (req != NULL) {
-		if (strncmp(key, req->key, PMI2_MAX_KEYLEN)) {
+		if (xstrncmp(key, req->key, PMI2_MAX_KEYLEN)) {
 			pprev = &req->next;
 			req = *pprev;
 		} else {
@@ -144,7 +139,7 @@ node_attr_put(char *key, char *val)
 			}
 			/* remove the request */
 			*pprev = req->next;
-			_free_nag_req(req);
+			xfree(req);
 			req = *pprev;
 		}
 	}
@@ -165,7 +160,7 @@ node_attr_get(char *key)
 	debug3("mpi/pmi2: node_attr_get: key=%s", key);
 
 	for (i = 0; i < na_cnt; i ++) {
-		if (! strcmp(key, node_attr[KEY_INDEX(i)])) {
+		if (! xstrcmp(key, node_attr[KEY_INDEX(i)])) {
 			val = node_attr[VAL_INDEX(i)];
 			break;
 		}
@@ -200,16 +195,16 @@ job_attr_get(char *key)
 {
 	static char attr[PMI2_MAX_VALLEN];
 
-	if (!strcmp(key, JOB_ATTR_PROC_MAP)) {
+	if (!xstrcmp(key, JOB_ATTR_PROC_MAP)) {
 		return job_info.proc_mapping;
 	}
 
-	if (!strcmp(key, JOB_ATTR_UNIV_SIZE)) {
+	if (!xstrcmp(key, JOB_ATTR_UNIV_SIZE)) {
 		snprintf(attr, PMI2_MAX_VALLEN, "%d", job_info.ntasks);
 		return attr;
 	}
 
-	if (!strcmp(key, JOB_ATTR_RESV_PORTS)) {
+	if (!xstrcmp(key, JOB_ATTR_RESV_PORTS)) {
 
 		if (! job_info.resv_ports)
 			return NULL;
@@ -219,7 +214,7 @@ job_attr_get(char *key)
 		return attr;
 	}
 
-	if (strcmp(key, JOB_ATTR_NETINFO) >= 0) {
+	if (xstrcmp(key, JOB_ATTR_NETINFO) >= 0) {
 		if (job_attr_get_netinfo(key, attr) == NULL) {
 			return NULL;
 		}
@@ -271,36 +266,36 @@ ifconfig(void)
 			continue;
 #endif
 		if (ifa->ifa_addr->sa_family != AF_INET
-			&& ifa->ifa_addr->sa_family != AF_INET6)
+		    && ifa->ifa_addr->sa_family != AF_INET6)
 			continue;
 
 		if (ifa->ifa_addr->sa_family == AF_INET) {
 			s = getnameinfo(ifa->ifa_addr,
-							sizeof(struct sockaddr_in),
-							addr, NI_MAXHOST, NULL, 0, NI_NUMERICHOST);
+					sizeof(struct sockaddr_in),
+					addr, NI_MAXHOST, NULL, 0, NI_NUMERICHOST);
 			if (s != 0) {
 				error("%s: AF_INET getnameinfo() failed: %s",
-					  __func__, gai_strerror(s));
+				      __func__, gai_strerror(s));
 				continue;
 			}
 			n = n + sprintf(buf + n, ",(%s,%s,%s)",
-							ifa->ifa_name, "IP_V4", addr);
+					ifa->ifa_name, "IP_V4", addr);
 			continue;
 		}
 		if (ifa->ifa_addr->sa_family == AF_INET6) {
 			s = getnameinfo(ifa->ifa_addr,
-							sizeof(struct sockaddr_in6),
-							addr, NI_MAXHOST, NULL, 0, NI_NUMERICHOST);
+					sizeof(struct sockaddr_in6),
+					addr, NI_MAXHOST, NULL, 0, NI_NUMERICHOST);
 			if (s != 0) {
 				error("%s: AF_INET6 getnameinfo() failed: %s",
-					  __func__, gai_strerror(s));
+				      __func__, gai_strerror(s));
 				continue;
 			}
 			n = n + sprintf(buf + n, ",(%s,%s,%s)",
-							ifa->ifa_name, "IP_V6", addr);
+					ifa->ifa_name, "IP_V6", addr);
 		}
 	}
-	n = n + sprintf(buf + n, ")");
+	sprintf(buf + n, ")");
 
 	debug("%s: ifconfig %s", __func__, buf);
 

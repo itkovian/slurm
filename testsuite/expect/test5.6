@@ -1,4 +1,4 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Test of SLURM functionality
 #          Test squeue filtering (--jobs, --nodelist, --states, --steps and
@@ -14,7 +14,7 @@
 # CODE-OCEC-09-009. All rights reserved.
 #
 # This file is part of SLURM, a resource management program.
-# For details, see <http://slurm.schedmd.com/>.
+# For details, see <https://slurm.schedmd.com/>.
 # Please also read the included file: DISCLAIMER.
 #
 # SLURM is free software; you can redistribute it and/or modify it under
@@ -38,10 +38,15 @@ set exit_code    0
 set file_in      "test$test_id.input"
 set job_id1      0
 set job_id2      0
-set job_name1    "job1"
-set job_name2    "job2"
+set job_name1    "test$test_id.job1"
+set job_name2    "test$test_id.job2"
 
 print_header $test_id
+
+if {[job_submit_all_partitions] != 0} {
+	send_user "\nWARNING: This test is incompatible with JobSubmitPlugins=all_partitions\n"
+	exit 0
+}
 
 if {[test_launch_poe]} {
 	set step_id 1
@@ -156,16 +161,9 @@ expect {
 #
 # Check the squeue user filter option with name
 #
-spawn $bin_id -un
-expect {
-	-re "($alpha_numeric_under)" {
-		set this_user $expect_out(1,string)
-		exp_continue
-	}
-	eof {
-		wait
-	}
-}
+
+set this_user [get_my_user_name]
+
 spawn $squeue --format=%u --noheader --user=$this_user
 expect {
 	-re "($alpha_numeric_under)" {
@@ -187,16 +185,8 @@ expect {
 #
 # Check the squeue user filter option with id
 #
-spawn $bin_id -u
-expect {
-	-re "($number)" {
-		set this_uid $expect_out(1,string)
-		exp_continue
-	}
-	eof {
-		wait
-	}
-}
+set this_uid [get_my_uid]
+
 spawn $squeue --format=%u --noheader --user=$this_uid
 expect {
 	-re "($alpha_numeric_under)" {
@@ -218,11 +208,14 @@ expect {
 #
 # Check the squeue node filter option
 #
+set match 0
 spawn $squeue --format=%u --noheader --user=$this_uid --nodelist=dummy_name
 expect {
-	-re "($alpha_numeric_under)" {
-		send_user "\nFAILURE: squeue node filter failure\n"
-		set exit_code 1
+
+	-re "Invalid node name dummy_name" {
+		send_user "\nNo worries. This error is expected\n"
+		incr match
+		exp_continue
 	}
 	timeout {
 		send_user "\nFAILURE: squeue not responding\n"
@@ -232,6 +225,11 @@ expect {
 		wait
 	}
 }
+if {$match != 1} {
+	send_user "\nFAILURE: squeue node filter failure\n"
+	set exit_code 1
+}
+
 # The node filtering really only works if the job has begun execution
 set node_name_set 0
 spawn $squeue --format=%N --noheader --jobs=$job_id1 --states=RUNNING
@@ -360,7 +358,7 @@ expect {
 		if {$tmp_id == $job_id1} {
 			set job_found 1
 		} else {
-			send_user "\nFAILURE: squeue reported invalid job_id ($tmp_id != $job_name1)\n"
+			send_user "\nFAILURE: squeue reported unexpected job_id ($tmp_id != $job_id1)\n"
 			set exit_code 1
 		}
 		exp_continue
@@ -386,7 +384,7 @@ expect {
 		if {$tmp_id == $job_id2} {
 			set job_found 1
 		} else {
-			send_user "\nFAILURE: squeue reported invalid job_id ($tmp_id != $job_name2)\n"
+			send_user "\nFAILURE: squeue reported unexpected job_id ($tmp_id != $job_id2)\n"
 			set exit_code 1
 		}
 		exp_continue
@@ -407,8 +405,12 @@ if {$job_found == 0} {
 #
 # Cancel jobs and remove files
 #
-cancel_job $job_id2
-cancel_job $job_id1
+if {[cancel_job $job_id1] != 0} {
+	set exit_code 1
+}
+if {[cancel_job $job_id2] != 0} {
+	set exit_code 1
+}
 if {$exit_code == 0} {
 	send_user "\nSUCCESS\n"
 	exec $bin_rm -f $file_in

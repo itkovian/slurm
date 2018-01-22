@@ -10,7 +10,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -166,8 +166,6 @@ extern void get_slurm_part(void)
 		count++;
 
 	}
-	if (count == 128)
-		count = 0;
 	if (params.commandline && params.iterate)
 		printf("\n");
 
@@ -301,17 +299,13 @@ extern void get_bg_part(void)
 		       new_bg_ptr->block_array[i].conn_type,
 		       sizeof(block_ptr->bg_conn_type));
 
-		if (params.cluster_flags & CLUSTER_FLAG_BGL)
-			block_ptr->bg_node_use =
-				new_bg_ptr->block_array[i].node_use;
-
 		block_ptr->ionode_str
 			= xstrdup(new_bg_ptr->block_array[i].ionode_str);
 		block_ptr->cnode_cnt = new_bg_ptr->block_array[i].cnode_cnt;
 
 		itr = list_iterator_create(block_list);
 		while ((found_block = (db2_block_info_t*)list_next(itr))) {
-			if (!strcmp(block_ptr->mp_str, found_block->mp_str)) {
+			if (!xstrcmp(block_ptr->mp_str, found_block->mp_str)) {
 				block_ptr->letter_num =
 					found_block->letter_num;
 				break;
@@ -372,7 +366,7 @@ extern void get_bg_part(void)
 			}
 			list_iterator_destroy(itr);
 		}
-		list_destroy(nodelist);
+		FREE_NULL_LIST(nodelist);
 	}
 
 	/* Report the BG Blocks */
@@ -504,12 +498,6 @@ static void _print_header_part(void)
 				  main_ycord,
 				  main_xcord, "CONN");
 			main_xcord += 8;
-			if (params.cluster_flags & CLUSTER_FLAG_BGL) {
-				mvwprintw(text_win,
-					  main_ycord,
-					  main_xcord, "NODE_USE");
-				main_xcord += 10;
-			}
 		}
 
 		mvwprintw(text_win, main_ycord,
@@ -533,8 +521,6 @@ static void _print_header_part(void)
 			printf("STATE ");
 			printf("    JOBID ");
 			printf("     CONN ");
-			if (params.cluster_flags & CLUSTER_FLAG_BGL)
-				printf(" NODE_USE ");
 		}
 
 		printf("NODES ");
@@ -559,7 +545,8 @@ static int _print_text_part(partition_info_t *part_ptr,
 
 	if (params.cluster_flags & CLUSTER_FLAG_BG)
 		convert_num_unit((float)part_ptr->total_nodes, tmp_cnt,
-				 sizeof(tmp_cnt), UNIT_NONE);
+				 sizeof(tmp_cnt), UNIT_NONE, NO_VAL,
+				 CONVERT_NUM_UNIT_EXACT);
 	else
 		snprintf(tmp_cnt, sizeof(tmp_cnt), "%u", part_ptr->total_nodes);
 
@@ -648,15 +635,6 @@ static int _print_text_part(partition_info_t *part_ptr,
 				xfree(conn_str);
 				main_xcord += 8;
 
-				if (params.cluster_flags & CLUSTER_FLAG_BGL) {
-					mvwprintw(text_win,
-						  main_ycord,
-						  main_xcord, "%.9s",
-						  node_use_string(
-							  db2_info_ptr->
-							  bg_node_use));
-					main_xcord += 10;
-				}
 			} else {
 				mvwprintw(text_win,
 					  main_ycord,
@@ -779,11 +757,6 @@ static int _print_text_part(partition_info_t *part_ptr,
 					db2_info_ptr->bg_conn_type);
 				printf("%8.8s ", conn_str);
 				xfree(conn_str);
-
-				if (params.cluster_flags & CLUSTER_FLAG_BGL)
-					printf("%9.9s ", node_use_string(
-						       db2_info_ptr->
-						       bg_node_use));
 			}
 		}
 
@@ -812,12 +785,8 @@ static void _block_list_del(void *object)
 		xfree(block_ptr->slurm_part_name);
 		xfree(block_ptr->mp_str);
 		xfree(block_ptr->ionode_str);
-		if (block_ptr->nodelist)
-			list_destroy(block_ptr->nodelist);
-		if (block_ptr->job_list) {
-			list_destroy(block_ptr->job_list);
-			block_ptr->job_list = NULL;
-		}
+		FREE_NULL_LIST(block_ptr->nodelist);
+		FREE_NULL_LIST(block_ptr->job_list);
 		xfree(block_ptr);
 
 	}
@@ -950,6 +919,9 @@ static int _make_nodelist(char *nodes, List nodelist)
 
 	if (!nodelist)
 		nodelist = list_create(_nodelist_del);
+
+	memset(start, params.cluster_dims, sizeof(int));
+	memset(end,   params.cluster_dims, sizeof(int));
 
 	while (nodes[j] != '\0') {
 		int mid = j   + params.cluster_dims + 1;

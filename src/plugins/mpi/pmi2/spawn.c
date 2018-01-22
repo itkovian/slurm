@@ -6,7 +6,7 @@
  *  All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -35,15 +35,11 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#if     HAVE_CONFIG_H
-#  include "config.h"
-#endif
-
-#include <stdlib.h>
-#include <sys/types.h>
-#include <sys/stat.h>
 #include <fcntl.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 
 #include "src/common/slurm_xlator.h"
 #include "src/common/xmalloc.h"
@@ -153,8 +149,10 @@ spawn_req_pack(spawn_req_t *req, Buf buf)
 	int i, j;
 	spawn_subcmd_t *subcmd;
 	void *auth_cred;
+	char *auth_info = slurm_get_auth_info();
 
-	auth_cred = g_slurm_auth_create(NULL, 2, NULL);
+	auth_cred = g_slurm_auth_create(auth_info);
+	xfree(auth_info);
 	if (auth_cred == NULL) {
 		error("authentication: %s",
 		      g_slurm_auth_errstr(g_slurm_auth_errno(NULL)) );
@@ -196,6 +194,7 @@ spawn_req_unpack(spawn_req_t **req_ptr, Buf buf)
 	uint32_t temp32;
 	int i, j;
 	void *auth_cred;
+	char *auth_info;
 	uid_t auth_uid, my_uid;
 
 	auth_cred = g_slurm_auth_unpack(buf);
@@ -204,7 +203,9 @@ spawn_req_unpack(spawn_req_t **req_ptr, Buf buf)
 		      g_slurm_auth_errstr(g_slurm_auth_errno(NULL)) );
 		return SLURM_ERROR;
 	}
-	auth_uid = g_slurm_auth_get_uid(auth_cred, NULL);
+	auth_info = slurm_get_auth_info();
+	auth_uid = g_slurm_auth_get_uid(auth_cred, auth_info);
+	xfree(auth_info);
 	(void) g_slurm_auth_destroy(auth_cred);
 	my_uid = getuid();
 	if ((auth_uid != 0) && (auth_uid != my_uid)) {
@@ -363,7 +364,9 @@ spawn_resp_send_to_stepd(spawn_resp_t *resp, char *node)
 	pack16(cmd, buf);
 	spawn_resp_pack(resp, buf);
 
-	rc = tree_msg_to_stepds(node, get_buf_offset(buf), get_buf_data(buf));
+	rc = slurm_forward_data(&node, tree_sock_addr,
+				get_buf_offset(buf),
+				get_buf_data(buf));
 	free_buf(buf);
 	return rc;
 }
@@ -398,8 +401,8 @@ spawn_resp_send_to_fd(spawn_resp_t *resp, int fd)
 /* 	cmd = TREE_CMD_SPAWN_RESP; */
 /* 	pack16(cmd, buf); */
 	spawn_resp_pack(resp, buf);
-	rc = _slurm_msg_sendto(fd, get_buf_data(buf), get_buf_offset(buf),
-			       SLURM_PROTOCOL_NO_SEND_RECV_FLAGS);
+	rc = slurm_msg_sendto(fd, get_buf_data(buf), get_buf_offset(buf),
+			      SLURM_PROTOCOL_NO_SEND_RECV_FLAGS);
 	free_buf(buf);
 
 	return rc;
@@ -467,7 +470,7 @@ _exec_srun_single(spawn_req_t *req, char **env)
 	j = 0;
 	argv[j ++] = "srun";
 	argv[j ++] = "--mpi=pmi2";
-	if (job_info.srun_opt && job_info.srun_opt->no_alloc) {
+	if (job_info.srun_opt && job_info.srun_opt->srun_opt->no_alloc) {
 		argv[j ++] = "--no-alloc";
 		xstrfmtcat(argv[j ++], "--nodelist=%s",
 			   job_info.srun_opt->nodelist);
@@ -478,25 +481,25 @@ _exec_srun_single(spawn_req_t *req, char **env)
 	for (i = 0; i < subcmd->info_cnt; i ++) {
 		if (0) {
 
-		} else if (! strcmp(subcmd->info_keys[i], "host")) {
+		} else if (! xstrcmp(subcmd->info_keys[i], "host")) {
 			xstrfmtcat(argv[j ++], "--nodelist=%s",
 				   subcmd->info_vals[i]);
 
-		} else if (! strcmp(subcmd->info_keys[i], "arch")) {
+		} else if (! xstrcmp(subcmd->info_keys[i], "arch")) {
 			error("mpi/pmi2: spawn info key 'arch' not supported");
 
-		} else if (! strcmp(subcmd->info_keys[i], "wdir")) {
+		} else if (! xstrcmp(subcmd->info_keys[i], "wdir")) {
 			xstrfmtcat(argv[j ++], "--chdir=%s",
 				   subcmd->info_vals[i]);
 
-		} else if (! strcmp(subcmd->info_keys[i], "path")) {
+		} else if (! xstrcmp(subcmd->info_keys[i], "path")) {
 			env_array_overwrite_fmt(&env, "PATH", "%s",
 						subcmd->info_vals[i]);
 
-		} else if (! strcmp(subcmd->info_keys[i], "file")) {
+		} else if (! xstrcmp(subcmd->info_keys[i], "file")) {
 			error("mpi/pmi2: spawn info key 'file' not supported");
 
-		} else if (! strcmp(subcmd->info_keys[i], "soft")) {
+		} else if (! xstrcmp(subcmd->info_keys[i], "soft")) {
 			error("mpi/pmi2: spawn info key 'soft' not supported");
 
 		} else {
@@ -570,7 +573,7 @@ _exec_srun_multiple(spawn_req_t *req, char **env)
 	argv[j ++] = "srun";
 	argv[j ++] = "--mpi=pmi2";
 	xstrfmtcat(argv[j ++], "--ntasks=%d", ntasks);
-	if (job_info.srun_opt && job_info.srun_opt->no_alloc) {
+	if (job_info.srun_opt && job_info.srun_opt->srun_opt->no_alloc) {
 		argv[j ++] = "--no-alloc";
 		xstrfmtcat(argv[j ++], "--nodelist=%s",
 			   job_info.srun_opt->nodelist);
@@ -688,7 +691,7 @@ spawn_job_wait(void)
 	int exited, i, wait;
 
 	if (job_info.srun_opt) {
-		wait = job_info.srun_opt->max_wait;
+		wait = job_info.srun_opt->srun_opt->max_wait;
 	} else {
 		wait = 0;
 	}

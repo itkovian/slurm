@@ -1,6 +1,4 @@
 ##*****************************************************************************
-## $Id: x_ac_databases.m4 5401 2005-09-22 01:56:49Z da $
-##*****************************************************************************
 #  AUTHOR:
 #    Danny Auble  <da@llnl.gov>
 #
@@ -20,13 +18,13 @@ AC_DEFUN([X_AC_DATABASES],
 	AC_ARG_WITH(
 		[mysql_config],
 		AS_HELP_STRING(--with-mysql_config=PATH,
-			Specify path to mysql_config binary),
+			Specify path of directory where mysql_config binary exists),
 		[_x_ac_mysql_bin="$withval"])
 
 	if test x$_x_ac_mysql_bin = xno; then
-    		AC_PATH_PROG(HAVEMYSQLCONFIG, mysql_config, no)
+		AC_PATH_PROGS(HAVEMYSQLCONFIG, [mysql_config mariadb_config], no)
 	else
-   		AC_PATH_PROG(HAVEMYSQLCONFIG, mysql_config, no, $_x_ac_mysql_bin)
+		AC_PATH_PROGS(HAVEMYSQLCONFIG, [mysql_config mariadb_config], no, $_x_ac_mysql_bin)
 	fi
 
 	if test x$HAVEMYSQLCONFIG = xno; then
@@ -46,7 +44,7 @@ AC_DEFUN([X_AC_DATABASES],
 		else
 		# mysql_config puts -I on the front of the dir.  We don't
 		# want that so we remove it.
-			MYSQL_CFLAGS=`$HAVEMYSQLCONFIG --cflags`
+			MYSQL_CFLAGS=`$HAVEMYSQLCONFIG --include`
 			MYSQL_LIBS=`$HAVEMYSQLCONFIG --libs_r`
 			save_CFLAGS="$CFLAGS"
 			save_LIBS="$LIBS"
@@ -62,38 +60,14 @@ AC_DEFUN([X_AC_DATABASES],
 			CFLAGS="$save_CFLAGS"
 			LIBS="$save_LIBS"
 			if test "$ac_have_mysql" = yes; then
-				AC_MSG_RESULT([MySQL test program built properly.])
+				AC_MSG_RESULT([MySQL $mysql_config_major_version.$mysql_config_minor_version.$mysql_config_micro_version test program built properly.])
 				AC_SUBST(MYSQL_LIBS)
 				AC_SUBST(MYSQL_CFLAGS)
 				AC_DEFINE(HAVE_MYSQL, 1, [Define to 1 if using MySQL libaries])
 			else
-				MYSQL_CFLAGS=`$HAVEMYSQLCONFIG --cflags`
-				MYSQL_LIBS=`$HAVEMYSQLCONFIG --libs`
-				save_CFLAGS="$CFLAGS"
-				save_LIBS="$LIBS"
-       				CFLAGS="$MYSQL_CFLAGS $save_CFLAGS"
-				LIBS="$MYSQL_LIBS $save_LIBS"
-				AC_TRY_LINK([#include <mysql.h>],[
-							MYSQL mysql;
-							(void) mysql_init(&mysql);
-							(void) mysql_close(&mysql);
-						],
-					[ac_have_mysql="yes"],
-					[ac_have_mysql="no"])
-				CFLAGS="$save_CFLAGS"
-				LIBS="$save_LIBS"
-
-				if test "$ac_have_mysql" = yes; then
-					AC_MSG_RESULT([MySQL (non-threaded) test program built properly.])
-					AC_SUBST(MYSQL_LIBS)
-					AC_SUBST(MYSQL_CFLAGS)
-					AC_DEFINE(MYSQL_NOT_THREAD_SAFE, 1, [Define to 1 if with non thread-safe code])
-					AC_DEFINE(HAVE_MYSQL, 1, [Define to 1 if using MySQL libaries])
-				else
-					MYSQL_CFLAGS=""
-					MYSQL_LIBS=""
-					AC_MSG_WARN([*** MySQL test program execution failed.])
-				fi
+				MYSQL_CFLAGS=""
+				MYSQL_LIBS=""
+				AC_MSG_WARN([*** MySQL test program execution failed. A thread-safe MySQL library is required.])
 			fi
 		fi
       	fi

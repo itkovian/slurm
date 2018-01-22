@@ -6,15 +6,17 @@ AUTOMAKE_OPTIONS = foreign
 AM_CPPFLAGS = -I$(top_srcdir) $(BG_INCLUDES)
 bin_PROGRAMS = sbcast
 
-sbcast_LDADD = 	$(top_builddir)/src/api/libslurm.o $(DL_LIBS) -lm
+depend_libs = $(top_builddir)/src/bcast/libfile_bcast.la
+
+sbcast_LDADD = 	$(depend_libs) $(LIB_SLURM) $(DL_LIBS) -lm
+sbcast_DEPENDENCIES = $(depend_libs) $(LIB_SLURM_BUILD)
 
 noinst_HEADERS = sbcast.h
-sbcast_SOURCES = agent.c sbcast.c opts.c
+sbcast_SOURCES = sbcast.c opts.c
 
 force:
-$(sbcast_LDADD) : force
+$(sbcast_DEPENDENCIES) : force
 	@cd `dirname $@` && $(MAKE) `basename $@`
 
-sbcast_LDFLAGS = -export-dynamic $(CMD_LDFLAGS) \
-	$(HWLOC_LDFLAGS) $(HWLOC_LIBS)
+sbcast_LDFLAGS = -export-dynamic $(CMD_LDFLAGS)
 

@@ -1,4 +1,4 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Test of SLURM functionality
 #		  test that when a job array is submitted to multiple
@@ -13,7 +13,7 @@
 # Written by Nathan Yee <nyee32@schedmd.com>
 #
 # This file is part of SLURM, a resource management program.
-# For details, see <http://slurm.schedmd.com/>.
+# For details, see <https://slurm.schedmd.com/>.
 # Please also read the included file: DISCLAIMER.
 #
 # SLURM is free software; you can redistribute it and/or modify it under
@@ -32,11 +32,12 @@
 ############################################################################
 source ./globals
 
-set test_id	 "test28.6"
+set test_id	 "28.6"
+set test_name	 "test28.6"
 set job_id	 0
 set def_part	 ""
-set test_part	 "$test_id\_part"
-set script	 "$test_id\_script"
+set test_part	 "$test_name\_part"
+set script	 "$test_name\_script"
 set array_size	 2
 set exit_code	 0
 

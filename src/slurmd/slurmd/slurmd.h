@@ -1,6 +1,5 @@
 /*****************************************************************************\
  * src/slurmd/slurmd/slurmd.h - header for slurmd
- * $Id$
  *****************************************************************************
  *  Copyright (C) 2002-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
@@ -9,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -40,19 +39,7 @@
 #ifndef _SLURMD_H
 #define _SLURMD_H
 
-#if HAVE_CONFIG_H
-#  include "config.h"
-#  if HAVE_INTTYPES_H
-#    include <inttypes.h>
-#  else
-#    if HAVE_STDINT_H
-#      include <stdint.h>
-#    endif
-#  endif			/* HAVE_INTTYPES_H */
-#else				/* !HAVE_CONFIG_H */
-#  include <inttypes.h>
-#endif				/*  HAVE_CONFIG_H */
-
+#include <inttypes.h>
 #include <pthread.h>
 #include <sys/types.h>
 
@@ -69,19 +56,32 @@ extern pid_t getpgid(pid_t pid);
 extern int devnull;
 extern int waiting_epilog_msgs;
 /*
+ * Message aggregation types
+ */
+typedef enum {
+	WINDOW_TIME,
+	WINDOW_MSGS
+} msg_aggr_param_type_t;
+
+/*
  * Global config type
  */
 typedef struct slurmd_config {
 	char         *prog;		/* Program basename		   */
 	char         ***argv;           /* pointer to argument vector      */
 	int          *argc;             /* pointer to argument count       */
+	char         *auth_info;	/* AuthInfo for msg authentication */ 
+	char         *chos_loc;		/* Chroot OS wrapper path          */
 	char         *cluster_name; 	/* conf ClusterName		   */
 	char         *hostname;	 	/* local hostname		   */
 	uint16_t     cpus;              /* lowest-level logical processors */
 	uint16_t     boards;            /* total boards count              */
 	uint16_t     sockets;           /* total sockets count             */
-	uint16_t     cores;             /* core per socket  count          */
 	uint16_t     threads;           /* thread per core count           */
+	char         *cpu_spec_list;    /* cpu specialization list         */
+	uint16_t     core_spec_cnt;     /* core specialization count       */
+	uint64_t     mem_spec_limit;    /* memory specialization limit     */
+	uint16_t     cores;             /* core per socket  count          */
 	uint16_t     conf_cpus;         /* conf file logical processors    */
 	uint16_t     conf_boards;       /* conf file boards count          */
 	uint16_t     conf_sockets;      /* conf file sockets count         */
@@ -92,7 +92,7 @@ typedef struct slurmd_config {
 	uint16_t     actual_sockets;    /* actual sockets count            */
 	uint16_t     actual_cores;      /* actual core count               */
 	uint16_t     actual_threads;    /* actual thread per core count    */
-	uint32_t     real_memory_size;  /* amount of real memory	   */
+	uint64_t     real_memory_size;  /* amount of real memory	   */
 	uint32_t     tmp_disk_space;    /* size of temporary disk	   */
 	uint32_t     up_time;		/* seconds since last boot time    */
 	uint16_t     block_map_size;	/* size of block map               */
@@ -101,6 +101,9 @@ typedef struct slurmd_config {
 	uint16_t      cr_type;		/* Consumable Resource Type:       *
 					 * CR_SOCKET, CR_CORE, CR_MEMORY,  *
 					 * CR_DEFAULT, etc.                */
+	time_t        last_update;	/* last update time of the
+					 * build parameters */
+	uint16_t      mem_limit_enforce; /* enforce mem limit on running job */
 	int           nice;		/* command line nice value spec    */
 	char         *node_name;	/* node name                       */
 	char         *node_addr;	/* node's address                  */
@@ -108,9 +111,12 @@ typedef struct slurmd_config {
 	char         *node_topo_pattern;/* node's topology address pattern */
 	char         *conffile;		/* config filename                 */
 	char         *logfile;		/* slurmd logfile, if any          */
+	int          syslog_debug;	/* send output to both logfile and
+					 * syslog */
 	char         *spooldir;		/* SlurmdSpoolDir		   */
 	char         *pidfile;		/* PidFile location		   */
-	char         *health_check_program;	/* run on RPC request      */
+	char         *health_check_program; /* run on RPC request or at start */
+	uint64_t     health_check_interval; /* Interval between runs       */
 	char         *tmpfs;		/* directory of tmp FS             */
 	char         *pubkey;		/* location of job cred public key */
 	char         *epilog;		/* Path to Epilog script	   */
@@ -120,14 +126,15 @@ typedef struct slurmd_config {
 	char         *task_prolog;	/* per-task prolog script          */
 	char         *task_epilog;	/* per-task epilog script          */
 	int           port;		/* local slurmd port               */
-	slurm_fd_t      lfd;		/* slurmd listen file descriptor   */
+	int           lfd;		/* slurmd listen file descriptor   */
 	pid_t         pid;		/* server pid                      */
 	log_options_t log_opts;         /* current logging options         */
 	uint16_t      log_fmt;          /* Log file timestamp format flag  */
 	int           debug_level;	/* logging detail level            */
 	uint16_t      debug_level_set;	/* debug_level set on command line */
-	uint32_t      debug_flags;	/* DebugFlags configured           */
-	int           daemonize:1;	/* daemonize flag		   */
+	uint64_t      debug_flags;	/* DebugFlags configured           */
+	int	      boot_time:1;      /* Report node boot time now (-b)  */
+	int           daemonize:1;	/* daemonize flag (-D)		   */
 	int	      cleanstart:1;     /* clean start requested (-c)      */
 	int           mlock_pages:1;	/* mlock() slurmd  */
 
@@ -142,23 +149,30 @@ typedef struct slurmd_config {
 	char           *job_acct_gather_params; /* job accounting gather params */
 	char           *acct_gather_energy_type; /*  */
 	char           *acct_gather_filesystem_type; /*  */
-	char           *acct_gather_infiniband_type; /*  */
+	char           *acct_gather_interconnect_type; /*  */
 	char           *acct_gather_profile_type; /*  */
+	char           *msg_aggr_params;      /* message aggregation params */
+	uint64_t        msg_aggr_window_msgs; /* msg aggr window size in msgs */
+	uint64_t        msg_aggr_window_time; /* msg aggr window size in time */
 	uint16_t	use_pam;
-	uint16_t	task_plugin_param; /* TaskPluginParams, expressed
+	uint32_t	task_plugin_param; /* TaskPluginParams, expressed
 					 * using cpu_bind_type_t flags */
 	uint16_t	propagate_prio;	/* PropagatePrioProcess flag       */
 
 	List		starting_steps; /* steps that are starting but cannot
 					   receive RPCs yet */
-	pthread_mutex_t	starting_steps_lock;
 	pthread_cond_t	starting_steps_cond;
 	List		prolog_running_jobs;
-	pthread_mutex_t	prolog_running_lock;
 	pthread_cond_t	prolog_running_cond;
+	char         *plugstack;	/* path to SPANK config file	*/
+	uint16_t      kill_wait;	/* seconds between SIGXCPU to SIGKILL
+					 * on job termination */
 } slurmd_conf_t;
 
 extern slurmd_conf_t * conf;
+extern int fini_job_cnt;
+extern uint32_t *fini_job_id;
+extern pthread_mutex_t fini_job_mutex;
 
 /* Send node registration message with status to controller
  * IN status - same values slurm error codes (for node shutdown)
@@ -173,5 +187,7 @@ int send_registration_msg(uint32_t status, bool startup);
  */
 int save_cred_state(slurm_cred_ctx_t vctx);
 
+/* Run the health check program if configured */
+int run_script_health_check(void);
 
 #endif /* !_SLURMD_H */

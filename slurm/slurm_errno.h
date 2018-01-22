@@ -9,7 +9,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -40,32 +40,9 @@
 #ifndef _SLURM_ERRNO_H
 #define _SLURM_ERRNO_H
 
-/* BEGIN_C_DECLS should be used at the beginning of your declarations,
-   so that C++ compilers don't mangle their names.  Use _END_C_DECLS at
-   the end of C declarations. */
-#undef BEGIN_C_DECLS
-#undef END_C_DECLS
 #ifdef __cplusplus
-# define BEGIN_C_DECLS	extern "C" {
-# define END_C_DECLS	}
-#else
-# define BEGIN_C_DECLS	/* empty */
-# define END_C_DECLS	/* empty */
+extern "C" {
 #endif
-
-/* PARAMS is a macro used to wrap function prototypes, so that compilers
-   that don't understand ANSI C prototypes still work, and ANSI C
-   compilers can issue warnings about type mismatches.  */
-#undef PARAMS
-#if defined (__STDC__) || defined (_AIX) \
-	|| (defined (__mips) && defined (_SYSTYPE_SVR4)) \
-	|| defined(WIN32) || defined(__cplusplus)
-# define PARAMS(protos)	protos
-#else
-# define PARAMS(protos)	()
-#endif
-
-BEGIN_C_DECLS
 
 #include <errno.h>
 
@@ -107,7 +84,7 @@ enum {
 	SLURMCTLD_COMMUNICATIONS_RECEIVE_ERROR,
 	SLURMCTLD_COMMUNICATIONS_SHUTDOWN_ERROR,
 
-	/* _info.c/communcation layer RESPONSE_SLURM_RC message codes */
+	/* _info.c/communication layer RESPONSE_SLURM_RC message codes */
 	SLURM_NO_CHANGE_IN_DATA =			1900,
 
 	/* slurmctld error codes */
@@ -194,7 +171,36 @@ enum {
 	ESLURM_RESERVATION_EMPTY =			2080,
 	ESLURM_INVALID_ARRAY,
 	ESLURM_RESERVATION_NAME_DUP,
+	ESLURM_JOB_STARTED,
+	ESLURM_JOB_FINISHED,
+	ESLURM_JOB_NOT_RUNNING,
+	ESLURM_JOB_NOT_PENDING_NOR_RUNNING,
+	ESLURM_JOB_NOT_SUSPENDED,
+	ESLURM_JOB_NOT_FINISHED,
 	ESLURM_TRIGGER_DUP,
+	ESLURM_INTERNAL =				2090,
+	ESLURM_INVALID_BURST_BUFFER_CHANGE,
+	ESLURM_BURST_BUFFER_PERMISSION,
+	ESLURM_BURST_BUFFER_LIMIT,
+	ESLURM_INVALID_BURST_BUFFER_REQUEST,
+	ESLURM_PRIO_RESET_FAIL,
+	ESLURM_POWER_NOT_AVAIL,
+	ESLURM_POWER_RESERVED,
+	ESLURM_INVALID_POWERCAP,
+	ESLURM_INVALID_MCS_LABEL,
+	ESLURM_BURST_BUFFER_WAIT =			2100,
+	ESLURM_PARTITION_DOWN,
+	ESLURM_DUPLICATE_GRES,
+	ESLURM_JOB_SETTING_DB_INX,
+	ESLURM_RSV_ALREADY_STARTED,
+	ESLURM_SUBMISSIONS_DISABLED,
+	ESLURM_NOT_PACK_JOB,
+	ESLURM_NOT_PACK_JOB_LEADER,
+	ESLURM_NOT_PACK_WHOLE,
+	ESLURM_CORE_RESERVATION_UPDATE,
+	ESLURM_DUPLICATE_STEP_ID =			2110,
+	ESLURM_INVALID_CORE_CNT,
+	ESLURM_X11_NOT_AVAIL,
 
 	/* switch specific error codes, specific values defined in plugin module */
 	ESLURM_SWITCH_MIN = 3000,
@@ -216,7 +222,7 @@ enum {
 	ESLURMD_CREDENTIAL_EXPIRED,
 	ESLURMD_CREDENTIAL_REVOKED,
 	ESLURMD_CREDENTIAL_REPLAYED,
-	ESLURMD_CREATE_BATCH_DIR_ERROR,
+	ESLURMD_CREATE_BATCH_DIR_ERROR =		4010,
 	ESLURMD_MODIFY_BATCH_DIR_ERROR,
 	ESLURMD_CREATE_BATCH_SCRIPT_ERROR,
 	ESLURMD_MODIFY_BATCH_SCRIPT_ERROR,
@@ -226,7 +232,7 @@ enum {
 	ESLURMD_SET_SID_ERROR,
 	ESLURMD_CANNOT_SPAWN_IO_THREAD,
 	ESLURMD_FORK_FAILED,
-	ESLURMD_EXECVE_FAILED,
+	ESLURMD_EXECVE_FAILED =				4020,
 	ESLURMD_IO_ERROR,
 	ESLURMD_PROLOG_FAILED,
 	ESLURMD_EPILOG_FAILED,
@@ -263,23 +269,37 @@ enum {
 	ESLURM_ONE_CHANGE,
 	ESLURM_BAD_NAME,
 	ESLURM_OVER_ALLOCATE,
+	ESLURM_RESULT_TOO_LARGE,
+	ESLURM_DB_QUERY_TOO_WIDE,
+
+	/* Federation Errors */
+	ESLURM_FED_CLUSTER_MAX_CNT              = 7100,
+	ESLURM_FED_CLUSTER_MULTIPLE_ASSIGNMENT,
+	ESLURM_INVALID_CLUSTER_FEATURE,
+	ESLURM_JOB_NOT_FEDERATED,
+	ESLURM_INVALID_CLUSTER_NAME,
+	ESLURM_FED_JOB_LOCK,
+	ESLURM_FED_NO_VALID_CLUSTERS,
 
 	/* plugin and custom errors */
-	ESLURM_MISSING_TIME_LIMIT       = 8000
+	ESLURM_MISSING_TIME_LIMIT       = 8000,
+	ESLURM_INVALID_KNL
 };
 
 /* look up an errno value */
-char * slurm_strerror PARAMS((int errnum));
+char * slurm_strerror(int errnum);
 
 /* set an errno value */
-void slurm_seterrno PARAMS((int errnum));
+void slurm_seterrno(int errnum);
 
 /* get an errno value */
-int slurm_get_errno PARAMS((void));
+int slurm_get_errno(void);
 
 /* print message: error string for current errno value */
-void slurm_perror PARAMS((char *msg));
+void slurm_perror(char *msg);
 
-END_C_DECLS
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* !_SLURM_ERRNO_H */

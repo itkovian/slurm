@@ -9,7 +9,7 @@
  *  Written by Danny Auble <da@llnl.gov>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -93,22 +93,22 @@ static jobcomp_job_rec_t *_parse_line(List job_info_list)
 	filetxt_jobcomp_info_t *jobcomp_info = NULL;
 	jobcomp_job_rec_t *job = xmalloc(sizeof(jobcomp_job_rec_t));
 	char *temp = NULL;
-	time_t start_time;
-	time_t end_time;
+	time_t start_time = 0;
+	time_t end_time = 0;
 
 	itr = list_iterator_create(job_info_list);
-	while((jobcomp_info = list_next(itr))) {
-		if (!strcasecmp("JobID", jobcomp_info->name)) {
+	while ((jobcomp_info = list_next(itr))) {
+		if (!xstrcasecmp("JobId", jobcomp_info->name)) {
 			job->jobid = atoi(jobcomp_info->val);
-		} else if (!strcasecmp("Partition", jobcomp_info->name)) {
+		} else if (!xstrcasecmp("Partition", jobcomp_info->name)) {
 			job->partition = xstrdup(jobcomp_info->val);
-		} else if (!strcasecmp("StartTime", jobcomp_info->name)) {
+		} else if (!xstrcasecmp("StartTime", jobcomp_info->name)) {
 			job->start_time = xstrdup(jobcomp_info->val);
 			start_time = parse_time(job->start_time, 1);
-		} else if (!strcasecmp("EndTime", jobcomp_info->name)) {
+		} else if (!xstrcasecmp("EndTime", jobcomp_info->name)) {
 			job->end_time = xstrdup(jobcomp_info->val);
 			end_time = parse_time(job->end_time, 1);
-		} else if (!strcasecmp("Userid", jobcomp_info->name)) {
+		} else if (!xstrcasecmp("UserId", jobcomp_info->name)) {
 			temp = strstr(jobcomp_info->val, "(");
 			if (!temp) {
 				job->uid = atoi(jobcomp_info->val);
@@ -118,7 +118,7 @@ static jobcomp_job_rec_t *_parse_line(List job_info_list)
 				job->uid = atoi(temp + 1);
 				job->uid_name = xstrdup(jobcomp_info->val);
 			}
-		} else if (!strcasecmp("GroupId", jobcomp_info->name)) {
+		} else if (!xstrcasecmp("GroupId", jobcomp_info->name)) {
 			temp = strstr(jobcomp_info->val, "(");
 			if (!temp) {
 				job->gid = atoi(jobcomp_info->val);
@@ -128,35 +128,35 @@ static jobcomp_job_rec_t *_parse_line(List job_info_list)
 				job->gid = atoi(temp + 1);
 				job->gid_name = xstrdup(jobcomp_info->val);
 			}
-		} else if (!strcasecmp("Name", jobcomp_info->name)) {
+		} else if (!xstrcasecmp("Name", jobcomp_info->name)) {
 			job->jobname = xstrdup(jobcomp_info->val);
-		} else if (!strcasecmp("NodeList", jobcomp_info->name)) {
+		} else if (!xstrcasecmp("NodeList", jobcomp_info->name)) {
 			job->nodelist = xstrdup(jobcomp_info->val);
-		} else if (!strcasecmp("NodeCnt", jobcomp_info->name)) {
+		} else if (!xstrcasecmp("NodeCnt", jobcomp_info->name)) {
 			job->node_cnt = atoi(jobcomp_info->val);
-		} else if (!strcasecmp("ProcCnt", jobcomp_info->name)) {
+		} else if (!xstrcasecmp("ProcCnt", jobcomp_info->name)) {
 			job->proc_cnt = atoi(jobcomp_info->val);
-		} else if (!strcasecmp("JobState", jobcomp_info->name)) {
+		} else if (!xstrcasecmp("JobState", jobcomp_info->name)) {
 			job->state = xstrdup(jobcomp_info->val);
-		} else if (!strcasecmp("Timelimit", jobcomp_info->name)) {
+		} else if (!xstrcasecmp("Timelimit", jobcomp_info->name)) {
 			job->timelimit = xstrdup(jobcomp_info->val);
-		} else if (!strcasecmp("Workdir", jobcomp_info->name)) {
+		} else if (!xstrcasecmp("Workdir", jobcomp_info->name)) {
 			job->work_dir = xstrdup(jobcomp_info->val);
 		}
 #ifdef HAVE_BG
-		else if (!strcasecmp("MaxProcs", jobcomp_info->name)) {
+		else if (!xstrcasecmp("MaxProcs", jobcomp_info->name)) {
 			job->max_procs = atoi(jobcomp_info->val);
-		} else if (!strcasecmp("Block_Id", jobcomp_info->name)) {
+		} else if (!xstrcasecmp("Block_Id", jobcomp_info->name)) {
 			job->blockid = xstrdup(jobcomp_info->val);
-		} else if (!strcasecmp("Connection", jobcomp_info->name)) {
+		} else if (!xstrcasecmp("Connection", jobcomp_info->name)) {
 			job->connection = xstrdup(jobcomp_info->val);
-		} else if (!strcasecmp("reboot", jobcomp_info->name)) {
+		} else if (!xstrcasecmp("reboot", jobcomp_info->name)) {
 			job->reboot = xstrdup(jobcomp_info->val);
-		} else if (!strcasecmp("rotate", jobcomp_info->name)) {
+		} else if (!xstrcasecmp("rotate", jobcomp_info->name)) {
 			job->rotate = xstrdup(jobcomp_info->val);
-		} else if (!strcasecmp("geometry", jobcomp_info->name)) {
+		} else if (!xstrcasecmp("geometry", jobcomp_info->name)) {
 			job->geo = xstrdup(jobcomp_info->val);
-		} else if (!strcasecmp("start", jobcomp_info->name)) {
+		} else if (!xstrcasecmp("start", jobcomp_info->name)) {
 			job->bg_start_point = xstrdup(jobcomp_info->val);
 		}
 #endif
@@ -194,12 +194,11 @@ extern List filetxt_jobcomp_process_get_jobs(slurmdb_job_cond_t *job_cond)
 		lc++;
 		fptr = line;	/* break the record into NULL-
 				   terminated strings */
-		if (job_info_list)
-			list_destroy(job_info_list);
+		FREE_NULL_LIST(job_info_list);
 		jobid = 0;
 		partition = NULL;
 		job_info_list = list_create(_destroy_filetxt_jobcomp_info);
-		while(fptr) {
+		while (fptr) {
 			jobcomp_info =
 				xmalloc(sizeof(filetxt_jobcomp_info_t));
 			list_append(job_info_list, jobcomp_info);
@@ -210,10 +209,9 @@ extern List filetxt_jobcomp_process_get_jobs(slurmdb_job_cond_t *job_cond)
 			*fptr++ = 0;
 			jobcomp_info->val = fptr;
 			fptr = strstr(fptr, " ");
-			if (!strcasecmp("JobId", jobcomp_info->name))
+			if (!xstrcasecmp("JobId", jobcomp_info->name))
 				jobid = atoi(jobcomp_info->val);
-			else if (!strcasecmp("Partition",
-					    jobcomp_info->name))
+			else if (!xstrcasecmp("Partition", jobcomp_info->name))
 				partition = jobcomp_info->val;
 
 
@@ -235,7 +233,7 @@ extern List filetxt_jobcomp_process_get_jobs(slurmdb_job_cond_t *job_cond)
 			if (!jobid)
 				continue;
 			itr = list_iterator_create(job_cond->step_list);
-			while((selected_step = list_next(itr))) {
+			while ((selected_step = list_next(itr))) {
 				if (selected_step->jobid == jobid)
 					continue;
 				/* job matches */
@@ -252,8 +250,8 @@ extern List filetxt_jobcomp_process_get_jobs(slurmdb_job_cond_t *job_cond)
 			if (!partition)
 				continue;
 			itr = list_iterator_create(job_cond->partition_list);
-			while((selected_part = list_next(itr)))
-				if (!strcasecmp(selected_part, partition)) {
+			while ((selected_part = list_next(itr)))
+				if (!xstrcasecmp(selected_part, partition)) {
 					list_iterator_destroy(itr);
 					goto foundp;
 				}
@@ -268,8 +266,7 @@ extern List filetxt_jobcomp_process_get_jobs(slurmdb_job_cond_t *job_cond)
 			list_append(job_list, job);
 	}
 
-	if (job_info_list)
-		list_destroy(job_info_list);
+	FREE_NULL_LIST(job_info_list);
 
 	if (ferror(fd)) {
 		perror(filein);

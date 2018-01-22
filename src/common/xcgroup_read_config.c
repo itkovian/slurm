@@ -5,7 +5,7 @@
  *  Written by Matthieu Hautreux <matthieu.hautreux@cea.fr>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -34,9 +34,7 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#ifndef   _ISOC99_SOURCE
-#  define _ISOC99_SOURCE /* strtof() */
-#endif
+#include "config.h"
 
 #include <pwd.h>
 #include <stdlib.h>
@@ -53,12 +51,11 @@
 #include "src/common/parse_config.h"
 #include "src/common/parse_time.h"
 #include "src/common/read_config.h"
+#include "src/common/xcgroup_read_config.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
 
-#include "xcgroup_read_config.h"
-
-#define DEFAULT_CGROUP_BASEDIR "/cgroup"
+#define DEFAULT_CGROUP_BASEDIR "/sys/fs/cgroup"
 
 slurm_cgroup_conf_t *slurm_cgroup_conf = NULL;
 
@@ -79,8 +76,6 @@ static void _clear_slurm_cgroup_conf(slurm_cgroup_conf_t *slurm_cgroup_conf)
 	if (slurm_cgroup_conf) {
 		slurm_cgroup_conf->cgroup_automount = false ;
 		xfree(slurm_cgroup_conf->cgroup_mountpoint);
-		xfree(slurm_cgroup_conf->cgroup_subsystems);
-		xfree(slurm_cgroup_conf->cgroup_release_agent);
 		xfree(slurm_cgroup_conf->cgroup_prepend);
 		slurm_cgroup_conf->constrain_cores = false ;
 		slurm_cgroup_conf->task_affinity = false ;
@@ -89,11 +84,16 @@ static void _clear_slurm_cgroup_conf(slurm_cgroup_conf_t *slurm_cgroup_conf)
 		slurm_cgroup_conf->max_ram_percent = 100 ;
 		slurm_cgroup_conf->min_ram_space = XCGROUP_DEFAULT_MIN_RAM;
 		slurm_cgroup_conf->constrain_swap_space = false ;
+		slurm_cgroup_conf->constrain_kmem_space = false ;
+		slurm_cgroup_conf->allowed_kmem_space = -1;
+		slurm_cgroup_conf->max_kmem_percent = 100;
+		slurm_cgroup_conf->min_kmem_space = XCGROUP_DEFAULT_MIN_RAM;
 		slurm_cgroup_conf->allowed_swap_space = 0 ;
 		slurm_cgroup_conf->max_swap_percent = 100 ;
 		slurm_cgroup_conf->memlimit_enforcement = 0 ;
 		slurm_cgroup_conf->memlimit_threshold = 100 ;
 		slurm_cgroup_conf->constrain_devices = false ;
+		slurm_cgroup_conf->memory_swappiness = NO_VAL64;
 		xfree(slurm_cgroup_conf->allowed_devices_file);
 	}
 }
@@ -124,6 +124,7 @@ static void conf_get_float (s_p_hashtbl_t *t, char *name, float *fp)
 		return;
 	if (str_to_float (str, fp) < 0)
 		fatal ("cgroup.conf: Invalid value '%s' for %s", str, name);
+	xfree(str);
 }
 
 /*
@@ -136,25 +137,28 @@ extern int read_slurm_cgroup_conf(slurm_cgroup_conf_t *slurm_cgroup_conf)
 	s_p_options_t options[] = {
 		{"CgroupAutomount", S_P_BOOLEAN},
 		{"CgroupMountpoint", S_P_STRING},
-		{"CgroupSubsystems", S_P_STRING},
 		{"CgroupReleaseAgentDir", S_P_STRING},
 		{"ConstrainCores", S_P_BOOLEAN},
 		{"TaskAffinity", S_P_BOOLEAN},
 		{"ConstrainRAMSpace", S_P_BOOLEAN},
 		{"AllowedRAMSpace", S_P_STRING},
 		{"MaxRAMPercent", S_P_STRING},
-		{"MinRAMSpace", S_P_UINT32},
+		{"MinRAMSpace", S_P_UINT64},
 		{"ConstrainSwapSpace", S_P_BOOLEAN},
+		{"ConstrainKmemSpace", S_P_BOOLEAN},
+		{"AllowedKmemSpace", S_P_STRING},
+		{"MaxKmemPercent", S_P_STRING},
+		{"MinKmemSpace", S_P_UINT64},
 		{"AllowedSwapSpace", S_P_STRING},
 		{"MaxSwapPercent", S_P_STRING},
-		{"ConstrainCores", S_P_BOOLEAN},
 		{"MemoryLimitEnforcement", S_P_BOOLEAN},
 		{"MemoryLimitThreshold", S_P_STRING},
 		{"ConstrainDevices", S_P_BOOLEAN},
 		{"AllowedDevicesFile", S_P_STRING},
+		{"MemorySwappiness", S_P_UINT64},
 		{NULL} };
 	s_p_hashtbl_t *tbl = NULL;
-	char *conf_path = NULL;
+	char *conf_path = NULL, *tmp_str;
 	struct stat buf;
 
 	/* Set initial values */
@@ -166,7 +170,7 @@ extern int read_slurm_cgroup_conf(slurm_cgroup_conf_t *slurm_cgroup_conf)
 	/* Get the cgroup.conf path and validate the file */
 	conf_path = get_extra_conf_path("cgroup.conf");
 	if ((conf_path == NULL) || (stat(conf_path, &buf) == -1)) {
-		info("No cgroup.conf file (%s)", conf_path);
+		debug2("%s: No cgroup.conf file (%s)", __func__, conf_path);
 	} else {
 		debug("Reading cgroup.conf file %s", conf_path);
 
@@ -179,21 +183,18 @@ extern int read_slurm_cgroup_conf(slurm_cgroup_conf_t *slurm_cgroup_conf)
 
 		/* cgroup initialisation parameters */
 		if (!s_p_get_boolean(&slurm_cgroup_conf->cgroup_automount,
-			        "CgroupAutomount", tbl))
+				     "CgroupAutomount", tbl))
 			slurm_cgroup_conf->cgroup_automount = false;
 
 		if (!s_p_get_string(&slurm_cgroup_conf->cgroup_mountpoint,
-				"CgroupMountpoint", tbl))
+				    "CgroupMountpoint", tbl))
 			slurm_cgroup_conf->cgroup_mountpoint =
 				xstrdup(DEFAULT_CGROUP_BASEDIR);
 
-		s_p_get_string(&slurm_cgroup_conf->cgroup_subsystems,
-			       "CgroupSubsystems", tbl);
-		s_p_get_string(&slurm_cgroup_conf->cgroup_release_agent,
-			       "CgroupReleaseAgentDir", tbl);
-		if (! slurm_cgroup_conf->cgroup_release_agent)
-			slurm_cgroup_conf->cgroup_release_agent =
-				xstrdup("/etc/slurm/cgroup");
+		if (s_p_get_string(&tmp_str, "CgroupReleaseAgentDir", tbl)) {
+			xfree(tmp_str);
+			debug("Ignoring obsolete CgroupReleaseAgentDir option.");
+		}
 
 		/* cgroup prepend directory */
 #ifndef MULTIPLE_SLURMD
@@ -227,6 +228,21 @@ extern int read_slurm_cgroup_conf(slurm_cgroup_conf_t *slurm_cgroup_conf)
 				     "ConstrainSwapSpace", tbl))
 			slurm_cgroup_conf->constrain_swap_space = false;
 
+		if (!s_p_get_boolean(&slurm_cgroup_conf->constrain_kmem_space,
+				     "ConstrainKmemSpace", tbl))
+			slurm_cgroup_conf->constrain_kmem_space = true;
+
+		conf_get_float (tbl,
+				"AllowedKmemSpace",
+				&slurm_cgroup_conf->allowed_kmem_space);
+
+		conf_get_float (tbl,
+				"MaxKmemPercent",
+				&slurm_cgroup_conf->max_kmem_percent);
+
+		(void) s_p_get_uint64 (&slurm_cgroup_conf->min_kmem_space,
+				       "MinKmemSpace", tbl);
+
 		conf_get_float (tbl,
 				"AllowedSwapSpace",
 				&slurm_cgroup_conf->allowed_swap_space);
@@ -235,8 +251,17 @@ extern int read_slurm_cgroup_conf(slurm_cgroup_conf_t *slurm_cgroup_conf)
 				"MaxSwapPercent",
 				&slurm_cgroup_conf->max_swap_percent);
 
-		s_p_get_uint32 (&slurm_cgroup_conf->min_ram_space,
-		                "MinRAMSpace", tbl);
+		(void) s_p_get_uint64 (&slurm_cgroup_conf->min_ram_space,
+				      "MinRAMSpace", tbl);
+
+		if (s_p_get_uint64(&slurm_cgroup_conf->memory_swappiness,
+				     "MemorySwappiness", tbl)) {
+			if (slurm_cgroup_conf->memory_swappiness > 100) {
+				error("Value for MemorySwappiness is too high,"
+				      " rounding down to 100.");
+				slurm_cgroup_conf->memory_swappiness = 100;
+			}
+		}
 
 		/* Memory limits */
 		if (!s_p_get_boolean(&slurm_cgroup_conf->memlimit_enforcement,
@@ -256,7 +281,8 @@ extern int read_slurm_cgroup_conf(slurm_cgroup_conf_t *slurm_cgroup_conf)
                                "AllowedDevicesFile", tbl);
                 if (! slurm_cgroup_conf->allowed_devices_file)
                         slurm_cgroup_conf->allowed_devices_file =
-                                xstrdup("/etc/slurm/cgroup_allowed_devices_file.conf");
+				get_extra_conf_path(
+					"cgroup_allowed_devices_file.conf");
 
 		s_p_hashtbl_destroy(tbl);
 	}

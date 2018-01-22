@@ -8,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -37,10 +37,6 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#ifdef HAVE_CONFIG_H
-#  include "config.h"
-#endif
-
 #include "slurm/slurm.h"
 #include "slurm/slurm_errno.h"
 #include "slurm/slurmdb.h"
@@ -54,7 +50,10 @@
  */
 extern int slurmdb_clusters_add(void *db_conn, List cluster_list)
 {
-	return acct_storage_g_add_clusters(db_conn, getuid(), cluster_list);
+	if (db_api_uid == -1)
+		db_api_uid = getuid();
+
+	return acct_storage_g_add_clusters(db_conn, db_api_uid, cluster_list);
 }
 
 /*
@@ -67,7 +66,10 @@ extern int slurmdb_clusters_add(void *db_conn, List cluster_list)
 extern List slurmdb_clusters_get(void *db_conn,
 				 slurmdb_cluster_cond_t *cluster_cond)
 {
-	return acct_storage_g_get_clusters(db_conn, getuid(), cluster_cond);
+	if (db_api_uid == -1)
+		db_api_uid = getuid();
+
+	return acct_storage_g_get_clusters(db_conn, db_api_uid, cluster_cond);
 }
 
 /*
@@ -80,7 +82,10 @@ extern List slurmdb_clusters_modify(void *db_conn,
 				    slurmdb_cluster_cond_t *cluster_cond,
 				    slurmdb_cluster_rec_t *cluster)
 {
-	return acct_storage_g_modify_clusters(db_conn, getuid(),
+	if (db_api_uid == -1)
+		db_api_uid = getuid();
+
+	return acct_storage_g_modify_clusters(db_conn, db_api_uid,
 					      cluster_cond, cluster);
 }
 
@@ -92,6 +97,10 @@ extern List slurmdb_clusters_modify(void *db_conn,
 extern List slurmdb_clusters_remove(void *db_conn,
 				    slurmdb_cluster_cond_t *cluster_cond)
 {
-	return acct_storage_g_remove_clusters(db_conn, getuid(), cluster_cond);
+	if (db_api_uid == -1)
+		db_api_uid = getuid();
+
+	return acct_storage_g_remove_clusters(
+		db_conn, db_api_uid, cluster_cond);
 }
 

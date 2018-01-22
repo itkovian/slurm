@@ -7,9 +7,6 @@
  *  http://www.etnus.com/
 \*****************************************************************************/
 
-/*  $Id$
- */
-
 /* This file contains support for bringing processes up stopped, so that
  * a debugger can attach to them     (done for TotalView)
  */
@@ -22,13 +19,6 @@
 #ifndef _ATTACH_INCLUDE
 #define _ATTACH_INCLUDE
 
-#ifndef VOLATILE
-#if defined(__STDC__) || defined(__cplusplus)
-#define VOLATILE volatile
-#else
-#define VOLATILE
-#endif
-#endif
 /*****************************************************************************
 *                                DEBUGGING SUPPORT                           *
 *****************************************************************************/
@@ -57,8 +47,8 @@ extern int MPIR_proctable_size;
  * 2) inform the process that it has been attached to and is
  *    now free to run.
  */
-extern VOLATILE int MPIR_debug_state;
-extern VOLATILE int MPIR_debug_gate;
+extern volatile int MPIR_debug_state;
+extern volatile int MPIR_debug_gate;
 extern int          MPIR_being_debugged; /* Cause extra info on internal state
 					  * to be maintained
 					  */
@@ -78,5 +68,6 @@ extern void MPIR_Breakpoint(void);
 /* Value for totalview %J expansion in bulk launch string
  */
 extern char *totalview_jobid;
+extern char *totalview_stepid;
 
 #endif

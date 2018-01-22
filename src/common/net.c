@@ -8,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -52,7 +52,7 @@
 #include <errno.h>
 #include <stdint.h>
 
-#if defined(__FreeBSD__)
+#if defined(__FreeBSD__) || defined(__NetBSD__)
 #define	SOL_TCP		IPPROTO_TCP
 #endif
 
@@ -66,7 +66,6 @@
  * for details.
  */
 strong_alias(net_stream_listen,		slurm_net_stream_listen);
-strong_alias(net_accept_stream,		slurm_net_accept_stream);
 strong_alias(net_set_low_water,		slurm_net_set_low_water);
 
 #ifndef NET_DEFAULT_BACKLOG
@@ -81,10 +80,7 @@ static short _sock_bind_wild(int sockfd)
 	socklen_t len;
 	struct sockaddr_in sin;
 
-	memset(&sin, 0, sizeof(sin));
-	sin.sin_family = AF_INET;
-	sin.sin_addr.s_addr = htonl(INADDR_ANY);
-	sin.sin_port = htons(0);	/* bind ephemeral port */
+	slurm_setup_sockaddr(&sin, 0); /* bind ephemeral port */
 
 	if (bind(sockfd, (struct sockaddr *) &sin, sizeof(sin)) < 0)
 		return (-1);
@@ -101,7 +97,7 @@ static short _sock_bind_wild(int sockfd)
  * OUT fd - listening socket file descriptor number
  * OUT port - TCP port number in host byte order
  */
-int net_stream_listen(int *fd, short *port)
+int net_stream_listen(int *fd, uint16_t *port)
 {
 	int rc, val;
 
@@ -114,8 +110,6 @@ int net_stream_listen(int *fd, short *port)
 		goto cleanup;
 
 	*port = _sock_bind_wild(*fd);
-#undef SOMAXCONN
-#define SOMAXCONN	1024
 	rc = listen(*fd, NET_DEFAULT_BACKLOG);
 	if (rc < 0)
 		goto cleanup;
@@ -127,48 +121,7 @@ int net_stream_listen(int *fd, short *port)
 	return -1;
 }
 
-
-int net_accept_stream(int fd)
-{
-	int sd;
-
-	while ((sd = accept(fd, NULL, NULL)) < 0) {
-		if (errno == EINTR)
-			continue;
-		if ((errno == EAGAIN) || (errno == EWOULDBLOCK))
-			return -1;
-		if (errno == ECONNABORTED)
-			return -1;
-		error("Unable to accept new connection");
-	}
-
-	return sd;
-}
-
-int readn(int fd, void *buf, size_t nbytes)
-{
-	int n = 0;
-	char *pbuf = (char *)buf;
-	size_t nleft = nbytes;
-
-	while (nleft > 0) {
-		n = read(fd, (void *)pbuf, nleft);
-		if (n > 0) {
-			pbuf+=n;
-			nleft-=n;
-		} else if (n == 0) 	/* EOF */
-			break;
-		else if (errno == EINTR)
-			continue;
-		else {
-			debug("read error: %m");
-			break;
-		}
-	}
-	return(n);
-}
-
-int net_set_low_water(int sock, size_t size)
+int net_set_low_water(int sock, socklen_t size)
 {
 	if (setsockopt(sock, SOL_SOCKET, SO_RCVLOWAT,
 		       (const void *) &size, sizeof(size)) < 0) {
@@ -186,14 +139,14 @@ extern int net_set_keep_alive(int sock)
 	socklen_t opt_len;
 	struct linger opt_linger;
 	static bool keep_alive_set  = false;
-	static int  keep_alive_time = (uint16_t) NO_VAL;
+	static int  keep_alive_time = NO_VAL16;
 
 	if (!keep_alive_set) {
 		keep_alive_time = slurm_get_keep_alive_time();
 		keep_alive_set = true;
 	}
 
-	if (keep_alive_time == (uint16_t) NO_VAL)
+	if (keep_alive_time == NO_VAL16)
 		return 0;
 
 	opt_len = sizeof(struct linger);
@@ -216,7 +169,7 @@ extern int net_set_keep_alive(int sock)
  * Removing this call might decrease the robustness of communications,
  * but will probably have no noticable effect.
  */
-#if ! defined(__FreeBSD__) || (__FreeBSD_version > 900000)
+#if !defined (__APPLE__) && (! defined(__FreeBSD__) || (__FreeBSD_version > 900000))
 	opt_int = keep_alive_time;
 	if (setsockopt(sock, SOL_TCP, TCP_KEEPIDLE, &opt_int, opt_len) < 0) {
 		error("Unable to set keep alive socket time: %m");
@@ -239,4 +192,37 @@ extern int net_set_keep_alive(int sock)
 #endif
 
 	return 0;
+}
+
+/* net_stream_listen_ports()
+ */
+int net_stream_listen_ports(int *fd, uint16_t *port, uint16_t *ports, bool local)
+{
+	int cc;
+	int val;
+
+	if ((*fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0)
+		return -1;
+
+	val = 1;
+	cc = setsockopt(*fd, SOL_SOCKET, SO_REUSEADDR, &val, sizeof(int));
+	if (cc < 0) {
+		close(*fd);
+		return -1;
+	}
+
+	cc = sock_bind_range(*fd, ports, local);
+	if (cc < 0) {
+		close(*fd);
+		return -1;
+	}
+	*port = cc;
+
+	cc = listen(*fd, NET_DEFAULT_BACKLOG);
+	if (cc < 0) {
+		close(*fd);
+		return -1;
+	}
+
+	return *fd;
 }

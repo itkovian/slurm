@@ -53,7 +53,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -97,7 +97,6 @@
 
 #include "src/api/slurm_pmi.h"
 #include "src/common/macros.h"
-#include "src/common/malloc.h"
 #include "src/slurmd/slurmstepd/slurmstepd_job.h"
 
 #define KVS_STATE_LOCAL    0
@@ -169,6 +168,19 @@ static char *pmi_opt_str =
   "        \n";
 
 static int IsPmiKey(char *);
+
+
+static void _pmi_mutex_lock(pthread_mutex_t *mutex)
+{
+	if (pthread_mutex_lock(mutex) != 0)
+		fprintf(stderr, "_pmi_mutex_lock\n");
+}
+
+static void _pmi_mutex_unlock(pthread_mutex_t *mutex)
+{
+	if (pthread_mutex_unlock(mutex) != 0)
+		fprintf(stderr, "_pmi_mutex_unlock\n");
+}
 
 /* PMI Group functions */
 
@@ -314,14 +326,14 @@ int PMI_Finalize( void )
 		fprintf(stderr, "In: PMI_Finalize\n");
 
 	pmi_init = 0;
-	pthread_mutex_lock(&kvs_mutex);
+	_pmi_mutex_lock(&kvs_mutex); /* DO NOT use slurm_mutex_un/lock */
 	for (i=0; i<kvs_rec_cnt; i++)
 		_del_kvs_rec(&kvs_recs[i]);
 	if (kvs_recs)
 		free(kvs_recs);
 	kvs_recs = NULL;
 	kvs_rec_cnt = 0;
-	pthread_mutex_unlock(&kvs_mutex);
+	_pmi_mutex_unlock(&kvs_mutex); /* DO NOT use slurm_mutex_un/lock */
 	slurm_pmi_finalize();
 
 	return PMI_SUCCESS;
@@ -334,7 +346,7 @@ static void _del_kvs_rec(struct kvs_rec *kvs_ptr)
 	if (kvs_ptr == NULL)
 		return;
 
-	for (i=0; i<kvs_ptr->kvs_cnt; i++) {
+	for (i = 0; i < kvs_ptr->kvs_cnt; i++) {
 		if (kvs_ptr->kvs_keys[i])
 			free(kvs_ptr->kvs_keys[i]);
 		if (kvs_ptr->kvs_values[i])
@@ -655,7 +667,7 @@ have called 'PMI_Barrier()'.
 @*/
 int PMI_Barrier( void )
 {
-	struct kvs_comm_set *kvs_set_ptr = NULL;
+	kvs_comm_set_t *kvs_set_ptr = NULL;
 	struct kvs_comm *kvs_ptr;
 	int i, j, k, rc = PMI_SUCCESS;
 
@@ -881,9 +893,9 @@ int PMI_KVS_Get_my_name( char kvsname[], int length )
 	if (size >= length)	/* truncated */
 		return PMI_ERR_INVALID_LENGTH;
 
-	pthread_mutex_lock(&kvs_mutex);
+	_pmi_mutex_lock(&kvs_mutex);   /* DO NOT use slurm_mutex_un/lock */
 	_init_kvs(kvsname);
-	pthread_mutex_unlock(&kvs_mutex);
+	_pmi_mutex_unlock(&kvs_mutex); /* DO NOT use slurm_mutex_un/lock */
 	return PMI_SUCCESS;
 }
 
@@ -1031,7 +1043,7 @@ int PMI_KVS_Create( char kvsname[], int length )
 	if (pmi_init == 0)
 		return PMI_FAIL;
 
-	pthread_mutex_lock(&kvs_mutex);
+	_pmi_mutex_lock(&kvs_mutex); /* DO NOT use slurm_mutex_un/lock */
 	size = snprintf(kvsname, length, "%ld.%ld.%d.%d", pmi_jobid,
 			pmi_stepid, pmi_rank, kvs_name_sequence);
 	if (size >= length)	/* truncated */
@@ -1041,7 +1053,7 @@ int PMI_KVS_Create( char kvsname[], int length )
 		_init_kvs(kvsname);
 		rc = PMI_SUCCESS;
 	}
-	pthread_mutex_unlock(&kvs_mutex);
+	_pmi_mutex_unlock(&kvs_mutex); /* DO NOT use slurm_mutex_un/lock */
 	return rc;
 }
 
@@ -1070,7 +1082,7 @@ int PMI_KVS_Destroy( const char kvsname[] )
 	if (kvsname == NULL)
 		return PMI_ERR_INVALID_ARG;
 
-	pthread_mutex_lock(&kvs_mutex);
+	_pmi_mutex_lock(&kvs_mutex); /* DO NOT use slurm_mutex_un/lock */
 	for (i=0; i<kvs_rec_cnt; i++) {
 		if (strncmp(kvs_recs[i].kvs_name, kvsname, PMI_MAX_KVSNAME_LEN))
 			continue;
@@ -1078,7 +1090,7 @@ int PMI_KVS_Destroy( const char kvsname[] )
 		found = 1;
 		break;
 	}
-	pthread_mutex_unlock(&kvs_mutex);
+	_pmi_mutex_unlock(&kvs_mutex); /* DO NOT use slurm_mutex_un/lock */
 	if (found == 0)
 		return PMI_ERR_INVALID_ARG;
 	/* FIXME: We need to add mechanism to remove these keys from srun's master copy */
@@ -1130,7 +1142,7 @@ static int _kvs_put( const char kvsname[], const char key[], const char value[],
 	int i, j, rc;
 
 	/* find the proper kvs record */
-	pthread_mutex_lock(&kvs_mutex);
+	_pmi_mutex_lock(&kvs_mutex); /* DO NOT use slurm_mutex_un/lock */
 	for (i=0; i<kvs_rec_cnt; i++) {
 		if (strncmp(kvs_recs[i].kvs_name, kvsname, PMI_MAX_KVSNAME_LEN))
 			continue;
@@ -1197,7 +1209,7 @@ no_dup:
 	}
 	rc = PMI_ERR_INVALID_KVS;
 
-fini:	pthread_mutex_unlock(&kvs_mutex);
+fini:	_pmi_mutex_unlock(&kvs_mutex); /* DO NOT use slurm_mutex_un/lock */
 	_kvs_dump();
 	return rc;
 }
@@ -1220,7 +1232,7 @@ the specified keyval space. It is a process local operation.
 @*/
 int PMI_KVS_Commit( const char kvsname[] )
 {
-	struct kvs_comm_set kvs_set;
+	kvs_comm_set_t kvs_set;
 	int i, j, rc = PMI_SUCCESS, local_pairs;
 
 	if (pmi_debug)
@@ -1253,12 +1265,12 @@ int PMI_KVS_Commit( const char kvsname[] )
 	kvs_set.kvs_comm_recs = 0;
 	kvs_set.kvs_comm_ptr  = NULL;
 
-	pthread_mutex_lock(&kvs_mutex);
-	for (i=0; i<kvs_rec_cnt; i++) {
+	_pmi_mutex_lock(&kvs_mutex); /* DO NOT use slurm_mutex_un/lock */
+	for (i = 0; i < kvs_rec_cnt; i++) {
 		if (kvs_recs[i].kvs_state == KVS_STATE_DEFUNCT)
 			continue;
 		local_pairs = 0;
-		for (j=0; j<kvs_recs[i].kvs_cnt; j++) {
+		for (j = 0; j < kvs_recs[i].kvs_cnt; j++) {
 			if (kvs_recs[i].kvs_key_states[j] ==
 					KVS_KEY_STATE_GLOBAL)
 				continue;
@@ -1298,11 +1310,11 @@ int PMI_KVS_Commit( const char kvsname[] )
 			!= SLURM_SUCCESS) {
 		rc = PMI_FAIL;
 	}
-	pthread_mutex_unlock(&kvs_mutex);
+	_pmi_mutex_unlock(&kvs_mutex); /* DO NOT use slurm_mutex_un/lock */
 
 	/* Free any temporary storage */
 	free(kvs_set.kvs_host_ptr);
-	for (i=0; i<kvs_set.kvs_comm_recs; i++)
+	for (i = 0; i < kvs_set.kvs_comm_recs; i++)
 		free(kvs_set.kvs_comm_ptr[i]);
 	if (kvs_set.kvs_comm_ptr)
 		free(kvs_set.kvs_comm_ptr);
@@ -1366,8 +1378,8 @@ int PMI_KVS_Get( const char kvsname[], const char key[], char value[], int lengt
 		return PMI_ERR_INVALID_VAL;
 
 	/* find the proper kvs record */
-	pthread_mutex_lock(&kvs_mutex);
-	for (i=0; i<kvs_rec_cnt; i++) {
+	_pmi_mutex_lock(&kvs_mutex); /* DO NOT use slurm_mutex_un/lock */
+	for (i = 0; i < kvs_rec_cnt; i++) {
 		if (kvs_recs[i].kvs_state == KVS_STATE_DEFUNCT)
 			continue;
 		if (strncmp(kvs_recs[i].kvs_name, kvsname, PMI_MAX_KVSNAME_LEN))
@@ -1390,7 +1402,7 @@ int PMI_KVS_Get( const char kvsname[], const char key[], char value[], int lengt
 	}
 	rc = PMI_ERR_INVALID_KVS;
 
-fini:	pthread_mutex_unlock(&kvs_mutex);
+fini:	_pmi_mutex_unlock(&kvs_mutex); /* DO NOT use slurm_mutex_un/lock */
 	return rc;
 }
 
@@ -1442,8 +1454,8 @@ int PMI_KVS_Iter_first(const char kvsname[], char key[], int key_len, char val[]
 	val[0] = '\0';
 	/* find the proper kvs record
 	 */
-	pthread_mutex_lock(&kvs_mutex);
-	for (i=0; i<kvs_rec_cnt; i++) {
+	_pmi_mutex_lock(&kvs_mutex); /* DO NOT use slurm_mutex_un/lock */
+	for (i = 0; i < kvs_rec_cnt; i++) {
 
 		if (kvs_recs[i].kvs_state == KVS_STATE_DEFUNCT)
 			continue;
@@ -1471,7 +1483,7 @@ int PMI_KVS_Iter_first(const char kvsname[], char key[], int key_len, char val[]
 	}
 	rc = PMI_ERR_INVALID_KVS;
 
-fini:	pthread_mutex_unlock(&kvs_mutex);
+fini:	_pmi_mutex_unlock(&kvs_mutex); /* DO NOT use slurm_mutex_un/lock */
 	return rc;
 }
 
@@ -1524,8 +1536,8 @@ int PMI_KVS_Iter_next(const char kvsname[], char key[], int key_len,
 	key[0] = '\0';
 	val[0] = '\0';
 	/* find the proper kvs record */
-	pthread_mutex_lock(&kvs_mutex);
-	for (i=0; i<kvs_rec_cnt; i++) {
+	_pmi_mutex_lock(&kvs_mutex); /* DO NOT use slurm_mutex_un/lock */
+	for (i = 0; i < kvs_rec_cnt; i++) {
 		if (kvs_recs[i].kvs_state == KVS_STATE_DEFUNCT)
 			continue;
 		if (strncmp(kvs_recs[i].kvs_name, kvsname, PMI_MAX_KVSNAME_LEN))
@@ -1550,7 +1562,7 @@ int PMI_KVS_Iter_next(const char kvsname[], char key[], int key_len,
 	}
 	rc = PMI_ERR_INVALID_KVS;
 
-fini:	pthread_mutex_unlock(&kvs_mutex);
+fini:	_pmi_mutex_unlock(&kvs_mutex); /* DO NOT use slurm_mutex_un/lock */
 	return rc;
 }
 
@@ -1665,7 +1677,6 @@ int PMI_Parse_option(int num_args, char *args[], int *num_parsed,
 	n = 0;
 	s = 0;
 
-	cp = args[0];
 	temp = (PMI_keyval_t *) malloc(num_args * (sizeof (PMI_keyval_t)));
 	if (temp == NULL) {
 		pmi_nomem_error(__FILE__, __LINE__, "PMI_Parse_option");
@@ -1937,7 +1948,7 @@ static int IsPmiKey(char * key) {
 	char strh[5];
 
 	if (pmi_debug)
-		fprintf(stderr, "In: IsPmiKey \n");
+		fprintf(stderr, "In: IsPmiKey\n");
 
 	strncpy(strh, key, 4);
 	strh[4]='\0';
@@ -1955,11 +1966,11 @@ inline static void _kvs_dump(void)
 	int i, j;
 
 	for (i=0; i<kvs_rec_cnt; i++) {
-		info("name=%s state=%u cnt=%u inx=%u",
+		fprintf(stderr, "name=%s state=%u cnt=%u inx=%u\n",
 			kvs_recs[i].kvs_name, kvs_recs[i].kvs_state,
 			kvs_recs[i].kvs_cnt, kvs_recs[i].kvs_inx);
 		for (j=0; j<kvs_recs[i].kvs_cnt; j++) {
-			info("  state=%u key=%s value=%s",
+			fprintf(stderr, "  state=%u key=%s value=%s\n",
 				kvs_recs[i].kvs_key_states[j],
 				kvs_recs[i].kvs_keys[j],
 				kvs_recs[i].kvs_values[j]);

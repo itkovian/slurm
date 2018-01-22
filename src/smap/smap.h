@@ -8,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -40,27 +40,9 @@
 #ifndef _SMAP_H
 #define _SMAP_H
 
-#ifndef _GNU_SOURCE
-#  define _GNU_SOURCE
-#endif
+#include "config.h"
 
-#if HAVE_CONFIG_H
-#  include "config.h"
-#endif
-
-#if HAVE_INTTYPES_H
-#  include <inttypes.h>
-#else				/* !HAVE_INTTYPES_H */
-#  if HAVE_STDINT_H
-#    include <stdint.h>
-#  endif
-#endif				/* HAVE_INTTYPES_H */
-
-#if HAVE_GETOPT_H
-#  include <getopt.h>
-#else
-#  include "src/common/getopt.h"
-#endif
+#define _GNU_SOURCE
 
 /*
  * The following define is necessary for OS X 10.6. The apple supplied
@@ -90,14 +72,17 @@
 #ifdef lines
 #  undef lines
 #endif
+
 #ifndef SYSTEM_DIMENSIONS
 #  define SYSTEM_DIMENSIONS 1
 #endif
 
-#include <stdlib.h>
-#include <pwd.h>
 #include <ctype.h>
+#include <getopt.h>
+#include <inttypes.h>
+#include <pwd.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -108,6 +93,7 @@
 #include "src/common/node_select.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/slurmdb_defs.h"
+#include "src/common/uid.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
 
@@ -154,7 +140,7 @@ typedef struct {
 	int index;
 	/* letter used in smap */
 	char letter;
-	int state;
+	uint32_t state;
 	/* set if using this midplane in a block */
 	uint16_t used;
 } smap_node_t;
@@ -177,7 +163,7 @@ extern int main_ycord;
 extern smap_parameters_t params;
 extern int text_line_cnt;
 
-extern void parse_command_line(int argc, char *argv[]);
+extern void parse_command_line(int argc, char **argv);
 
 extern smap_system_t *smap_system_ptr;
 extern int quiet_flag;
@@ -192,7 +178,7 @@ extern int set_grid_bg(int *start, int *end, int count, int set);
 extern void print_grid(void);
 bitstr_t *get_requested_node_bitmap(void);
 
-extern void parse_command_line(int argc, char *argv[]);
+extern void parse_command_line(int argc, char **argv);
 extern void print_date(void);
 extern void clear_window(WINDOW *win);
 extern char *resolve_mp(char *desc, node_info_msg_t *node_info_ptr);

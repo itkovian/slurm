@@ -7,7 +7,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -36,30 +36,18 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#if HAVE_CONFIG_H
-#   include "config.h"
-#endif
-
-#if HAVE_STDINT_H
-#  include <stdint.h>
-#endif
-#if HAVE_INTTYPES_H
-#  include <inttypes.h>
-#endif
-
-#ifndef   __USE_XOPEN_EXTENDED
-#  define __USE_XOPEN_EXTENDED /* getpgid */
-#endif
-#include <unistd.h>
+#define __USE_XOPEN_EXTENDED	/* getpgid */
 
 #include <dirent.h>
 #include <fcntl.h>
+#include <inttypes.h>
 #include <limits.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <unistd.h>
 
 #include "slurm/slurm.h"
 #include "slurm/slurm_errno.h"
@@ -88,16 +76,12 @@
  * only load job completion logging plugins if the plugin_type string has a
  * prefix of "jobcomp/".
  *
- * plugin_version - an unsigned 32-bit integer giving the version number
- * of the plugin.  If major and minor revisions are desired, the major
- * version number may be multiplied by a suitable magnitude constant such
- * as 100 or 1000.  Various SLURM versions will likely require a certain
- * minimum version for their plugins as the job completion logging API
- * matures.
+ * plugin_version - an unsigned 32-bit integer containing the Slurm version
+ * (major.minor.micro combined into a single number).
  */
 const char plugin_name[]      = "Process tracking via process group ID plugin";
 const char plugin_type[]      = "proctrack/pgid";
-const uint32_t plugin_version = 91;
+const uint32_t plugin_version = SLURM_VERSION_NUMBER;
 
 /*
  * init() is called when the plugin is loaded, before any other functions
@@ -200,7 +184,8 @@ proctrack_p_get_pids(uint64_t cont_id, pid_t **pids, int *npids)
 {
 	DIR *dir;
 	struct dirent *de;
-	char path[PATH_MAX], *endptr, *num, rbuf[1024];
+	char path[PATH_MAX], *endptr, *num, *rbuf;
+	ssize_t buf_used;
 	char cmd[1024];
 	char state;
 	int fd, rc = SLURM_SUCCESS;
@@ -213,13 +198,13 @@ proctrack_p_get_pids(uint64_t cont_id, pid_t **pids, int *npids)
 		rc = SLURM_ERROR;
 		goto fini;
 	}
+	rbuf = xmalloc(4096);
 	while ((de = readdir(dir)) != NULL) {
 		num = de->d_name;
 		if ((num[0] < '0') || (num[0] > '9'))
 			continue;
 		ret_l = strtol(num, &endptr, 10);
-		if ((ret_l == LONG_MIN) || (ret_l == LONG_MAX) ||
-		    (errno == ERANGE)) {
+		if ((ret_l == LONG_MIN) || (ret_l == LONG_MAX)) {
 			error("couldn't do a strtol on str %s(%ld): %m",
 			      num, ret_l);
 			continue;
@@ -228,7 +213,8 @@ proctrack_p_get_pids(uint64_t cont_id, pid_t **pids, int *npids)
 		if ((fd = open(path, O_RDONLY)) < 0) {
 			continue;
 		}
-		if (read(fd, rbuf, 1024) <= 0) {
+		buf_used = read(fd, rbuf, 4096);
+		if ((buf_used <= 0) || (buf_used >= 4096)) {
 			close(fd);
 			continue;
 		}
@@ -248,6 +234,7 @@ proctrack_p_get_pids(uint64_t cont_id, pid_t **pids, int *npids)
 		xrealloc(pid_array, sizeof(pid_t) * (pid_count + 1));
 		pid_array[pid_count++] = pid;
 	}
+	xfree(rbuf);
 	closedir(dir);
 
 fini:	*pids  = pid_array;

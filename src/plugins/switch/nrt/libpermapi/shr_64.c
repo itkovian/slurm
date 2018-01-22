@@ -1,12 +1,11 @@
 /*****************************************************************************\
  *  shr_64.c - This plug is used by POE to interact with SLURM.
- *
  *****************************************************************************
  *  Copyright (C) 2012 SchedMD LLC.
  *  Written by Danny Auble <da@schedmd.com> et. al.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -35,27 +34,16 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
+#include "config.h"
+
+#include <arpa/inet.h>
 #include <ctype.h>
 #include <dlfcn.h>
 #include <fcntl.h>
+#include <nrt.h>
+#include <permapi.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include <arpa/inet.h>
-
-#ifdef HAVE_CONFIG_H
-#  include "config.h"
-#endif
-
-#if HAVE_NRT_H
-# include <nrt.h>
-#else
-# error "Must have nrt.h to compile this module!"
-#endif
-#if HAVE_PERMAPI_H
-# include <permapi.h>
-#else
-# error "Must have permapi.h to compile this module!"
-#endif
 
 #include "src/common/slurm_xlator.h"
 #include "slurm/slurm.h"
@@ -108,7 +96,7 @@ extern FILE *pmd_lfp;
 
 typedef struct agent_data {
 	uint32_t   fe_auth_key;
-	slurm_fd_t fe_comm_socket;
+	int fe_comm_socket;
 } agent_data_t;
 
 static char *_name_from_addr(char *addr)
@@ -118,7 +106,7 @@ static char *_name_from_addr(char *addr)
 	xassert(host_usage);
 	host_ptr = host_usage;
 	while (host_ptr && host_ptr->host_address) {
-		if (!strcmp(addr, host_ptr->host_address))
+		if (!xstrcmp(addr, host_ptr->host_address))
 			return host_ptr->host_name;
 		host_ptr++;
 	}
@@ -256,7 +244,7 @@ unpack_error:
 
 /* Validate a message connection
  * Return: true=valid/authenticated */
-static bool _validate_connect(slurm_fd_t socket_conn, uint32_t auth_key)
+static bool _validate_connect(int socket_conn, uint32_t auth_key)
 {
 	struct timeval tv;
 	fd_set read_fds;
@@ -294,9 +282,9 @@ static bool _validate_connect(slurm_fd_t socket_conn, uint32_t auth_key)
 }
 
 /* Process a message from PMD */
-static void _agent_proc_connect(slurm_fd_t fe_comm_socket,uint32_t fe_auth_key)
+static void _agent_proc_connect(int fe_comm_socket,uint32_t fe_auth_key)
 {
-	slurm_fd_t fe_comm_conn = -1;
+	int fe_comm_conn = -1;
 	slurm_addr_t be_addr;
 	bool be_connected = false;
 	Buf buffer = NULL;
@@ -305,14 +293,14 @@ static void _agent_proc_connect(slurm_fd_t fe_comm_socket,uint32_t fe_auth_key)
 	int i, offset = 0;
 
 	while (1) {
-		fe_comm_conn = slurm_accept_stream(fe_comm_socket, &be_addr);
+		fe_comm_conn = slurm_accept_msg_conn(fe_comm_socket, &be_addr);
 		if (fe_comm_conn != SLURM_SOCKET_ERROR) {
 			if (_validate_connect(fe_comm_conn, fe_auth_key))
 				be_connected = true;
 			break;
 		}
 		if (errno != EINTR) {
-			error("slurm_accept_stream: %m");
+			error("slurm_accept_msg_conn: %m");
 			break;
 		}
 	}
@@ -348,7 +336,7 @@ static void _agent_proc_connect(slurm_fd_t fe_comm_socket,uint32_t fe_auth_key)
 	}
 
 fini:	if (fe_comm_conn >= 0)
-		slurm_close_accepted_conn(fe_comm_conn);
+		close(fe_comm_conn);
 	if (buffer)
 		free_buf(buffer);
 }
@@ -358,7 +346,7 @@ static void *_agent_thread(void *arg)
 {
         agent_data_t *agent_data_ptr = (agent_data_t *) arg;
 	uint32_t   fe_auth_key    = agent_data_ptr->fe_auth_key;
-	slurm_fd_t fe_comm_socket = agent_data_ptr->fe_comm_socket;
+	int fe_comm_socket = agent_data_ptr->fe_comm_socket;
 	fd_set except_fds, read_fds;
 	struct timeval tv;
 	int i, n_fds;
@@ -408,11 +396,9 @@ static void _spawn_fe_agent(void)
 {
 	char hostname[256];
 	uint32_t   fe_auth_key = 0;
-	slurm_fd_t fe_comm_socket = -1;
+	int fe_comm_socket = -1;
 	slurm_addr_t comm_addr;
 	uint16_t comm_port;
-	pthread_attr_t agent_attr;
-	pthread_t agent_tid;
 	agent_data_t *agent_data_ptr;
 
 	/* Open socket for back-end program to communicate with */
@@ -437,15 +423,8 @@ static void _spawn_fe_agent(void)
 	agent_data_ptr = xmalloc(sizeof(agent_data_t));
 	agent_data_ptr->fe_auth_key = fe_auth_key;
 	agent_data_ptr->fe_comm_socket = fe_comm_socket;
-	slurm_attr_init(&agent_attr);
-	pthread_attr_setdetachstate(&agent_attr, PTHREAD_CREATE_DETACHED);
-	while ((pthread_create(&agent_tid, &agent_attr, &_agent_thread,
-			       (void *) agent_data_ptr))) {
-		if (errno != EAGAIN)
-			fatal("pthread_create(): %m");
-		sleep(1);
-	}
-	slurm_attr_destroy(&agent_attr);
+
+	slurm_thread_create_detached(NULL, _agent_thread, agent_data_ptr);
 }
 
 /*
@@ -496,7 +475,7 @@ srun_job_t * _read_job_srun_agent(void)
 	char *key_str  = getenv("SLURM_FE_KEY");
 	char *sock_str = getenv("SLURM_FE_SOCKET");
 	char buf[32], *host, *sep;
-	slurm_fd_t resp_socket;
+	int resp_socket;
 	uint16_t resp_port;
 	uint32_t resp_auth_key, buf_size;
 	srun_job_t *srun_job = NULL;
@@ -525,9 +504,9 @@ srun_job_t * _read_job_srun_agent(void)
 	resp_port = atoi(sep + 1);
 	slurm_set_addr(&resp_addr, resp_port, host);
 	xfree(host);
-	resp_socket = slurm_open_stream(&resp_addr);
+	resp_socket = slurm_open_stream(&resp_addr, true);
 	if (resp_socket < 0) {
-		error("slurm_open_msg_conn(%s): %m", sock_str);
+		error("slurm_open_stream(%s): %m", sock_str);
 		return NULL;
 	}
 
@@ -943,7 +922,7 @@ extern int pe_rm_connect(rmhandle_t resource_mgr,
 		job->ntasks = 1 + task_num;
 	} else if (pm_type == PM_POE) {
 		debug("got pe_rm_connect called");
-		launch_common_set_stdio_fds(job, &cio_fds);
+		launch_common_set_stdio_fds(job, &cio_fds, &opt);
 	} else {
 		*error_msg = malloc(sizeof(char) * err_msg_len);
 		snprintf(*error_msg, err_msg_len,
@@ -1001,12 +980,12 @@ extern int pe_rm_connect(rmhandle_t resource_mgr,
 	total_node_list = hostlist_ranged_string_xmalloc(total_hl);
 	node_cnt = hostlist_count(total_hl);
 
-	opt.argc = my_argc;
-	opt.argv = my_argv;
-	opt.user_managed_io = true;
+	sropt.argc = my_argc;
+	sropt.argv = my_argv;
+	sropt.user_managed_io = true;
 	/* Disable binding of the pvmd12 task so it has access to all resources
 	 * allocated to the job step and can use them for spawned tasks. */
-	opt.cpu_bind_type = CPU_BIND_NONE;
+	sropt.cpu_bind_type = CPU_BIND_NONE;
 	orig_task_num = task_num;
 	if (slurm_step_ctx_daemon_per_node_hack(job->step_ctx,
 						total_node_list,
@@ -1028,7 +1007,8 @@ extern int pe_rm_connect(rmhandle_t resource_mgr,
 	step_callbacks.step_signal   = _self_signal;
 	step_callbacks.step_timeout  = _self_timeout;
 
-	if (launch_g_step_launch(job, &cio_fds, &global_rc, &step_callbacks)) {
+	if (launch_g_step_launch(job, &cio_fds, &global_rc,
+				 &step_callbacks, &opt)) {
 		*error_msg = malloc(sizeof(char) * err_msg_len);
 		snprintf(*error_msg, err_msg_len,
 			 "pe_rm_connect: problem with launch: %s",
@@ -1064,7 +1044,7 @@ extern int pe_rm_connect(rmhandle_t resource_mgr,
 	   dangling reference set here.  This shouldn't matter, but
 	   Clang reported it so we are making things quite here.
 	*/
-	opt.argv = NULL;
+	sropt.argv = NULL;
 	return 0;
 }
 
@@ -1086,7 +1066,7 @@ extern void pe_rm_free(rmhandle_t *resource_mgr)
 		/* Since we can't relaunch the step here don't worry about the
 		   return code.
 		*/
-		launch_g_step_wait(job, got_alloc);
+		launch_g_step_wait(job, got_alloc, &opt);
 		/* We are at the end so don't worry about freeing the
 		   srun_job_t pointer */
 		fini_srun(job, got_alloc, &rc, slurm_started);
@@ -1285,9 +1265,9 @@ extern int pe_rm_get_job_info(rmhandle_t resource_mgr, job_info_t **job_info,
 		      "pe_rm_submit_job was called.  I am guessing "
 		      "PE_RM_BATCH is set somehow.  It things don't work well "
 		      "using this mode unset the env var and retry.");
-		create_srun_job(&job, &got_alloc, slurm_started, 0);
+		create_srun_job((void **)&job, &got_alloc, slurm_started, 0);
 		/* make sure we set up a signal handler */
-		pre_launch_srun_job(job, slurm_started, 0);
+		pre_launch_srun_job(job, slurm_started, 0, &opt);
 	}
 
 	*job_info = ret_info;
@@ -1317,11 +1297,11 @@ extern int pe_rm_get_job_info(rmhandle_t resource_mgr, job_info_t **job_info,
 			*token = strtok_r(network_str, ",", &save_ptr);
 		while (token) {
 			/* network options */
-			if (!strcasecmp(token, "ip")   ||
-			    !strcasecmp(token, "ipv4")  ||
-			    !strcasecmp(token, "ipv6")) {
+			if (!xstrcasecmp(token, "ip")   ||
+			    !xstrcasecmp(token, "ipv4")  ||
+			    !xstrcasecmp(token, "ipv6")) {
 				mode = "IP";
-			} else if (!strcasecmp(token, "us")) {
+			} else if (!xstrcasecmp(token, "us")) {
 				mode = "US";
 			}
 			/* Currently ignoring all other options */
@@ -1423,7 +1403,7 @@ extern int pe_rm_get_job_info(rmhandle_t resource_mgr, job_info_t **job_info,
 		setenv("SLURM_JOB_NODELIST", job->nodelist, 1);
 	}
 
-	if (!opt.preserve_env) {
+	if (!sropt.preserve_env) {
 		snprintf(value, sizeof(value), "%u", job->ntasks);
 		setenv("SLURM_NTASKS", value, 1);
 		snprintf(value, sizeof(value), "%u", job->nhosts);
@@ -1590,37 +1570,37 @@ extern int pe_rm_init(int *rmapi_version, rmhandle_t *resource_mgr, char *rm_id,
 			while (tok) {
 				if ((tok_inx == 1) && !myargv[1]) {
 					myargv[1] = xstrdup(tok);
-				} else if (!strcmp(tok, "-adapter_use")) {
+				} else if (!xstrcmp(tok, "-adapter_use")) {
 					tok = strtok_r(NULL, " ", &save_ptr);
 					if (!tok)
 						break;
 					adapter_use = xstrdup(tok);
-				} else if (!strcmp(tok, "-collective_groups")){
+				} else if (!xstrcmp(tok, "-collective_groups")){
 					tok = strtok_r(NULL, " ", &save_ptr);
 					if (!tok)
 						break;
 					collectives = xstrdup(tok);
-				} else if (!strcmp(tok, "-euidevice")) {
+				} else if (!xstrcmp(tok, "-euidevice")) {
 					tok = strtok_r(NULL, " ", &save_ptr);
 					if (!tok)
 						break;
 					euidevice = xstrdup(tok);
-				} else if (!strcmp(tok, "-euilib")) {
+				} else if (!xstrcmp(tok, "-euilib")) {
 					tok = strtok_r(NULL, " ", &save_ptr);
 					if (!tok)
 						break;
 					euilib = xstrdup(tok);
-				} else if (!strcmp(tok, "-imm_send_buffers")) {
+				} else if (!xstrcmp(tok, "-imm_send_buffers")) {
 					tok = strtok_r(NULL, " ", &save_ptr);
 					if (!tok)
 						break;
 					immediate = xstrdup(tok);
-				} else if (!strcmp(tok, "-instances")) {
+				} else if (!xstrcmp(tok, "-instances")) {
 					tok = strtok_r(NULL, " ", &save_ptr);
 					if (!tok)
 						break;
 					instances = xstrdup(tok);
-				} else if (!strcmp(tok, "-use_bulk_xfer")) {
+				} else if (!xstrcmp(tok, "-use_bulk_xfer")) {
 					tok = strtok_r(NULL, " ", &save_ptr);
 					if (!tok)
 						break;
@@ -1670,8 +1650,8 @@ extern int pe_rm_init(int *rmapi_version, rmhandle_t *resource_mgr, char *rm_id,
 			}
 			xfree(opt.network);
 			if (adapter_use) {
-				if (!strcmp(adapter_use, "dedicated"))
-					opt.exclusive = true;
+				if (!xstrcmp(adapter_use, "dedicated"))
+					sropt.exclusive = true;
 				xfree(adapter_use);
 			}
 			if (collectives) {
@@ -1703,7 +1683,7 @@ extern int pe_rm_init(int *rmapi_version, rmhandle_t *resource_mgr, char *rm_id,
 				xstrcat(opt.network, "instances=");
 				xstrcat(opt.network, instances);
 			}
-			if (bulk_xfer && !strcmp(bulk_xfer, "yes")) {
+			if (bulk_xfer && !xstrcmp(bulk_xfer, "yes")) {
 				if (opt.network)
 					xstrcat(opt.network, ",");
 				xstrcat(opt.network, "bulk_xfer");
@@ -1728,14 +1708,14 @@ extern int pe_rm_init(int *rmapi_version, rmhandle_t *resource_mgr, char *rm_id,
 	/* This has to be done after init_srun so as to not get over
 	   written. */
 	if (getenv("SLURM_PRESERVE_ENV"))
-		opt.preserve_env = true;
+		sropt.preserve_env = true;
 	if ((tmp_char = getenv("SRUN_EXC_NODES")))
 		opt.exc_nodes = xstrdup(tmp_char);
 	if ((tmp_char = getenv("SRUN_WITH_NODES")))
 		opt.nodelist = xstrdup(tmp_char);
 	if ((tmp_char = getenv("SRUN_RELATIVE"))) {
-		opt.relative = atoi(tmp_char);
-		opt.relative_set = 1;
+		sropt.relative = atoi(tmp_char);
+		sropt.relative_set = 1;
 	}
 
 	if (pm_type == PM_PMD) {
@@ -1766,8 +1746,8 @@ extern int pe_rm_init(int *rmapi_version, rmhandle_t *resource_mgr, char *rm_id,
 		job->jobid = job_id;
 		job->stepid = step_id;
 
-		opt.ifname = opt.ofname = opt.efname = "/dev/null";
-		job_update_io_fnames(job);
+		sropt.ifname = sropt.ofname = sropt.efname = "/dev/null";
+		job_update_io_fnames(job, &opt);
 	} else if (pm_type == PM_POE) {
 		/* Create agent thread to forward job credential needed for
 		 * PMD to fanout child processes on other nodes */
@@ -1915,7 +1895,8 @@ int pe_rm_submit_job(rmhandle_t resource_mgr, job_command_t job_cmd,
 		 * So we need to set up the arbitrary distribution of it. */
 		int hostfile_count = 0;
 		char **names = pe_job_req->host_names;
-		opt.distribution = SLURM_DIST_ARBITRARY;
+		opt.distribution &= SLURM_DIST_STATE_FLAGS;
+		opt.distribution |= SLURM_DIST_ARBITRARY;
 		while (names && *names) {
 			if (opt.nodelist)
 				xstrfmtcat(opt.nodelist, ",%s",
@@ -1940,12 +1921,12 @@ int pe_rm_submit_job(rmhandle_t resource_mgr, job_command_t job_cmd,
 		opt.ntasks = pe_job_req->total_tasks;
 	}
 
-	create_srun_job(&job, &got_alloc, slurm_started, 0);
+	create_srun_job((void **)&job, &got_alloc, slurm_started, 0);
 	_re_write_cmdfile(slurm_cmd_fname, poe_cmd_fname, job->stepid,
 			  pe_job_req->total_tasks);
 
 	/* make sure we set up a signal handler */
-	pre_launch_srun_job(job, slurm_started, 0);
+	pre_launch_srun_job(job, slurm_started, 0, &opt);
 
 	return 0;
 }

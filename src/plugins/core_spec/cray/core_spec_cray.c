@@ -1,11 +1,11 @@
 /*****************************************************************************\
  *  core_spec_cray.c - Cray core specialization plugin.
  *****************************************************************************
- *  Copyright (C) 2014 SchedMD LLC
+ *  Copyright (C) 2014-2015 SchedMD LLC
  *  Written by Morris Jette <jette@schemd.com>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -34,38 +34,25 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#if HAVE_CONFIG_H
-#  include "config.h"
-#  if STDC_HEADERS
-#    include <string.h>
-#  endif
-#  if HAVE_SYS_TYPES_H
-#    include <sys/types.h>
-#  endif /* HAVE_SYS_TYPES_H */
-#  if HAVE_UNISTD_H
-#    include <unistd.h>
-#  endif
-#  if HAVE_INTTYPES_H
-#    include <inttypes.h>
-#  else /* ! HAVE_INTTYPES_H */
-#    if HAVE_STDINT_H
-#      include <stdint.h>
-#    endif
-#  endif /* HAVE_INTTYPES_H */
-#else /* ! HAVE_CONFIG_H */
-#  include <sys/types.h>
-#  include <unistd.h>
-#  include <stdint.h>
-#  include <string.h>
-#endif /* HAVE_CONFIG_H */
+#include "config.h"
 
+#include <inttypes.h>
 #include <stdio.h>
+#include <string.h>
+#include <sys/types.h>
+#include <unistd.h>
 
+#include "slurm/slurm.h"
 #include "slurm/slurm_errno.h"
 #include "src/common/slurm_xlator.h"
 
 /* Set _DEBUG to 1 for detailed module debugging, 0 otherwise */
 #define _DEBUG 0
+
+#ifdef HAVE_NATIVE_CRAY
+#include <stdlib.h>
+#include <job.h>
+#endif
 
 /*
  * These variables are required by the generic plugin interface.  If they
@@ -89,16 +76,21 @@
  * only load authentication plugins if the plugin_type string has a prefix
  * of "auth/".
  *
- * plugin_version   - specifies the version number of the plugin.
- * min_plug_version - specifies the minumum version number of incoming
- *                    messages that this plugin can accept
+ * plugin_version - an unsigned 32-bit integer containing the Slurm version
+ * (major.minor.micro combined into a single number).
  */
 const char plugin_name[]       	= "Cray core specialization plugin";
 const char plugin_type[]       	= "core_spec/cray";
-const uint32_t plugin_version   = 100;
+const uint32_t plugin_version   = SLURM_VERSION_NUMBER;
+static uint64_t debug_flags = 0;
+
+// If job_set_corespec fails, retry this many times to wait
+// for suspends to complete.
+#define CORE_SPEC_RETRIES 5
 
 extern int init(void)
 {
+	debug_flags = slurm_get_debug_flags();
 	info("%s: init", plugin_type);
 	return SLURM_SUCCESS;
 }
@@ -116,9 +108,99 @@ extern int fini(void)
  */
 extern int core_spec_p_set(uint64_t cont_id, uint16_t core_count)
 {
+	DEF_TIMERS;
+	START_TIMER;
 #if _DEBUG
-	info("core_spec_p_set(%"PRIu64") to %u", cont_id, core_count);
+	char *spec_type;
+	int spec_count;
+	if (core_count == NO_VAL16) {
+		spec_type  = "Cores";
+		spec_count = 0;
+	} else if (core_count & CORE_SPEC_THREAD) {
+		spec_type  = "Threads";
+		spec_count = core_count & (~CORE_SPEC_THREAD);
+	} else {
+		spec_type  = "Cores";
+		spec_count = core_count;
+	}
+	info("core_spec_p_set(%"PRIu64") to %d %s",
+	     cont_id, spec_count, spec_type);
 #endif
+
+#ifdef HAVE_NATIVE_CRAY
+	int rc;
+	struct job_set_affinity_info affinity_info;
+	pid_t pid;
+	int i;
+
+	// Skip core spec setup for no specialized cores
+	if ((core_count == NO_VAL16) ||
+	    (core_count == CORE_SPEC_THREAD)) {
+		return SLURM_SUCCESS;
+	}
+	core_count &= (~CORE_SPEC_THREAD);
+
+	// Set the core spec information
+	// Retry because there's a small timing window during preemption
+	// when two core spec jobs can be running at once.
+	for (i = 0; i < CORE_SPEC_RETRIES; i++) {
+		if (i) {
+			sleep(1);
+		}
+
+		errno = 0;
+		rc = job_set_corespec(cont_id, core_count, NULL);
+		if (rc == 0 || errno != EINVAL) {
+			break;
+		}
+	}
+	if (rc != 0) {
+		debug("job_set_corespec(%"PRIu64", %"PRIu16") failed: %m",
+		      cont_id, core_count);
+		return SLURM_ERROR;
+	}
+
+	pid = getpid();
+
+	// Slurm detaches the slurmstepd from the job, so we temporarily
+	// reattach so the job_set_affinity doesn't mess up one of the
+	// task's affinity settings
+	if (job_attachpid(pid, cont_id) == (jid_t)-1) {
+		error("job_attachpid(%zu, %"PRIu64") failed: %m",
+		      (size_t)pid, cont_id);
+		return SLURM_ERROR;
+	}
+
+	// Apply the core specialization with job_set_affinity
+	// Use NONE for the cpu list because Slurm handles its
+	// own task->cpu binding
+	memset(&affinity_info, 0, sizeof(struct job_set_affinity_info));
+	affinity_info.cpu_list = JOB_AFFINITY_NONE;
+	rc = job_set_affinity(cont_id, pid, &affinity_info);
+	if (rc != 0) {
+		if (affinity_info.message != NULL) {
+			error("job_set_affinity(%"PRIu64", %zu) failed %s: %m",
+			      cont_id, (size_t)pid, affinity_info.message);
+			free(affinity_info.message);
+		} else {
+			error("job_set_affinity(%"PRIu64", %zu) failed: %m",
+			      cont_id, (size_t)pid);
+		}
+		job_detachpid(pid);
+		return SLURM_ERROR;
+	} else if (affinity_info.message != NULL) {
+		info("job_set_affinity(%"PRIu64", %zu): %s",
+		     cont_id, (size_t)pid, affinity_info.message);
+		free(affinity_info.message);
+	}
+	job_detachpid(pid);
+#endif
+	END_TIMER;
+	if (debug_flags & DEBUG_FLAG_TIME_CRAY)
+		INFO_LINE("call took: %s", TIME_STR);
+
+	// The code that was here is now performed by
+	// switch_p_job_step_{pre,post}_suspend()
 	return SLURM_SUCCESS;
 }
 
@@ -132,6 +214,8 @@ extern int core_spec_p_clear(uint64_t cont_id)
 #if _DEBUG
 	info("core_spec_p_clear(%"PRIu64")", cont_id);
 #endif
+	// Core specialization is automatically cleared when
+	// the job exits.
 	return SLURM_SUCCESS;
 }
 
@@ -140,11 +224,26 @@ extern int core_spec_p_clear(uint64_t cont_id)
  *
  * Return SLURM_SUCCESS on success
  */
-extern int core_spec_p_suspend(uint64_t cont_id)
+extern int core_spec_p_suspend(uint64_t cont_id, uint16_t core_count)
 {
 #if _DEBUG
-	info("core_spec_p_suspend(%"PRIu64")", cont_id);
+	char *spec_type;
+	int spec_count;
+	if (core_count == NO_VAL16) {
+		spec_type  = "Cores";
+		spec_count = 0;
+	} else if (core_count & CORE_SPEC_THREAD) {
+		spec_type  = "Threads";
+		spec_count = core_count & (~CORE_SPEC_THREAD);
+	} else {
+		spec_type  = "Cores";
+		spec_count = core_count;
+	}
+	info("core_spec_p_suspend(%"PRIu64") count %d %s",
+	     cont_id, spec_count, spec_type);
 #endif
+	// The code that was here is now performed by
+	// switch_p_job_step_{pre,post}_suspend()
 	return SLURM_SUCCESS;
 }
 
@@ -153,10 +252,25 @@ extern int core_spec_p_suspend(uint64_t cont_id)
  *
  * Return SLURM_SUCCESS on success
  */
-extern int core_spec_p_resume(uint64_t cont_id)
+extern int core_spec_p_resume(uint64_t cont_id, uint16_t core_count)
 {
 #if _DEBUG
-	info("core_spec_p_resume(%"PRIu64")", cont_id);
+	char *spec_type;
+	int spec_count;
+	if (core_count == NO_VAL16) {
+		spec_type  = "Cores";
+		spec_count = 0;
+	} else if (core_count & CORE_SPEC_THREAD) {
+		spec_type  = "Threads";
+		spec_count = core_count & (~CORE_SPEC_THREAD);
+	} else {
+		spec_type  = "Cores";
+		spec_count = core_count;
+	}
+	info("core_spec_p_resume(%"PRIu64") count %d %s",
+	     cont_id, spec_count, spec_type);
 #endif
+	// The code that was here is now performed by
+	// switch_p_job_step_{pre,post}_resume()
 	return SLURM_SUCCESS;
 }

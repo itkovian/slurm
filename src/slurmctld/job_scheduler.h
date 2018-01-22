@@ -10,7 +10,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -45,6 +45,7 @@
 #include "src/slurmctld/slurmctld.h"
 
 typedef struct job_queue_rec {
+	uint32_t array_task_id;		/* Job array, task ID */
 	uint32_t job_id;		/* Job ID */
 	struct job_record *job_ptr;	/* Pointer to job record */
 	struct part_record *part_ptr;	/* Pointer to partition record. Each
@@ -72,23 +73,34 @@ extern List build_job_queue(bool clear_start, bool backfill);
 /* Given a scheduled job, return a pointer to it batch_job_launch_msg_t data */
 extern batch_job_launch_msg_t *build_launch_job_msg(
 					struct job_record *job_ptr,
-					uint16_t protocol_versin);
+					uint16_t protocol_version);
+
+/* Determine if job's deadline specification is still valid, kill job if not
+ * job_ptr IN - Job to test
+ * func IN - function named used for logging, "sched" or "backfill"
+ * RET - true of valid, false if invalid and job cancelled
+ */
+extern bool deadline_ok(struct job_record *job_ptr, char *func);
+
 /*
  * epilog_slurmctld - execute the prolog_slurmctld for a job that has just
  *	terminated.
  * IN job_ptr - pointer to job that has been terminated
- * RET SLURM_SUCCESS(0) or error code
  */
-extern int epilog_slurmctld(struct job_record *job_ptr);
+extern void epilog_slurmctld(struct job_record *job_ptr);
 
 /*
  * job_is_completing - Determine if jobs are in the process of completing.
+ * IN/OUT  eff_cg_bitmap - optional bitmap of all relevent completing nodes,
+ *                         relevenace determined by filtering via CompleteWait
+ *                         if NULL, function will terminate at first completing
+ *                         job
  * RET - True of any job is in the process of completing AND
  *	 CompleteWait is configured non-zero
  * NOTE: This function can reduce resource fragmentation, which is a
  * critical issue on Elan interconnect based systems.
  */
-extern bool job_is_completing(void);
+extern bool job_is_completing(bitstr_t *eff_cg_bitmap);
 
 /* Determine if a pending job will run using only the specified nodes
  * (in job_desc_msg->req_nodes), build response message and return
@@ -114,16 +126,39 @@ extern int make_batch_job_cred(batch_job_launch_msg_t *launch_msg_ptr,
 			       struct job_record *job_ptr,
 			       uint16_t protocol_version);
 
+/* Determine which nodes must be rebooted for a job
+ * IN job_ptr - pointer to job that will be initiated
+ * RET bitmap of nodes requiring a reboot
+ */
+extern bitstr_t *node_features_reboot(struct job_record *job_ptr);
+
+/* Determine if node boot required for this job
+ * IN job_ptr - pointer to job that will be initiated
+ * IN node_bitmap - nodes to be allocated
+ * RET - true if reboot required
+ */
+extern bool node_features_reboot_test(struct job_record *job_ptr,
+				      bitstr_t *node_bitmap);
+
 /* Print a job's dependency information based upon job_ptr->depend_list */
 extern void print_job_dependency(struct job_record *job_ptr);
+
+/* Decrement a job's prolog_running counter and launch the job if zero */
+extern void prolog_running_decr(struct job_record *job_ptr);
 
 /*
  * prolog_slurmctld - execute the prolog_slurmctld for a job that has just
  *	been allocated resources.
  * IN job_ptr - pointer to job that will be initiated
+ */
+extern void prolog_slurmctld(struct job_record *job_ptr);
+
+/*
+ * reboot_job_nodes - Reboot the compute nodes allocated to a job.
+ * IN job_ptr - pointer to job that will be initiated
  * RET SLURM_SUCCESS(0) or error code
  */
-extern int prolog_slurmctld(struct job_record *job_ptr);
+extern int reboot_job_nodes(struct job_record *job_ptr);
 
 /* If a job can run in multiple partitions, make sure that the one 
  * actually used is first in the string. Needed for job state save/restore */
@@ -135,9 +170,10 @@ extern void rebuild_job_part_list(struct job_record *job_ptr);
  * message type, alternately send a return code fo SLURM_SUCCESS
  * msg IN - The original message from slurmd
  * fini_job_ptr IN - Pointer to job that just completed and needs replacement
+ * locked IN - whether the job_write lock is locked or not.
  * RET true if there are pending jobs that might use the resources
  */
-extern bool replace_batch_job(slurm_msg_t * msg, void *fini_job);
+extern bool replace_batch_job(slurm_msg_t * msg, void *fini_job, bool locked);
 
 /*
  * schedule - attempt to schedule all pending jobs
@@ -147,6 +183,9 @@ extern bool replace_batch_job(slurm_msg_t * msg, void *fini_job);
  *		  queue on every job submit (0 means to use the system default,
  *		  SchedulerParameters for default_queue_depth)
  * RET count of jobs scheduled
+ * Note: If the scheduler has executed recently, rather than executing again
+ *	right away, a thread will be spawned to execute later in an effort
+ *	to reduce system overhead.
  * Note: We re-build the queue every time. Jobs can not only be added
  *	or removed from the queue, but have their priority or partition
  *	changed with the update_job RPC. In general nodes will be in priority

@@ -7,7 +7,7 @@
  *  Written by Danny Auble <da@llnl.gov>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -40,10 +40,6 @@
 #define _BG_STRUCTS_H_
 
 #include "bg_enums.h"
-
-#if HAVE_CONFIG_H
-#  include "config.h"
-#endif
 
 #include "slurm.h"
 #include "src/common/list.h"
@@ -78,7 +74,7 @@ typedef struct {
 	uint16_t quarter_ionode_cnt;
 	List ramdisk_list;
 	bitstr_t *reboot_qos_bitmap;
-	uint32_t slurm_debug_flags;
+	uint64_t slurm_debug_flags;
 	uint32_t slurm_debug_level;
 	char *slurm_node_prefix;
 	char *slurm_user_name;

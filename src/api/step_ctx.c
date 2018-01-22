@@ -8,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -37,22 +37,18 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#ifdef HAVE_CONFIG_H
-#  include "config.h"
-#endif
-
 #include <errno.h>
+#include <netinet/in.h>
 #include <poll.h>
 #include <pthread.h>
 #include <stdarg.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-#include <unistd.h>
-#include <netinet/in.h>
 #include <sys/param.h>
 #include <sys/socket.h>
 #include <sys/types.h>
+#include <unistd.h>
 
 #include "slurm/slurm.h"
 
@@ -63,10 +59,11 @@
 #include "src/common/slurm_cred.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/slurm_protocol_defs.h"
+#include "src/common/timers.h"
+#include "src/common/switch.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xsignal.h"
 #include "src/common/xstring.h"
-#include "src/common/switch.h"
 #include "src/api/step_ctx.h"
 
 int step_signals[] = {
@@ -80,7 +77,7 @@ static void _signal_while_allocating(int signo)
 	if (signo == SIGCONT)
 		return;
 
-	destroy_step = 1;
+	destroy_step = signo;
 }
 
 static void
@@ -89,6 +86,7 @@ _job_fake_cred(struct slurm_step_ctx_struct *ctx)
 	slurm_cred_arg_t arg;
 	uint32_t node_cnt = ctx->step_resp->step_layout->node_cnt;
 
+	memset(&arg, 0, sizeof(slurm_cred_arg_t));
 	arg.jobid          = ctx->job_id;
 	arg.stepid         = ctx->step_resp->job_step_id;
 	arg.uid            = ctx->user_id;
@@ -100,6 +98,8 @@ _job_fake_cred(struct slurm_step_ctx_struct *ctx)
 	arg.step_hostlist  = ctx->step_req->node_list;
 	arg.step_mem_limit = 0;
 
+	arg.job_gres_list     = NULL;
+	arg.job_constraints   = NULL;
 	arg.job_core_bitmap   = bit_alloc(node_cnt);
 	bit_nset(arg.job_core_bitmap,  0, node_cnt-1);
 	arg.step_core_bitmap  = bit_alloc(node_cnt);
@@ -121,11 +121,14 @@ static job_step_create_request_msg_t *_create_step_request(
 	job_step_create_request_msg_t *step_req =
 		xmalloc(sizeof(job_step_create_request_msg_t));
 	step_req->job_id = step_params->job_id;
+	step_req->step_id = step_params->step_id;
 	step_req->user_id = (uint32_t)step_params->uid;
 	step_req->min_nodes = step_params->min_nodes;
 	step_req->max_nodes = step_params->max_nodes;
 	step_req->cpu_count = step_params->cpu_count;
-	step_req->cpu_freq  = step_params->cpu_freq;
+	step_req->cpu_freq_min = step_params->cpu_freq_min;
+	step_req->cpu_freq_max = step_params->cpu_freq_max;
+	step_req->cpu_freq_gov = step_params->cpu_freq_gov;
 	step_req->num_tasks = step_params->task_count;
 	step_req->relative = step_params->relative;
 	step_req->resv_port_cnt = step_params->resv_port_cnt;
@@ -143,6 +146,7 @@ static job_step_create_request_msg_t *_create_step_request(
 	step_req->no_kill = step_params->no_kill;
 	step_req->overcommit = step_params->overcommit ? 1 : 0;
 	step_req->pn_min_memory = step_params->pn_min_memory;
+	step_req->srun_pid = (uint32_t) getpid();
 	step_req->time_limit = step_params->time_limit;
 
 	return step_req;
@@ -161,13 +165,14 @@ slurm_step_ctx_create (const slurm_step_ctx_params_t *step_params)
 	job_step_create_request_msg_t *step_req = NULL;
 	job_step_create_response_msg_t *step_resp = NULL;
 	int sock = -1;
-	short port = 0;
+	uint16_t port = 0;
 	int errnum = 0;
 
 	/* First copy the user's step_params into a step request struct */
 	step_req = _create_step_request(step_params);
 
-	/* We will handle the messages in the step_launch.c mesage handler,
+	/*
+	 * We will handle the messages in the step_launch.c mesage handler,
 	 * but we need to open the socket right now so we can tell the
 	 * controller which port to use.
 	 */
@@ -218,40 +223,56 @@ slurm_step_ctx_create_timeout (const slurm_step_ctx_params_t *step_params,
 	struct slurm_step_ctx_struct *ctx = NULL;
 	job_step_create_request_msg_t *step_req = NULL;
 	job_step_create_response_msg_t *step_resp = NULL;
-	int i, rc, time_left = timeout;
+	int i, rc, time_left;
 	int sock = -1;
-	short port = 0;
+	uint16_t port = 0;
 	int errnum = 0;
+	int cc;
+	uint16_t *ports;
+	struct pollfd fds;
+	long elapsed_time;
+	DEF_TIMERS;
 
-	/* First copy the user's step_params into a step request struct */
-	step_req = _create_step_request(step_params);
-
-	/* We will handle the messages in the step_launch.c mesage handler,
+	/*
+	 * We will handle the messages in the step_launch.c mesage handler,
 	 * but we need to open the socket right now so we can tell the
 	 * controller which port to use.
 	 */
-	if (net_stream_listen(&sock, &port) < 0) {
-		errnum = errno;
+	if ((ports = slurm_get_srun_port_range()))
+		cc = net_stream_listen_ports(&sock, &port, ports, false);
+	else
+		cc = net_stream_listen(&sock, &port);
+	if (cc < 0) {
 		error("unable to initialize step context socket: %m");
-		slurm_free_job_step_create_request_msg(step_req);
-		goto fail;
+		return (slurm_step_ctx_t *) NULL;
 	}
+
+	step_req = _create_step_request(step_params);
 	step_req->port = port;
 	step_req->host = xshort_hostname();
 
 	rc = slurm_job_step_create(step_req, &step_resp);
 	if ((rc < 0) &&
 	    ((errno == ESLURM_NODES_BUSY) ||
+	     (errno == ESLURM_POWER_NOT_AVAIL) ||
+	     (errno == ESLURM_POWER_RESERVED) ||
 	     (errno == ESLURM_PORTS_BUSY) ||
 	     (errno == ESLURM_INTERCONNECT_BUSY))) {
-		struct pollfd fds;
+		START_TIMER;
+		errnum = errno;
 		fds.fd = sock;
 		fds.events = POLLIN;
 		xsignal_unblock(step_signals);
 		for (i = 0; step_signals[i]; i++)
 			xsignal(step_signals[i], _signal_while_allocating);
-		while ((rc = poll(&fds, 1, time_left)) <= 0) {
-			if (destroy_step)
+		while (1) {
+			END_TIMER;
+			elapsed_time = DELTA_TIMER / 1000;
+			if (elapsed_time >= timeout)
+				break;
+			time_left = timeout - elapsed_time;
+			i = poll(&fds, 1, time_left);
+			if ((i >= 0) || destroy_step)
 				break;
 			if ((errno == EINTR) || (errno == EAGAIN))
 				continue;
@@ -259,33 +280,30 @@ slurm_step_ctx_create_timeout (const slurm_step_ctx_params_t *step_params,
 		}
 		xsignal_block(step_signals);
 		if (destroy_step) {
-			info("Cancelled pending job step");
-			errno = ESLURM_ALREADY_DONE;
-		} else
-			rc = slurm_job_step_create(step_req, &step_resp);
-	}
-
-	if ((rc < 0) || (step_resp == NULL)) {
-		errnum = errno;
+			info("Cancelled pending job step with signal %d",
+			     destroy_step);
+			errnum = ESLURM_ALREADY_DONE;
+		}
 		slurm_free_job_step_create_request_msg(step_req);
 		close(sock);
-		goto fail;
+		errno = errnum;
+	} else if ((rc < 0) || (step_resp == NULL)) {
+		slurm_free_job_step_create_request_msg(step_req);
+		close(sock);
+	} else {
+		ctx = xmalloc(sizeof(struct slurm_step_ctx_struct));
+		ctx->launch_state = NULL;
+		ctx->magic	= STEP_CTX_MAGIC;
+		ctx->job_id	= step_req->job_id;
+		ctx->user_id	= step_req->user_id;
+		ctx->step_req   = step_req;
+		ctx->step_resp	= step_resp;
+		ctx->verbose_level = step_params->verbose_level;
+		ctx->launch_state = step_launch_state_create(ctx);
+		ctx->launch_state->slurmctld_socket_fd = sock;
 	}
 
-	ctx = xmalloc(sizeof(struct slurm_step_ctx_struct));
-	ctx->launch_state = NULL;
-	ctx->magic	= STEP_CTX_MAGIC;
-	ctx->job_id	= step_req->job_id;
-	ctx->user_id	= step_req->user_id;
-	ctx->step_req   = step_req;
-	ctx->step_resp	= step_resp;
-	ctx->verbose_level = step_params->verbose_level;
-
-	ctx->launch_state = step_launch_state_create(ctx);
-	ctx->launch_state->slurmctld_socket_fd = sock;
-fail:
-	errno = errnum;
-	return (slurm_step_ctx_t *)ctx;
+	return (slurm_step_ctx_t *) ctx;
 }
 
 /*
@@ -304,7 +322,7 @@ slurm_step_ctx_create_no_alloc (const slurm_step_ctx_params_t *step_params,
 	job_step_create_request_msg_t *step_req = NULL;
 	job_step_create_response_msg_t *step_resp = NULL;
 	int sock = -1;
-	short port = 0;
+	uint16_t port = 0;
 	int errnum = 0;
 
 	/* First copy the user's step_params into a step request struct */
@@ -379,10 +397,11 @@ slurm_step_ctx_get (slurm_step_ctx_t *ctx, int ctx_key, ...)
 	uint16_t **uint16_array_pptr = (uint16_t **) NULL;
 	uint32_t *uint32_ptr;
 	uint32_t **uint32_array_pptr = (uint32_t **) NULL;
+	uint32_t ***uint32_array_ppptr = (uint32_t ***) NULL;
 	char **char_array_pptr = (char **) NULL;
 	job_step_create_response_msg_t ** step_resp_pptr;
 	slurm_cred_t  **cred;     /* Slurm job credential    */
-	switch_jobinfo_t **switch_job;
+	dynamic_plugin_data_t **switch_job;
 	int *int_ptr;
 	int **int_array_pptr = (int **) NULL;
 
@@ -417,6 +436,10 @@ slurm_step_ctx_get (slurm_step_ctx_t *ctx, int ctx_key, ...)
 		*uint32_array_pptr =
 			ctx->step_resp->step_layout->tids[node_inx];
 		break;
+	case SLURM_STEP_CTX_TIDS:
+		uint32_array_ppptr = (uint32_t ***) va_arg(ap, void *);
+		*uint32_array_ppptr = ctx->step_resp->step_layout->tids;
+		break;
 
 	case SLURM_STEP_CTX_RESP:
 		step_resp_pptr = (job_step_create_response_msg_t **)
@@ -428,7 +451,7 @@ slurm_step_ctx_get (slurm_step_ctx_t *ctx, int ctx_key, ...)
 		*cred = ctx->step_resp->cred;
 		break;
 	case SLURM_STEP_CTX_SWITCH_JOB:
-		switch_job = (switch_jobinfo_t **) va_arg(ap, void *);
+		switch_job = (dynamic_plugin_data_t **) va_arg(ap, void *);
 		*switch_job = ctx->step_resp->switch_job;
 		break;
 	case SLURM_STEP_CTX_NUM_HOSTS:
@@ -445,6 +468,11 @@ slurm_step_ctx_get (slurm_step_ctx_t *ctx, int ctx_key, ...)
 		char_array_pptr = (char **) va_arg(ap, void *);
 		*char_array_pptr = nodelist_nth_host(
 			ctx->step_resp->step_layout->node_list, node_inx);
+		break;
+	case SLURM_STEP_CTX_NODE_LIST:
+		char_array_pptr = (char **) va_arg(ap, void *);
+		*char_array_pptr =
+			xstrdup(ctx->step_resp->step_layout->node_list);
 		break;
 	case SLURM_STEP_CTX_USER_MANAGED_SOCKETS:
 		int_ptr = va_arg(ap, int *);
@@ -478,7 +506,7 @@ slurm_step_ctx_get (slurm_step_ctx_t *ctx, int ctx_key, ...)
  * RET SLURM_SUCCESS or SLURM_ERROR (with slurm_errno set)
  */
 extern int
-slurm_jobinfo_ctx_get(switch_jobinfo_t *jobinfo, int data_type, void *data)
+slurm_jobinfo_ctx_get(dynamic_plugin_data_t *jobinfo, int data_type, void *data)
 {
 	if (jobinfo == NULL) {
 		slurm_seterrno(EINVAL);
@@ -590,10 +618,11 @@ extern void slurm_step_ctx_params_t_init (slurm_step_ctx_params_t *ptr)
 	memset(ptr, 0, sizeof(slurm_step_ctx_params_t));
 
 	/* now set anything that shouldn't be 0 or NULL by default */
-	ptr->relative = (uint16_t)NO_VAL;
+	ptr->relative = NO_VAL16;
 	ptr->task_dist = SLURM_DIST_CYCLIC;
-	ptr->plane_size = (uint16_t)NO_VAL;
-	ptr->resv_port_cnt = (uint16_t)NO_VAL;
+	ptr->plane_size = NO_VAL16;
+	ptr->resv_port_cnt = NO_VAL16;
+	ptr->step_id = NO_VAL;
 
 	ptr->uid = getuid();
 
@@ -603,7 +632,7 @@ extern void slurm_step_ctx_params_t_init (slurm_step_ctx_params_t *ptr)
 		/* handle old style env variable for backwards compatibility */
 		ptr->job_id = (uint32_t)atol(jobid_str);
 	} else {
-		ptr->job_id = (uint32_t)NO_VAL;
+		ptr->job_id = NO_VAL;
 	}
 }
 

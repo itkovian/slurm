@@ -7,7 +7,7 @@
  *  Written by Danny Auble <da@llnl.gov>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -46,7 +46,7 @@ extern int bridge_handle_database_errors(
 
 	switch (err) {
 	case bgsched::DatabaseErrors::DatabaseError:
-		error("%s: Can't access to the database!", function);
+		error("%s: Can't access the database!", function);
 		break;
 	case bgsched::DatabaseErrors::OperationFailed:
 		error("%s: Database option Failed!", function);

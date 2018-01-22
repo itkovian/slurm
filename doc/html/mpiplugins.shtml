@@ -1,35 +1,37 @@
 <!--#include virtual="header.txt"-->
 
-<h1><a name="top">SLURM MPI Plugin API</a></h1>
+<h1><a name="top">Slurm MPI Plugin API</a></h1>
 
 <h2> Overview</h2>
-<p> This document describes SLURM MPI selection plugins and the API that defines
+<p> This document describes Slurm MPI selection plugins and the API that defines
 them. It is intended as a resource to programmers wishing to write their own SLURM
-node selection plugins. This is version 0 of the API.</p>
+node selection plugins.</p>
 
-<p>SLURM mpi selection plugins are SLURM plugins that implement the which version of
-mpi is used during execution of the new SLURM job. API described herein. They are
-intended to provide a mechanism for both selecting mpi versions for pending jobs and
+<p>Slurm MPI selection plugins are Slurm plugins that implement the which version of
+mpi is used during execution of the new Slurm job. API described herein. They are
+intended to provide a mechanism for both selecting MPI versions for pending jobs and
 performing any mpi-specific tasks for job launch or termination. The plugins must
-conform to the SLURM Plugin API with the following specifications:</p>
+conform to the Slurm Plugin API with the following specifications:</p>
 <p><span class="commandline">const char plugin_type[]</span><br>
 The major type must be &quot;mpi.&quot; The minor type can be any recognizable
 abbreviation for the type of node selection algorithm. We recommend, for example:</p>
 <ul>
-<li><b>lam</b>&#151;For use with LAM MPI.</li>
-<li><b>mpich-gm</b>&#151;For use with MPICH-GM.</li>
-<li><b>mpich-mx</b>&#151;For use with MPICH-MX.</li>
-<li><b>mpich1_p4</b>&#151;For use with MPICH1 (P4 communications).</li>
-<li><b>mpich1_shmem</b>&#151;For use with MPICH1 (Shmem communications).</li>
-<li><b>mvapich</b>&#151;For use with MVAPICH.</li>
-<li><b>openmpi</b>&#151;For use with OpenMPI.</li>
-<li><b>pmi2</b>&#151;For use with MPI2 and MVAPICH2.</li>
-<li><b>none</b>&#151;For use with most other versions of MPI.</li>
+<li><b>openmpi</b> &mdash; For use with older versions of OpenMPI.</li>
+<li><b>pmi2</b> &mdash; For use with MPI2 and MVAPICH2.</li>
+<li><b>pmix</b> &mdash; Exascale PMI implementation (currently supported by OpenMPI starting from version 2.0)</li>
+<li><b>none</b> &mdash; For use with most other versions of MPI.</li>
 </ul>
-<p>The <span class="commandline">plugin_name</span> and
-<span class="commandline">plugin_version</span>
-symbols required by the SLURM Plugin API require no specialization for node selection support.
-Note carefully, however, the versioning discussion below.</p>
+<p><span class="commandline">const char plugin_name[]</span><br>
+Some descriptive name for the plugin.
+There is no requirement with respect to its format.</p>
+<p><span class="commandline">const uint32_t plugin_version</span><br>
+If specified, identifies the version of Slurm used to build this plugin and
+any attempt to load the plugin from a different version of Slurm will result
+in an error.
+If not specified, then the plugin may be loadeed by Slurm commands and
+daemons from any version, however this may result in difficult to diagnose
+failures due to changes in the arguments to plugin functions or changes
+in other Slurm functions used by the plugin.</p>
 
 <p>A simplified flow of logic follows:
 <br>
@@ -137,16 +139,6 @@ the plugin should return SLURM_ERROR, causing slurmctld to exit.</p>
 
 <p class="footer"><a href="#top">top</a></p>
 
-<h2>Versioning</h2>
-<p> This document describes version 0 of the SLURM node selection API. Future
-releases of SLURM may revise this API. A node selection plugin conveys its ability
-to implement a particular API version using the mechanism outlined for SLURM plugins.
-In addition, the credential is transmitted along with the version number of the
-plugin that transmitted it. It is at the discretion of the plugin author whether
-to maintain data format compatibility across different versions of the plugin.</p>
-
-<p class="footer"><a href="#top">top</a></p>
-
-<p style="text-align:center;">Last modified 8 May 2014</p>
+<p style="text-align:center;">Last modified 15 September 2017</p>
 
 <!--#include virtual="footer.txt"-->

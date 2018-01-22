@@ -3,14 +3,14 @@
  *****************************************************************************
  *  Copyright (C) 2002-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
- *  Portions Copyright (C) 2010-2011 SchedMD <http://www.schedmd.com>.
+ *  Portions Copyright (C) 2010-2017 SchedMD <https://www.schedmd.com>.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Joey Ekstrom <ekstrom1@llnl.gov>,
  *             Morris Jette <jette1@llnl.gov>, et. al.
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -53,7 +53,9 @@ static bool part_order;		/* order same as in part table */
 static void _get_sinfo_from_void(sinfo_data_t **s1, sinfo_data_t **s2,
 				 void *v1, void *v2);
 static int _sort_by_avail(void *void1, void *void2);
+static int _sort_by_cluster_name(void *void1, void *void2);
 static int _sort_by_cpu_load(void *void1, void *void2);
+static int _sort_by_free_mem(void *void1, void *void2);
 static int _sort_by_cpus(void *void1, void *void2);
 static int _sort_by_sct(void *void1, void *void2);
 static int _sort_by_sockets(void *void1, void *void2);
@@ -61,6 +63,7 @@ static int _sort_by_cores(void *void1, void *void2);
 static int _sort_by_threads(void *void1, void *void2);
 static int _sort_by_disk(void *void1, void *void2);
 static int _sort_by_features(void *void1, void *void2);
+static int _sort_by_features_act(void *void1, void *void2);
 static int _sort_by_groups(void *void1, void *void2);
 static int _sort_by_hostnames(void *void1, void *void2);
 static int _sort_by_job_size(void *void1, void *void2);
@@ -70,14 +73,15 @@ static int _sort_by_node_list(void *void1, void *void2);
 static int _sort_by_node_addr(void *void1, void *void2);
 static int _sort_by_nodes_ai(void *void1, void *void2);
 static int _sort_by_nodes(void *void1, void *void2);
+static int _sort_by_oversubscribe(void *void1, void *void2);
 static int _sort_by_partition(void *void1, void *void2);
 static int _sort_by_preempt_mode(void *void1, void *void2);
-static int _sort_by_priority(void *void1, void *void2);
+static int _sort_by_priority_job_factor(void *void1, void *void2);
+static int _sort_by_priority_tier(void *void1, void *void2);
 static int _sort_by_reason(void *void1, void *void2);
 static int _sort_by_reason_time(void *void1, void *void2);
 static int _sort_by_reason_user(void *void1, void *void2);
 static int _sort_by_root(void *void1, void *void2);
-static int _sort_by_share(void *void1, void *void2);
 static int _sort_by_state(void *void1, void *void2);
 static int _sort_by_weight(void *void1, void *void2);
 
@@ -111,6 +115,8 @@ void sort_sinfo_list(List sinfo_list)
 			list_sort(sinfo_list, _sort_by_avail);
 		else if (params.sort[i] == 'A')
 			list_sort(sinfo_list, _sort_by_nodes_ai);
+		else if (params.sort[i] == 'b')
+			list_sort(sinfo_list, _sort_by_features_act);
 		else if (params.sort[i] == 'c')
 			list_sort(sinfo_list, _sort_by_cpus);
 		else if (params.sort[i] == 'd')
@@ -126,7 +132,7 @@ void sort_sinfo_list(List sinfo_list)
 		else if (params.sort[i] == 'g')
 			list_sort(sinfo_list, _sort_by_groups);
 		else if (params.sort[i] == 'h')
-			list_sort(sinfo_list, _sort_by_share);
+			list_sort(sinfo_list, _sort_by_oversubscribe);
 		else if (params.sort[i] == 'H')
 			list_sort(sinfo_list, _sort_by_reason_time);
 		else if (params.sort[i] == 'l')
@@ -143,8 +149,10 @@ void sort_sinfo_list(List sinfo_list)
 			list_sort(sinfo_list, _sort_by_node_addr);
 		else if (params.sort[i] == 'O')
 			list_sort(sinfo_list, _sort_by_cpu_load);
+		else if (params.sort[i] == 'e')
+			list_sort(sinfo_list, _sort_by_free_mem);
 		else if (params.sort[i] == 'p')
-			list_sort(sinfo_list, _sort_by_priority);
+			list_sort(sinfo_list, _sort_by_priority_tier);
 		else if (params.sort[i] == 'P')
 			list_sort(sinfo_list, _sort_by_partition);
 		else if (params.sort[i] == 'r')
@@ -153,6 +161,8 @@ void sort_sinfo_list(List sinfo_list)
 			list_sort(sinfo_list, _sort_by_partition);
 		else if (params.sort[i] == 's')
 			list_sort(sinfo_list, _sort_by_job_size);
+		else if (params.sort[i] == 'S')
+			list_sort(sinfo_list, _sort_by_priority_job_factor);
 		else if (params.sort[i] == 't')
 			list_sort(sinfo_list, _sort_by_state);
 		else if (params.sort[i] == 'T')
@@ -161,6 +171,8 @@ void sort_sinfo_list(List sinfo_list)
 			list_sort(sinfo_list, _sort_by_reason_user);
 		else if (params.sort[i] == 'U')
 			list_sort(sinfo_list, _sort_by_reason_user);
+		else if (params.sort[i] == 'V')
+			list_sort(sinfo_list, _sort_by_cluster_name);
 		else if (params.sort[i] == 'w')
 			list_sort(sinfo_list, _sort_by_weight);
 		else if (params.sort[i] == 'X')
@@ -178,6 +190,14 @@ void sort_sinfo_list(List sinfo_list)
  * Local Sort Functions
  *****************************************************************************/
 static inline int _diff_uint32(uint32_t value_1, uint32_t value_2)
+{
+	if (value_1 > value_2)
+		return 1;
+	if (value_1 < value_2)
+		return -1;
+	return 0;
+}
+static inline int _diff_uint64(uint64_t value_1, uint64_t value_2)
 {
 	if (value_1 > value_2)
 		return 1;
@@ -212,6 +232,22 @@ static int _sort_by_avail(void *void1, void *void2)
 	return diff;
 }
 
+
+static int _sort_by_cluster_name(void *void1, void *void2)
+{
+	int diff;
+	sinfo_data_t *sinfo1;
+	sinfo_data_t *sinfo2;
+
+	_get_sinfo_from_void(&sinfo1, &sinfo2, void1, void2);
+
+	diff = xstrcmp(sinfo1->cluster_name, sinfo2->cluster_name);
+
+	if (reverse_order)
+		diff = -diff;
+	return diff;
+}
+
 static int _sort_by_cpu_load(void *void1, void *void2)
 {
 	int diff;
@@ -221,6 +257,21 @@ static int _sort_by_cpu_load(void *void1, void *void2)
 	_get_sinfo_from_void(&sinfo1, &sinfo2, void1, void2);
 
 	diff = _diff_uint32(sinfo1->min_cpu_load, sinfo2->min_cpu_load);
+
+	if (reverse_order)
+		diff = -diff;
+	return diff;
+}
+
+static int _sort_by_free_mem(void *void1, void *void2)
+{
+	int diff;
+	sinfo_data_t *sinfo1;
+	sinfo_data_t *sinfo2;
+
+	_get_sinfo_from_void(&sinfo1, &sinfo2, void1, void2);
+
+	diff = _diff_uint64(sinfo1->min_free_mem, sinfo2->min_free_mem);
 
 	if (reverse_order)
 		diff = -diff;
@@ -340,7 +391,27 @@ static int _sort_by_features(void *void1, void *void2)
 		val1 = sinfo1->features;
 	if (sinfo2->features)
 		val2 = sinfo2->features;
-	diff = strcmp(val1, val2);
+	diff = xstrcmp(val1, val2);
+
+	if (reverse_order)
+		diff = -diff;
+	return diff;
+}
+
+static int _sort_by_features_act(void *void1, void *void2)
+{
+	int diff;
+	sinfo_data_t *sinfo1;
+	sinfo_data_t *sinfo2;
+	char *val1 = "", *val2 = "";
+
+	_get_sinfo_from_void(&sinfo1, &sinfo2, void1, void2);
+
+	if (sinfo1->features_act)
+		val1 = sinfo1->features_act;
+	if (sinfo2->features_act)
+		val2 = sinfo2->features_act;
+	diff = xstrcmp(val1, val2);
 
 	if (reverse_order)
 		diff = -diff;
@@ -360,7 +431,7 @@ static int _sort_by_groups(void *void1, void *void2)
 		val1 = sinfo1->part_info->allow_groups;
 	if (sinfo2->part_info && sinfo2->part_info->allow_groups)
 		val2 = sinfo2->part_info->allow_groups;
-	diff = strcmp(val1, val2);
+	diff = xstrcmp(val1, val2);
 
 	if (reverse_order)
 		diff = -diff;
@@ -373,6 +444,7 @@ static int _sort_by_node_addr(void *void1, void *void2)
 	sinfo_data_t *sinfo1;
 	sinfo_data_t *sinfo2;
 	char *val1, *val2;
+	char *ptr1, *ptr2;
 #if	PURE_ALPHA_SORT == 0
 	int inx;
 #endif
@@ -383,39 +455,41 @@ static int _sort_by_node_addr(void *void1, void *void2)
 	if (val1) {
 		hostlist_push_host(sinfo1->node_addr, val1);
 		hostlist_sort(sinfo1->node_addr);
+		ptr1 = val1;
 	} else
-		val1 = "";
+		ptr1 = "";
 
 	val2 = hostlist_shift(sinfo2->node_addr);
 	if (val2) {
 		hostlist_push_host(sinfo2->node_addr, val2);
 		hostlist_sort(sinfo2->node_addr);
+		ptr2 = val2;
 	} else
-		val2 = "";
+		ptr2 = "";
 
 #if	PURE_ALPHA_SORT
-	diff = strcmp(val1, val2);
+	diff = xstrcmp(ptr1, ptr2);
 #else
-	for (inx=0; ; inx++) {
-		if (val1[inx] == val2[inx]) {
-			if (val1[inx] == '\0')
+	for (inx = 0; ; inx++) {
+		if (ptr1[inx] == ptr2[inx]) {
+			if (ptr1[inx] == '\0')
 				break;
 			continue;
 		}
-		if ((isdigit((int)val1[inx])) &&
-		    (isdigit((int)val2[inx]))) {
+		if ((isdigit((int)ptr1[inx])) &&
+		    (isdigit((int)ptr2[inx]))) {
 			int num1, num2;
-			num1 = atoi(val1+inx);
-			num2 = atoi(val2+inx);
+			num1 = atoi(ptr1 + inx);
+			num2 = atoi(ptr2 + inx);
 			diff = num1 - num2;
 		} else
-			diff = strcmp(val1, val2);
+			diff = xstrcmp(ptr1, ptr2);
 		break;
 	}
 #endif
-	if (strlen(val1))
+	if (val1)
 		free(val1);
-	if (strlen(val2))
+	if (val2)
 		free(val2);
 
 	if (reverse_order)
@@ -430,6 +504,7 @@ static int _sort_by_hostnames(void *void1, void *void2)
 	sinfo_data_t *sinfo1;
 	sinfo_data_t *sinfo2;
 	char *val1, *val2;
+	char *ptr1, *ptr2;
 #if	PURE_ALPHA_SORT == 0
 	int inx;
 #endif
@@ -440,39 +515,41 @@ static int _sort_by_hostnames(void *void1, void *void2)
 	if (val1) {
 		hostlist_push_host(sinfo1->hostnames, val1);
 		hostlist_sort(sinfo1->hostnames);
+		ptr1 = val1;
 	} else
-		val1 = "";
+		ptr1 = "";
 
 	val2 = hostlist_shift(sinfo2->hostnames);
 	if (val2) {
 		hostlist_push_host(sinfo2->hostnames, val2);
 		hostlist_sort(sinfo2->hostnames);
+		ptr2 = val2;
 	} else
-		val2 = "";
+		ptr2 = "";
 
 #if	PURE_ALPHA_SORT
-	diff = strcmp(val1, val2);
+	diff = xstrcmp(ptr1, ptr2);
 #else
-	for (inx=0; ; inx++) {
-		if (val1[inx] == val2[inx]) {
-			if (val1[inx] == '\0')
+	for (inx = 0; ; inx++) {
+		if (ptr1[inx] == ptr2[inx]) {
+			if (ptr1[inx] == '\0')
 				break;
 			continue;
 		}
-		if ((isdigit((int)val1[inx])) &&
-		    (isdigit((int)val2[inx]))) {
+		if ((isdigit((int)ptr1[inx])) &&
+		    (isdigit((int)ptr2[inx]))) {
 			int num1, num2;
-			num1 = atoi(val1+inx);
-			num2 = atoi(val2+inx);
+			num1 = atoi(ptr1 + inx);
+			num2 = atoi(ptr2 + inx);
 			diff = num1 - num2;
 		} else
-			diff = strcmp(val1, val2);
+			diff = xstrcmp(ptr1, ptr2);
 		break;
 	}
 #endif
-	if (strlen(val1))
+	if (val1)
 		free(val1);
-	if (strlen(val2))
+	if (val2)
 		free(val2);
 
 	if (reverse_order)
@@ -535,7 +612,7 @@ static int _sort_by_memory(void *void1, void *void2)
 
 	_get_sinfo_from_void(&sinfo1, &sinfo2, void1, void2);
 
-	diff = _diff_uint32(sinfo1->min_mem, sinfo2->min_mem);
+	diff = _diff_uint64(sinfo1->min_mem, sinfo2->min_mem);
 
 	if (reverse_order)
 		diff = -diff;
@@ -548,6 +625,7 @@ static int _sort_by_node_list(void *void1, void *void2)
 	sinfo_data_t *sinfo1;
 	sinfo_data_t *sinfo2;
 	char *val1, *val2;
+	char *ptr1, *ptr2;
 #if	PURE_ALPHA_SORT == 0
 	int inx;
 #endif
@@ -558,39 +636,41 @@ static int _sort_by_node_list(void *void1, void *void2)
 	if (val1) {
 		hostlist_push_host(sinfo1->nodes, val1);
 		hostlist_sort(sinfo1->nodes);
+		ptr1 = val1;
 	} else
-		val1 = "";
+		ptr1 = "";
 
 	val2 = hostlist_shift(sinfo2->nodes);
 	if (val2) {
 		hostlist_push_host(sinfo2->nodes, val2);
 		hostlist_sort(sinfo2->nodes);
+		ptr2 = val2;
 	} else
-		val2 = "";
+		ptr2 = "";
 
 #if	PURE_ALPHA_SORT
-	diff = strcmp(val1, val2);
+	diff = xstrcmp(ptr1, ptr2);
 #else
-	for (inx=0; ; inx++) {
-		if (val1[inx] == val2[inx]) {
-			if (val1[inx] == '\0')
+	for (inx = 0; ; inx++) {
+		if (ptr1[inx] == ptr2[inx]) {
+			if (ptr1[inx] == '\0')
 				break;
 			continue;
 		}
-		if ((isdigit((int)val1[inx])) &&
-		    (isdigit((int)val2[inx]))) {
+		if ((isdigit((int)ptr1[inx])) &&
+		    (isdigit((int)ptr2[inx]))) {
 			int num1, num2;
-			num1 = atoi(val1+inx);
-			num2 = atoi(val2+inx);
+			num1 = atoi(ptr1 + inx);
+			num2 = atoi(ptr2 + inx);
 			diff = num1 - num2;
 		} else
-			diff = strcmp(val1, val2);
+			diff = xstrcmp(ptr1, ptr2);
 		break;
 	}
 #endif
-	if (strlen(val1))
+	if (val1)
 		free(val1);
-	if (strlen(val2))
+	if (val2)
 		free(val2);
 
 	if (reverse_order)
@@ -645,7 +725,7 @@ static int _sort_by_partition(void *void1, void *void2)
 			val1 = sinfo1->part_info->name;
 		if (sinfo2->part_info && sinfo2->part_info->name)
 			val2 = sinfo2->part_info->name;
-		diff = strcmp(val1, val2);
+		diff = xstrcmp(val1, val2);
 	}
 
 	if (reverse_order)
@@ -666,7 +746,7 @@ static int _sort_by_reason(void *void1, void *void2)
 		val1 = sinfo1->reason;
 	if (sinfo2->reason)
 		val2 = sinfo2->reason;
-	diff = strcmp(val1, val2);
+	diff = xstrcmp(val1, val2);
 
 	if (reverse_order)
 		diff = -diff;
@@ -733,7 +813,7 @@ static int _sort_by_root(void *void1, void *void2)
 	return diff;
 }
 
-static int _sort_by_share(void *void1, void *void2)
+static int _sort_by_oversubscribe(void *void1, void *void2)
 {
 	int diff;
 	sinfo_data_t *sinfo1;
@@ -773,7 +853,7 @@ static int _sort_by_preempt_mode(void *void1, void *void2)
 	return diff;
 }
 
-static int _sort_by_priority(void *void1, void *void2)
+static int _sort_by_priority_job_factor(void *void1, void *void2)
 {
 	int diff;
 	sinfo_data_t *sinfo1;
@@ -783,9 +863,29 @@ static int _sort_by_priority(void *void1, void *void2)
 	_get_sinfo_from_void(&sinfo1, &sinfo2, void1, void2);
 
 	if (sinfo1->part_info)
-		val1 = sinfo1->part_info->priority;
+		val1 = sinfo1->part_info->priority_job_factor;
 	if (sinfo2->part_info)
-		val2 = sinfo2->part_info->priority;
+		val2 = sinfo2->part_info->priority_job_factor;
+	diff = _diff_uint32(val1, val2);
+
+	if (reverse_order)
+		diff = -diff;
+	return diff;
+}
+
+static int _sort_by_priority_tier(void *void1, void *void2)
+{
+	int diff;
+	sinfo_data_t *sinfo1;
+	sinfo_data_t *sinfo2;
+	uint32_t val1 = 0, val2 = 0;
+
+	_get_sinfo_from_void(&sinfo1, &sinfo2, void1, void2);
+
+	if (sinfo1->part_info)
+		val1 = sinfo1->part_info->priority_tier;
+	if (sinfo2->part_info)
+		val2 = sinfo2->part_info->priority_tier;
 	diff = _diff_uint32(val1, val2);
 
 	if (reverse_order)

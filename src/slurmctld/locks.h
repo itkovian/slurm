@@ -7,7 +7,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -82,10 +82,16 @@
  * For example: no lock on the config data structure, read lock on the job
  * and node data structures, and write lock on the partition data structure
  * would look like this: "{ NO_LOCK, READ_LOCK, READ_LOCK, WRITE_LOCK }"
+ *
+ * NOTE: When using lock_slurmctld() and assoc_mgr_lock(), always call
+ * lock_slurmctld() before calling assoc_mgr_lock() and then call
+ * assoc_mgr_unlock() before calling unlock_slurmctld().
 \*****************************************************************************/
 
 #ifndef _SLURMCTLD_LOCKS_H
 #define _SLURMCTLD_LOCKS_H
+
+#include <stdbool.h>
 
 /* levels of locking required for each data structure */
 typedef enum {
@@ -100,6 +106,7 @@ typedef struct {
 	lock_level_t	job;
 	lock_level_t	node;
 	lock_level_t	partition;
+	lock_level_t	federation;
 }	slurmctld_lock_t;
 
 /* Interval lock structure
@@ -116,8 +123,13 @@ typedef enum {
 	JOB_LOCK,
 	NODE_LOCK,
 	PART_LOCK,
+	FED_LOCK,
 	ENTITY_COUNT
 }	lock_datatype_t;
+
+#ifndef NDEBUG
+extern bool verify_lock(lock_datatype_t datatype, lock_level_t level);
+#endif
 
 #define read_lock(data_type)		(data_type * 4 + 0)
 #define write_lock(data_type)		(data_type * 4 + 1)
@@ -137,15 +149,8 @@ extern void get_lock_values (slurmctld_lock_flags_t *lock_flags);
  *	control */
 extern void init_locks ( void );
 
-/* kill_locked_threads - Kill all threads waiting on semaphores */
-extern void kill_locked_threads ( void );
-
 /* lock_slurmctld - Issue the required lock requests in a well defined order */
 extern void lock_slurmctld (slurmctld_lock_t lock_levels);
-
-/* try_lock_slurmctld - equivalent to lock_slurmctld() except 
- * RET 0 on success or -1 if the locks are currently not available */
-extern int try_lock_slurmctld (slurmctld_lock_t lock_levels);
 
 /* unlock_slurmctld - Issue the required unlock requests in a well
  *	defined order */

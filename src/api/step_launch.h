@@ -1,7 +1,5 @@
 /*****************************************************************************\
  *  step_launch.h - launch a parallel job step
- *
- *  $Id$
  *****************************************************************************
  *  Copyright (C) 2006-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
@@ -10,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -41,20 +39,16 @@
 #ifndef _STEP_LAUNCH_H
 #define _STEP_LAUNCH_H
 
-#ifdef HAVE_CONFIG_H
-#  include "config.h"
-#endif
-
-#include <unistd.h>
-#include <stdint.h>
 #include <pthread.h>
+#include <stdint.h>
+#include <unistd.h>
 
 #include "slurm/slurm.h"
 
-#include "src/common/slurm_step_layout.h"
-#include "src/common/eio.h"
 #include "src/common/bitstring.h"
-#include "src/common/mpi.h"
+#include "src/common/eio.h"
+#include "src/common/slurm_mpi.h"
+#include "src/common/slurm_step_layout.h"
 
 #include "src/api/step_io.h"
 

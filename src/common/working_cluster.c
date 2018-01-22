@@ -7,7 +7,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -38,7 +38,6 @@
 
 #include <string.h>
 
-#include "src/common/slurm_strcasestr.h"
 #include "src/common/slurmdb_defs.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
@@ -110,23 +109,8 @@ extern uint32_t slurmdb_setup_cluster_flags(void)
 #ifdef HAVE_BG
 	cluster_flags |= CLUSTER_FLAG_BG;
 #endif
-#ifdef HAVE_BGL
-	cluster_flags |= CLUSTER_FLAG_BGL;
-#endif
-#ifdef HAVE_BGP
-	cluster_flags |= CLUSTER_FLAG_BGP;
-#endif
 #ifdef HAVE_BGQ
 	cluster_flags |= CLUSTER_FLAG_BGQ;
-#endif
-#ifdef HAVE_SUN_CONST
-	cluster_flags |= CLUSTER_FLAG_SC;
-#endif
-#ifdef HAVE_XCPU
-	cluster_flags |= CLUSTER_FLAG_XCPU;
-#endif
-#ifdef HAVE_AIX
-	cluster_flags |= CLUSTER_FLAG_AIX;
 #endif
 #ifdef MULTIPLE_SLURMD
 	cluster_flags |= CLUSTER_FLAG_MULTSD;
@@ -145,38 +129,23 @@ extern uint32_t slurmdb_setup_cluster_flags(void)
 
 static uint32_t _str_2_cluster_flags(char *flags_in)
 {
-	if (slurm_strcasestr(flags_in, "AIX"))
-		return CLUSTER_FLAG_AIX;
-
-	if (slurm_strcasestr(flags_in, "BGL"))
-		return CLUSTER_FLAG_BGL;
-
-	if (slurm_strcasestr(flags_in, "BGP"))
-		return CLUSTER_FLAG_BGP;
-
-	if (slurm_strcasestr(flags_in, "BGQ"))
+	if (xstrcasestr(flags_in, "BGQ"))
 		return CLUSTER_FLAG_BGQ;
 
-	if (slurm_strcasestr(flags_in, "Bluegene"))
+	if (xstrcasestr(flags_in, "Bluegene"))
 		return CLUSTER_FLAG_BG;
 
-	if (slurm_strcasestr(flags_in, "AlpsCray")
-	    || slurm_strcasestr(flags_in, "CrayXT"))
+	if (xstrcasestr(flags_in, "AlpsCray")
+	    || xstrcasestr(flags_in, "CrayXT"))
 		return CLUSTER_FLAG_CRAY_A;
 
-	if (slurm_strcasestr(flags_in, "FrontEnd"))
+	if (xstrcasestr(flags_in, "FrontEnd"))
 		return CLUSTER_FLAG_FE;
 
-	if (slurm_strcasestr(flags_in, "MultipleSlurmd"))
+	if (xstrcasestr(flags_in, "MultipleSlurmd"))
 		return CLUSTER_FLAG_MULTSD;
 
-	if (slurm_strcasestr(flags_in, "SunConstellation"))
-		return CLUSTER_FLAG_SC;
-
-	if (slurm_strcasestr(flags_in, "XCPU"))
-		return CLUSTER_FLAG_XCPU;
-
-	if (slurm_strcasestr(flags_in, "Cray"))
+	if (xstrcasestr(flags_in, "Cray"))
 		return CLUSTER_FLAG_CRAY_N;
 
 	return (uint32_t) 0;
@@ -199,33 +168,15 @@ extern uint32_t slurmdb_str_2_cluster_flags(char *flags_in)
 	return cluster_flags;
 }
 
-/*needs to be xfreed */
+/* must xfree() returned string */
 extern char *slurmdb_cluster_flags_2_str(uint32_t flags_in)
 {
 	char *cluster_flags = NULL;
-
-	if (flags_in & CLUSTER_FLAG_AIX) {
-		if (cluster_flags)
-			xstrcat(cluster_flags, ",");
-		xstrcat(cluster_flags, "AIX");
-	}
 
 	if (flags_in & CLUSTER_FLAG_BG) {
 		if (cluster_flags)
 			xstrcat(cluster_flags, ",");
 		xstrcat(cluster_flags, "Bluegene");
-	}
-
-	if (flags_in & CLUSTER_FLAG_BGL) {
-		if (cluster_flags)
-			xstrcat(cluster_flags, ",");
-		xstrcat(cluster_flags, "BGL");
-	}
-
-	if (flags_in & CLUSTER_FLAG_BGP) {
-		if (cluster_flags)
-			xstrcat(cluster_flags, ",");
-		xstrcat(cluster_flags, "BGP");
 	}
 
 	if (flags_in & CLUSTER_FLAG_BGQ) {
@@ -252,18 +203,6 @@ extern char *slurmdb_cluster_flags_2_str(uint32_t flags_in)
 		xstrcat(cluster_flags, "MultipleSlurmd");
 	}
 
-	if (flags_in & CLUSTER_FLAG_SC) {
-		if (cluster_flags)
-			xstrcat(cluster_flags, ",");
-		xstrcat(cluster_flags, "SunConstellation");
-	}
-
-	if (flags_in & CLUSTER_FLAG_XCPU) {
-		if (cluster_flags)
-			xstrcat(cluster_flags, ",");
-		xstrcat(cluster_flags, "XCPU");
-	}
-
 	if (flags_in & CLUSTER_FLAG_CRAY_N) {
 		if (cluster_flags)
 			xstrcat(cluster_flags, ",");
@@ -276,3 +215,32 @@ extern char *slurmdb_cluster_flags_2_str(uint32_t flags_in)
 	return cluster_flags;
 }
 
+extern uint32_t slurmdb_setup_plugin_id_select(void)
+{
+	return select_get_plugin_id();
+}
+
+extern void
+slurm_setup_remote_working_cluster(resource_allocation_response_msg_t *msg)
+{
+	xassert(msg);
+	xassert(msg->working_cluster_rec);
+	xassert(msg->node_list);
+	xassert(msg->node_addr);
+
+	if (working_cluster_rec)
+		slurmdb_destroy_cluster_rec(working_cluster_rec);
+
+	working_cluster_rec = (slurmdb_cluster_rec_t *)msg->working_cluster_rec;
+	msg->working_cluster_rec = NULL;
+
+	slurm_set_addr(&working_cluster_rec->control_addr,
+		       working_cluster_rec->control_port,
+		       working_cluster_rec->control_host);
+
+	if (setenvf(NULL, "SLURM_CLUSTER_NAME", "%s",
+		    working_cluster_rec->name) < 0)
+		error("unable to set SLURM_CLUSTER_NAME in environment");
+
+	add_remote_nodes_to_conf_tbls(msg->node_list, msg->node_addr);
+}

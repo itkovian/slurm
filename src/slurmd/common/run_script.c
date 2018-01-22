@@ -7,7 +7,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -36,23 +36,13 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#if HAVE_CONFIG_H
-#  include "config.h"
-#endif
-
-#if defined(__NetBSD__)
-#include <sys/types.h> /* for pid_t */
-#include <sys/signal.h> /* for SIGKILL */
-#endif
-#if defined(__FreeBSD__)
-#include <signal.h>
-#endif
-#include <poll.h>
-#include <stdlib.h>
-#include <sys/wait.h>
-#include <sys/errno.h>
-#include <string.h>
 #include <glob.h>
+#include <poll.h>
+#include <signal.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/errno.h>
+#include <sys/wait.h>
 
 #include "slurm/slurm_errno.h"
 #include "src/common/list.h"
@@ -82,19 +72,17 @@ int waitpid_timeout (const char *name, pid_t pid, int *pstatus, int timeout)
 		if (rc < 0) {
 			if (errno == EINTR)
 				continue;
-			error("waidpid: %m");
+			error("waitpid: %m");
 			return (-1);
-		}
-		else if (timeout_ms <= 0) {
+		} else if (timeout_ms <= 0) {
 			info ("%s%stimeout after %ds: killing pgid %d",
 			      name != NULL ? name : "",
 			      name != NULL ? ": " : "",
 			      timeout, pid);
 			killpg(pid, SIGKILL);
 			options = 0;
-		}
-		else {
-			poll(NULL, 0, delay);
+		} else {
+			(void) poll(NULL, 0, delay);
 			timeout_ms -= delay;
 			delay = MIN (timeout_ms, MIN(max_delay, delay*2));
 		}
@@ -157,11 +145,7 @@ _run_one_script(const char *name, const char *path, uint32_t job_id,
 		argv[0] = (char *)xstrdup(path);
 		argv[1] = NULL;
 
-#ifdef SETPGRP_TWO_ARGS
-		setpgrp(0, 0);
-#else
-		setpgrp();
-#endif
+		setpgid(0, 0);
 		execve(path, argv, env);
 		error("execve(%s): %m", path);
 		exit(127);
@@ -242,7 +226,7 @@ int run_script(const char *name, const char *pattern, uint32_t job_id,
 
 	}
 	list_iterator_destroy (i);
-	list_destroy (l);
+	FREE_NULL_LIST (l);
 
 	return rc;
 }

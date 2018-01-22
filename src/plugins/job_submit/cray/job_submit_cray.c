@@ -3,10 +3,11 @@
  *                      computers
  *****************************************************************************
  *  Copyright (C) 2013 SchedMD LLC.
+ *  Copyright (C) 2014 Cray Inc. All Rights Reserved.
  *  Written by Morris Jette <jette@schedmd.com>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -35,32 +36,11 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#if HAVE_CONFIG_H
-#  include "config.h"
-#  if STDC_HEADERS
-#    include <string.h>
-#  endif
-#  if HAVE_SYS_TYPES_H
-#    include <sys/types.h>
-#  endif /* HAVE_SYS_TYPES_H */
-#  if HAVE_UNISTD_H
-#    include <unistd.h>
-#  endif
-#  if HAVE_INTTYPES_H
-#    include <inttypes.h>
-#  else /* ! HAVE_INTTYPES_H */
-#    if HAVE_STDINT_H
-#      include <stdint.h>
-#    endif
-#  endif /* HAVE_INTTYPES_H */
-#else /* ! HAVE_CONFIG_H */
-#  include <sys/types.h>
-#  include <unistd.h>
-#  include <stdint.h>
-#  include <string.h>
-#endif /* HAVE_CONFIG_H */
-
+#include <inttypes.h>
 #include <stdio.h>
+#include <string.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 #include "slurm/slurm_errno.h"
 #include "src/common/slurm_xlator.h"
@@ -90,14 +70,31 @@
  * only load authentication plugins if the plugin_type string has a prefix
  * of "auth/".
  *
- * plugin_version   - specifies the version number of the plugin.
- * min_plug_version - specifies the minumum version number of incoming
- *                    messages that this plugin can accept
+ * plugin_version - an unsigned 32-bit integer containing the Slurm version
+ * (major.minor.micro combined into a single number).
  */
 const char plugin_name[]       	= "Job submit Cray plugin";
 const char plugin_type[]       	= "job_submit/cray";
-const uint32_t plugin_version   = 100;
-const uint32_t min_plug_version = 100;
+const uint32_t plugin_version   = SLURM_VERSION_NUMBER;
+
+#define CRAY_GRES "craynetwork"
+#define CRAY_GRES_POSTFIX CRAY_GRES":1"
+
+/*
+ * Append CRAY_GRES_POSTFIX to the gres provided by the user
+ */
+static void _append_gres(struct job_descriptor *job_desc)
+{
+	if (job_desc->gres == NULL) {
+		job_desc->gres = xstrdup(CRAY_GRES_POSTFIX);
+	} else if (strlen(job_desc->gres) == 0) {
+		xstrcat(job_desc->gres, CRAY_GRES_POSTFIX);
+	} else if (strstr(job_desc->gres, CRAY_GRES) == NULL) {
+		// Don't append if they already specified craynetwork
+		// Allows the user to ask for more or less than the default
+		xstrcat(job_desc->gres, "," CRAY_GRES_POSTFIX);
+	}
+}
 
 int init (void)
 {
@@ -111,11 +108,16 @@ int fini (void)
 
 extern int job_submit(struct job_descriptor *job_desc, uint32_t submit_uid)
 {
+	_append_gres(job_desc);
 	return SLURM_SUCCESS;
 }
 
 extern int job_modify(struct job_descriptor *job_desc,
 		      struct job_record *job_ptr, uint32_t submit_uid)
 {
+	/* Don't call this on modify it shouldn't be needed and will
+	 * mess things up if modifying a running job
+	 */
+	//_append_gres(job_desc);
 	return SLURM_SUCCESS;
 }

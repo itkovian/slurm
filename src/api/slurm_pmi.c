@@ -7,7 +7,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -47,6 +47,7 @@
 #include "src/common/slurm_protocol_defs.h"
 #include "src/common/forward.h"
 #include "src/common/read_config.h"
+#include "src/common/strlcpy.h"
 #include "src/common/xmalloc.h"
 #include "src/common/fd.h"
 #include "src/common/slurm_auth.h"
@@ -60,7 +61,7 @@ uint16_t srun_port = 0;
 slurm_addr_t srun_addr;
 
 static void _delay_rpc(int pmi_rank, int pmi_size);
-static int  _forward_comm_set(struct kvs_comm_set *kvs_set_ptr);
+static int  _forward_comm_set(kvs_comm_set_t *kvs_set_ptr);
 static int  _get_addr(void);
 static void _set_pmi_time(void);
 
@@ -76,6 +77,9 @@ static void _delay_rpc(int pmi_rank, int pmi_size)
 	uint32_t target_time;	/* desired time to issue the RPC */
 	uint32_t delta_time, error_time;
 	int retries = 0;
+
+	if (pmi_rank == 0)	/* Rank 0 has extra communications with no */
+		return;		/* risk of induced packet storm */
 
 	_set_pmi_time();
 
@@ -160,7 +164,7 @@ static void _set_pmi_time(void)
 }
 
 /* Transmit PMI Keyval space data */
-int slurm_send_kvs_comm_set(struct kvs_comm_set *kvs_set_ptr,
+int slurm_send_kvs_comm_set(kvs_comm_set_t *kvs_set_ptr,
 		int pmi_rank, int pmi_size)
 {
 	slurm_msg_t msg_send;
@@ -178,7 +182,7 @@ int slurm_send_kvs_comm_set(struct kvs_comm_set *kvs_set_ptr,
 	msg_send.msg_type = PMI_KVS_PUT_REQ;
 	msg_send.data = (void *) kvs_set_ptr;
 
-	/* Send the RPC to the local srun communcation manager.
+	/* Send the RPC to the local srun communication manager.
 	 * Since the srun can be sent thousands of messages at
 	 * the same time and refuse some connections, retry as
 	 * needed. Spread out messages by task's rank. Also
@@ -209,8 +213,8 @@ int slurm_send_kvs_comm_set(struct kvs_comm_set *kvs_set_ptr,
 }
 
 /* Wait for barrier and get full PMI Keyval space data */
-int  slurm_get_kvs_comm_set(struct kvs_comm_set **kvs_set_ptr,
-		int pmi_rank, int pmi_size)
+int  slurm_get_kvs_comm_set(kvs_comm_set_t **kvs_set_ptr,
+			    int pmi_rank, int pmi_size)
 {
 	int rc, srun_fd, retries = 0, timeout = 0;
 	slurm_msg_t msg_send, msg_rcv;
@@ -245,10 +249,9 @@ int  slurm_get_kvs_comm_set(struct kvs_comm_set **kvs_set_ptr,
 	/* hostname is not set here, so slurm_get_addr fails
 	slurm_get_addr(&slurm_addr, &port, hostname, sizeof(hostname)); */
 	port = ntohs(slurm_addr.sin_port);
-	if ((env_pmi_ifhn = getenv("SLURM_PMI_RESP_IFHN"))) {
-		strncpy(hostname, env_pmi_ifhn, sizeof(hostname));
-		hostname[sizeof(hostname)-1] = 0;
-	} else
+	if ((env_pmi_ifhn = getenv("SLURM_PMI_RESP_IFHN")))
+		strlcpy(hostname, env_pmi_ifhn, sizeof(hostname));
+	else
 		gethostname_short(hostname, sizeof(hostname));
 
 	data.task_id = pmi_rank;
@@ -261,7 +264,7 @@ int  slurm_get_kvs_comm_set(struct kvs_comm_set **kvs_set_ptr,
 	msg_send.msg_type = PMI_KVS_GET_REQ;
 	msg_send.data = &data;
 
-	/* Send the RPC to the local srun communcation manager.
+	/* Send the RPC to the local srun communication manager.
 	 * Since the srun can be sent thousands of messages at
 	 * the same time and refuse some connections, retry as
 	 * needed. Wait until all key-pairs have been sent by
@@ -304,7 +307,7 @@ int  slurm_get_kvs_comm_set(struct kvs_comm_set **kvs_set_ptr,
 		if (errno == EINTR)
 			continue;
 		error("slurm_receive_msg: %m");
-		slurm_close_accepted_conn(srun_fd);
+		close(srun_fd);
 		return errno;
 	}
 	if (msg_rcv.auth_cred)
@@ -312,13 +315,13 @@ int  slurm_get_kvs_comm_set(struct kvs_comm_set **kvs_set_ptr,
 
 	if (msg_rcv.msg_type != PMI_KVS_GET_RESP) {
 		error("slurm_get_kvs_comm_set msg_type=%d", msg_rcv.msg_type);
-		slurm_close_accepted_conn(srun_fd);
+		close(srun_fd);
 		return SLURM_UNEXPECTED_MSG_ERROR;
 	}
 	if (slurm_send_rc_msg(&msg_rcv, SLURM_SUCCESS) < 0)
 		error("slurm_send_rc_msg: %m");
 
-	slurm_close_accepted_conn(srun_fd);
+	close(srun_fd);
 	*kvs_set_ptr = msg_rcv.data;
 
 	rc = _forward_comm_set(*kvs_set_ptr);
@@ -328,7 +331,7 @@ int  slurm_get_kvs_comm_set(struct kvs_comm_set **kvs_set_ptr,
 /* Forward keypair info to other tasks as required.
  * Clear message forward structure upon completion.
  * The messages are forwarded sequentially. */
-static int _forward_comm_set(struct kvs_comm_set *kvs_set_ptr)
+static int _forward_comm_set(kvs_comm_set_t *kvs_set_ptr)
 {
 	int i, rc = SLURM_SUCCESS;
 	int tmp_host_cnt = kvs_set_ptr->host_cnt;
@@ -356,41 +359,6 @@ static int _forward_comm_set(struct kvs_comm_set *kvs_set_ptr)
 	}
 	xfree(kvs_set_ptr->kvs_host_ptr);
 	return rc;
-}
-
-static void _free_kvs_comm(struct kvs_comm *kvs_comm_ptr)
-{
-	int i;
-
-	if (kvs_comm_ptr == NULL)
-		return;
-
-	for (i=0; i<kvs_comm_ptr->kvs_cnt; i++) {
-		xfree(kvs_comm_ptr->kvs_keys[i]);
-		xfree(kvs_comm_ptr->kvs_values[i]);
-	}
-	xfree(kvs_comm_ptr->kvs_name);
-	xfree(kvs_comm_ptr->kvs_keys);
-	xfree(kvs_comm_ptr->kvs_values);
-	xfree(kvs_comm_ptr);
-}
-
-/* Free kvs_comm_set returned by slurm_get_kvs_comm_set() */
-void slurm_free_kvs_comm_set(struct kvs_comm_set *kvs_set_ptr)
-{
-	int i;
-
-	if (kvs_set_ptr == NULL)
-		return;
-
-	for (i=0; i<kvs_set_ptr->host_cnt; i++)
-		xfree(kvs_set_ptr->kvs_host_ptr[i].hostname);
-	xfree(kvs_set_ptr->kvs_host_ptr);
-
-	for (i=0; i<kvs_set_ptr->kvs_comm_recs; i++)
-		_free_kvs_comm(kvs_set_ptr->kvs_comm_ptr[i]);
-	xfree(kvs_set_ptr->kvs_comm_ptr);
-	xfree(kvs_set_ptr);
 }
 
 /* Finalization processing */

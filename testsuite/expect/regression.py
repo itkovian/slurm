@@ -6,8 +6,8 @@
 # CODE-OCEC-09-009. All rights reserved.
 #
 # This file is part of SLURM, a resource management program.
-# For details, see <http://slurm.schedmd.com/>.
- # Please also read the supplied file: DISCLAIMER.
+# For details, see <https://slurm.schedmd.com/>.
+# Please also read the supplied file: DISCLAIMER.
 #
 # SLURM is free software; you can redistribute it and/or modify it under
 # the terms of the GNU General Public License as published by the Free
@@ -59,12 +59,20 @@ def main(argv=None):
                       action='callback', callback=test_parser,
                       help='comma or space separated string of tests to include')
     parser.add_option('-k', '--keep-logs', action='store_true', default=False)
+    parser.add_option('-s', '--stop-on-first-fail', action='store_true', default=False)
     (options, args) = parser.parse_args(args=argv)
 
     # Sanity check
     if not os.path.isfile('globals'):
         print >>sys.stderr, 'ERROR: "globals" not here as needed'
         return -1
+
+	# Clear any environment variables that could break the tests.
+	# Cray sets some squeue format options that break tests
+	del os.environ['SQUEUE_ALL']
+	del os.environ['SQUEUE_SORT']
+	del os.environ['SQUEUE_FORMAT']
+	del os.environ['SQUEUE_FORMAT2']
 
     # Read the current working directory and build a sorted list
     # of the available tests.
@@ -123,6 +131,8 @@ def main(argv=None):
             failed_tests.append(test)
             os.rename(testlog_name, testlog_name+'.failed')
             sys.stdout.write('FAILED!\n')
+            if options.stop_on_first_fail:
+                break
         sys.stdout.flush()
 
     end_time = time.time()
@@ -143,6 +153,7 @@ def main(argv=None):
             sys.stdout.write('%d.%d'%(test[0], test[1]))
         sys.stdout.write('\n')
         sys.stdout.flush()
+        return 1
 
 def test_cmp(testA, testB):
     rc = cmp(testA[0], testB[0])

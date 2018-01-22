@@ -5,7 +5,7 @@
  *  Written by Morris Jette <jette@schedmd.com>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://www.schedmd.com/slurmdocs/>.
+ *  For details, see <https://slurm.schedmd.com>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -34,18 +34,8 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#ifdef HAVE_CONFIG_H
-#  include "config.h"
-#  if HAVE_INTTYPES_H
-#    include <inttypes.h>
-#  else
-#    if HAVE_STDINT_H
-#      include <stdint.h>
-#    endif
-#  endif
-#endif
-
 #include <fcntl.h>
+#include <inttypes.h>
 #include <poll.h>
 #include <pthread.h>
 #include <stdlib.h>
@@ -55,8 +45,8 @@
 #include <time.h>
 #include <unistd.h>
 
-//#include "slurm/slurmdb.h"
 #include "slurm/smd_ns.h"
+
 #include "src/common/slurm_xlator.h"	/* Must be first */
 #include "src/common/bitstring.h"
 #include "src/common/job_resources.h"
@@ -274,7 +264,17 @@ unpack_error:
 		xfree(job_fail_ptr->fail_node_names[i]);
 	xfree(job_fail_ptr->fail_node_names);
 	xfree(job_fail_ptr->pending_node_name);
+	xfree(job_fail_ptr);
 	return SLURM_ERROR;
+}
+
+static int _update_job(job_desc_msg_t * job_specs, uid_t uid)
+{
+	slurm_msg_t msg;
+
+	msg.data= job_specs;
+	msg.conn_fd = -1;
+	return update_job(&msg, uid, true);
 }
 
 /*
@@ -296,7 +296,7 @@ extern int save_nonstop_state(void)
 	pack_time(now, buffer);
 
 	/* write individual job records */
-	pthread_mutex_lock(&job_fail_mutex);
+	slurm_mutex_lock(&job_fail_mutex);
 	if (job_fail_list) {
 		job_cnt = list_count(job_fail_list);
 		pack32(job_cnt, buffer);
@@ -308,7 +308,7 @@ extern int save_nonstop_state(void)
 		pack32(job_cnt, buffer);
 	}
 	job_fail_save_time = now;
-	pthread_mutex_unlock(&job_fail_mutex);
+	slurm_mutex_unlock(&job_fail_mutex);
 
 	/* write the buffer to file */
 	dir_path = slurm_get_state_save_location();
@@ -370,12 +370,12 @@ extern int save_nonstop_state(void)
 extern int restore_nonstop_state(void)
 {
 	char *dir_path, *state_file;
-	uint32_t data_allocated, data_size = 0, data_read;
+	uint32_t data_allocated, data_size = 0;
 	uint32_t job_cnt = 0;
 	char *data;
-	uint16_t protocol_version = (uint16_t) NO_VAL;
-	Buf buffer = init_buf(0);
-	int error_code = SLURM_SUCCESS, i, state_fd;
+	uint16_t protocol_version = NO_VAL16;
+	Buf buffer;
+	int error_code = SLURM_SUCCESS, i, state_fd, data_read;
 	time_t buf_time;
 	job_failures_t *job_fail_ptr = NULL;
 
@@ -418,7 +418,9 @@ extern int restore_nonstop_state(void)
 	safe_unpack16(&protocol_version, buffer);
 	debug3("Version in slurmctld/nonstop header is %u", protocol_version);
 
-	if (protocol_version == (uint16_t) NO_VAL) {
+	if (protocol_version == NO_VAL16) {
+		if (!ignore_state_errors)
+			fatal("Can not recover slurmctld/nonstop state, incompatible version, start with '-i' to ignore this");
 		error("*************************************************************");
 		error("Can not recover slurmctld/nonstop state, incompatible version");
 		error("*************************************************************");
@@ -427,7 +429,7 @@ extern int restore_nonstop_state(void)
 	}
 	safe_unpack_time(&buf_time, buffer);
 	safe_unpack32(&job_cnt, buffer);
-	pthread_mutex_lock(&job_fail_mutex);
+	slurm_mutex_lock(&job_fail_mutex);
 	for (i = 0; i < job_cnt; i++) {
 		error_code = _unpack_job_state(&job_fail_ptr, buffer);
 		if (error_code)
@@ -440,11 +442,13 @@ extern int restore_nonstop_state(void)
 		}
 		list_append(job_fail_list, job_fail_ptr);
 	}
-	pthread_mutex_unlock(&job_fail_mutex);
+	slurm_mutex_unlock(&job_fail_mutex);
 	free_buf(buffer);
 	return error_code;
 
 unpack_error:
+	if (!ignore_state_errors)
+		fatal("Incomplete nonstop state file, start with '-i' to ignore this");
 	error("Incomplete nonstop state file");
 	free_buf(buffer);
 	return SLURM_FAILURE;
@@ -452,20 +456,17 @@ unpack_error:
 
 extern void init_job_db(void)
 {
-	pthread_mutex_lock(&job_fail_mutex);
+	slurm_mutex_lock(&job_fail_mutex);
 	if (!job_fail_list)
 		job_fail_list = list_create(_job_fail_del);
-	pthread_mutex_unlock(&job_fail_mutex);
+	slurm_mutex_unlock(&job_fail_mutex);
 }
 
 extern void term_job_db(void)
 {
-	pthread_mutex_lock(&job_fail_mutex);
-	if (job_fail_list) {
-		list_destroy(job_fail_list);
-		job_fail_list = NULL;
-	}
-	pthread_mutex_unlock(&job_fail_mutex);
+	slurm_mutex_lock(&job_fail_mutex);
+	FREE_NULL_LIST(job_fail_list);
+	slurm_mutex_unlock(&job_fail_mutex);
 }
 
 static uint32_t _get_job_cpus(struct job_record *job_ptr, int node_inx)
@@ -511,7 +512,7 @@ static void _failing_node(struct node_record *node_ptr)
 	if (IS_NODE_FAIL(node_ptr))
 		event_flag |= SMD_EVENT_NODE_FAILING;
 	node_inx = node_ptr - node_record_table_ptr;
-	pthread_mutex_lock(&job_fail_mutex);
+	slurm_mutex_lock(&job_fail_mutex);
 	job_iterator = list_iterator_create(job_fail_list);
 	while ((job_fail_ptr = (job_failures_t *) list_next(job_iterator))) {
 		if (!_valid_job_ptr(job_fail_ptr))
@@ -524,7 +525,7 @@ static void _failing_node(struct node_record *node_ptr)
 		job_fail_update_time = now;
 	}
 	list_iterator_destroy(job_iterator);
-	pthread_mutex_unlock(&job_fail_mutex);
+	slurm_mutex_unlock(&job_fail_mutex);
 }
 
 extern void node_fail_callback(struct job_record *job_ptr,
@@ -545,7 +546,7 @@ extern void node_fail_callback(struct job_record *job_ptr,
 		event_flag |= SMD_EVENT_NODE_FAILED;
 	if (IS_NODE_FAIL(node_ptr))
 		event_flag |= SMD_EVENT_NODE_FAILING;
-	pthread_mutex_lock(&job_fail_mutex);
+	slurm_mutex_lock(&job_fail_mutex);
 	job_fail_ptr = list_find_first(job_fail_list, _job_fail_find,
 				       &job_ptr->job_id);
 	if (!job_fail_ptr) {
@@ -569,7 +570,7 @@ extern void node_fail_callback(struct job_record *job_ptr,
 			xstrdup(node_ptr->name);
 	job_fail_ptr->time_extend_avail += time_limit_extend;
 	job_fail_update_time = time(NULL);
-	pthread_mutex_unlock(&job_fail_mutex);
+	slurm_mutex_unlock(&job_fail_mutex);
 }
 
 extern void job_begin_callback(struct job_record *job_ptr)
@@ -582,7 +583,7 @@ extern void job_begin_callback(struct job_record *job_ptr)
 	if (!job_fail_list || !job_ptr->details ||
 	   !job_ptr->details->depend_list)
 		return;
-	pthread_mutex_lock(&job_fail_mutex);
+	slurm_mutex_lock(&job_fail_mutex);
 	depend_iterator = list_iterator_create(job_ptr->details->depend_list);
 	depend_ptr = (struct depend_spec *) list_next(depend_iterator);
 	if (depend_ptr && (depend_ptr->depend_type == SLURM_DEPEND_EXPAND)) {
@@ -596,16 +597,16 @@ extern void job_begin_callback(struct job_record *job_ptr)
 		      job_fail_ptr->callback_flags);
 	}
 	list_iterator_destroy(depend_iterator);
-	pthread_mutex_unlock(&job_fail_mutex);
+	slurm_mutex_unlock(&job_fail_mutex);
 }
 
 extern void job_fini_callback(struct job_record *job_ptr)
 {
 	info("job_fini_callback for job:%u", job_ptr->job_id);
-	pthread_mutex_lock(&job_fail_mutex);
+	slurm_mutex_lock(&job_fail_mutex);
 	list_delete_all(job_fail_list, _job_fail_find, &job_ptr->job_id);
 	/* job_fail_update_time = time(NULL);	not critical */
-	pthread_mutex_unlock(&job_fail_mutex);
+	slurm_mutex_unlock(&job_fail_mutex);
 }
 
 /*
@@ -726,7 +727,7 @@ extern char *fail_nodes(char *cmd_ptr, uid_t cmd_uid,
 	}
 	state_flags = atoi(sep1 + 12);
 
-	pthread_mutex_lock(&job_fail_mutex);
+	slurm_mutex_lock(&job_fail_mutex);
 	job_ptr = find_job_record(job_id);
 	if (!job_ptr) {
 		xstrfmtcat(resp, "%s EJOBID", SLURM_VERSION_STRING);
@@ -779,7 +780,7 @@ extern char *fail_nodes(char *cmd_ptr, uid_t cmd_uid,
 		}
 	}
 
-fini:	pthread_mutex_unlock(&job_fail_mutex);
+fini:	slurm_mutex_unlock(&job_fail_mutex);
 	debug("%s: replying to library: %s", __func__, resp);
 	return resp;
 }
@@ -818,7 +819,7 @@ extern char *register_callback(char *cmd_ptr, uid_t cmd_uid,
 	sep1 = strstr(sep1, "PORT:");
 	if (sep1)
 		port_id = atoi(sep1 + 5);
-	pthread_mutex_lock(&job_fail_mutex);
+	slurm_mutex_lock(&job_fail_mutex);
 	if ((sep1 == NULL) || (port_id <= 0)) {
 		xstrfmtcat(resp, "%s EPORT", SLURM_VERSION_STRING);
 		goto fini;
@@ -850,7 +851,7 @@ extern char *register_callback(char *cmd_ptr, uid_t cmd_uid,
 	job_fail_ptr->callback_port = port_id;
 	xstrfmtcat(resp, "%s ENOERROR", SLURM_VERSION_STRING);
 
-fini:	pthread_mutex_unlock(&job_fail_mutex);
+fini:	slurm_mutex_unlock(&job_fail_mutex);
 	debug("%s: replying to library: %s", __func__, resp);
 	return resp;
 }
@@ -863,8 +864,8 @@ fini:	pthread_mutex_unlock(&job_fail_mutex);
 static char *_job_node_features(struct job_record *job_ptr,
 				struct node_record *node_ptr)
 {
-	struct features_record *node_feat_ptr;
-	struct feature_record  *job_feat_ptr;
+	node_feature_t *node_feat_ptr;
+	job_feature_t *job_feat_ptr;
 	ListIterator job_iter, node_iter;
 	char *req_feat = NULL;
 	int node_inx;
@@ -875,15 +876,15 @@ static char *_job_node_features(struct job_record *job_ptr,
 
 	node_inx = node_ptr - node_record_table_ptr;
 	job_iter = list_iterator_create(job_ptr->details->feature_list);
-	while ((job_feat_ptr = (struct feature_record *) list_next(job_iter))) {
-		node_iter = list_iterator_create(feature_list);
-		while ((node_feat_ptr = (struct features_record *)
+	while ((job_feat_ptr = (job_feature_t *) list_next(job_iter))) {
+		node_iter = list_iterator_create(active_feature_list);
+		while ((node_feat_ptr = (node_feature_t *)
 					list_next(node_iter))) {
 			if (!job_feat_ptr->name  ||
 			    !node_feat_ptr->name ||
 			    !node_feat_ptr->node_bitmap ||
 			    !bit_test(node_feat_ptr->node_bitmap, node_inx) ||
-			    strcmp(job_feat_ptr->name, node_feat_ptr->name))
+			    xstrcmp(job_feat_ptr->name, node_feat_ptr->name))
 				continue;
 			if (req_feat)
 				xstrcat(req_feat, "&");
@@ -928,7 +929,7 @@ extern char *drop_node(char *cmd_ptr, uid_t cmd_uid,
 	}
 	node_name = sep1 + 5;
 
-	pthread_mutex_lock(&job_fail_mutex);
+	slurm_mutex_lock(&job_fail_mutex);
 	job_fail_ptr = list_find_first(job_fail_list, _job_fail_find, &job_id);
 	if (!job_fail_ptr || !_valid_job_ptr(job_fail_ptr)) {
 		job_ptr = find_job_record(job_id);
@@ -963,7 +964,7 @@ extern char *drop_node(char *cmd_ptr, uid_t cmd_uid,
 	}
 
 	for (i = 0; i < job_fail_ptr->fail_node_cnt; i++) {
-		if (!strcmp(node_name, job_fail_ptr->fail_node_names[i])) {
+		if (!xstrcmp(node_name, job_fail_ptr->fail_node_names[i])) {
 			cpu_cnt = job_fail_ptr->fail_node_cpus[i];
 			failed_inx = i;
 			break;
@@ -1015,7 +1016,7 @@ extern char *drop_node(char *cmd_ptr, uid_t cmd_uid,
 		}
 	}
 	if (job_fail_ptr->pending_node_name &&
-	    !strcmp(job_fail_ptr->pending_node_name, node_name)) {
+	    !xstrcmp(job_fail_ptr->pending_node_name, node_name)) {
 		/* Abort pending replacement request and get back time
 		 * extension (if any) */
 		_kill_job(job_fail_ptr->pending_job_id, cmd_uid);
@@ -1057,7 +1058,7 @@ extern char *drop_node(char *cmd_ptr, uid_t cmd_uid,
 		job_alloc_req.job_id	= job_id;
 		job_alloc_req.req_nodes	= hostlist_ranged_string_xmalloc(hl);
 		hostlist_destroy(hl);
-		rc = update_job(&job_alloc_req, cmd_uid);
+		rc = _update_job(&job_alloc_req, cmd_uid);
 		if (rc) {
 			info("slurmctld/nonstop: can remove failing node %s "
 			     "from job %u: %s",
@@ -1087,7 +1088,7 @@ extern char *drop_node(char *cmd_ptr, uid_t cmd_uid,
 
 fini:	job_fail_update_time = time(NULL);
 	debug("%s: replying to library: %s", __func__, resp);
-	pthread_mutex_unlock(&job_fail_mutex);
+	slurm_mutex_unlock(&job_fail_mutex);
 	return resp;
 }
 
@@ -1125,7 +1126,7 @@ extern char *replace_node(char *cmd_ptr, uid_t cmd_uid,
 	}
 	node_name = sep1 + 5;
 
-	pthread_mutex_lock(&job_fail_mutex);
+	slurm_mutex_lock(&job_fail_mutex);
 	job_fail_ptr = list_find_first(job_fail_list, _job_fail_find, &job_id);
 	if (!job_fail_ptr || !_valid_job_ptr(job_fail_ptr)) {
 		job_ptr = find_job_record(job_id);
@@ -1160,7 +1161,7 @@ extern char *replace_node(char *cmd_ptr, uid_t cmd_uid,
 	}
 
 	for (i = 0; i < job_fail_ptr->fail_node_cnt; i++) {
-		if (!strcmp(node_name, job_fail_ptr->fail_node_names[i])) {
+		if (!xstrcmp(node_name, job_fail_ptr->fail_node_names[i])) {
 			cpu_cnt = job_fail_ptr->fail_node_cpus[i];
 			failed_inx = i;
 			break;
@@ -1208,7 +1209,7 @@ extern char *replace_node(char *cmd_ptr, uid_t cmd_uid,
 		}
 	}
 	if (job_fail_ptr->pending_node_name) {
-		if (strcmp(job_fail_ptr->pending_node_name, node_name)) {
+		if (xstrcmp(job_fail_ptr->pending_node_name, node_name)) {
 			xstrfmtcat(resp, "%s EREPLACEPENDING %s",
 				   SLURM_VERSION_STRING,
 				   job_fail_ptr->pending_node_name);
@@ -1252,15 +1253,12 @@ extern char *replace_node(char *cmd_ptr, uid_t cmd_uid,
 	job_alloc_req.network	= xstrdup(job_ptr->network);
 	job_alloc_req.partition	= xstrdup(job_ptr->partition);
 	job_alloc_req.priority	= NO_VAL - 1;
-	if (job_ptr->qos_ptr) {
-		slurmdb_qos_rec_t *qos_ptr;
-		qos_ptr = (slurmdb_qos_rec_t *)job_ptr->qos_ptr;
-		job_alloc_req.qos = xstrdup(qos_ptr->name);
-	}
+	if (job_ptr->qos_ptr)
+		job_alloc_req.qos = xstrdup(job_ptr->qos_ptr->name);
 
 	/* Without unlock, the job_begin_callback() function will deadlock.
 	 * Not a great solution, but perhaps the least bad solution. */
-	pthread_mutex_unlock(&job_fail_mutex);
+	slurm_mutex_unlock(&job_fail_mutex);
 
 	job_alloc_req.user_id	= job_ptr->user_id;
 	/* Ignore default wckey (it starts with '*') */
@@ -1276,11 +1274,13 @@ extern char *replace_node(char *cmd_ptr, uid_t cmd_uid,
 			  1,			/* allocate */
 			  cmd_uid,		/* submit UID */
 			  &new_job_ptr,		/* pointer to new job */
-			  NULL);		/* error message */
+			  NULL,                 /* error message */
+			  SLURM_PROTOCOL_VERSION);
 	if (rc != SLURM_SUCCESS) {
 		/* Determine expected start time */
 		i = job_allocate(&job_alloc_req, 1, 1, &will_run, 1,
-				 cmd_uid, &new_job_ptr, NULL);
+				 cmd_uid, &new_job_ptr, NULL,
+				 SLURM_PROTOCOL_VERSION);
 		if (i == SLURM_SUCCESS) {
 			will_run_idle = will_run->start_time;
 			slurm_free_will_run_response_msg(will_run);
@@ -1300,12 +1300,14 @@ extern char *replace_node(char *cmd_ptr, uid_t cmd_uid,
 			(void) update_resv(&resv_desc);
 			xfree(resv_desc.users);
 			rc = job_allocate(&job_alloc_req, 1, 0,	NULL, 1,
-					  cmd_uid, &new_job_ptr, NULL);
+					  cmd_uid, &new_job_ptr, NULL,
+					  SLURM_PROTOCOL_VERSION);
 			if (rc != SLURM_SUCCESS) {
 				/* Determine expected start time */
 				i = job_allocate(&job_alloc_req, 1, 1,
 						 &will_run, 1, cmd_uid,
-						 &new_job_ptr, NULL);
+						 &new_job_ptr, NULL,
+						 SLURM_PROTOCOL_VERSION);
 				if (i == SLURM_SUCCESS) {
 					will_run_resv = will_run->start_time;
 					slurm_free_will_run_response_msg(
@@ -1315,7 +1317,8 @@ extern char *replace_node(char *cmd_ptr, uid_t cmd_uid,
 					/* Submit job in resv for later use */
 					i = job_allocate(&job_alloc_req, 0, 0,
 							 NULL, 1, cmd_uid,
-							 &new_job_ptr, NULL);
+							 &new_job_ptr, NULL,
+							 SLURM_PROTOCOL_VERSION);
 					if (i == SLURM_SUCCESS)
 						will_run_time = will_run_resv;
 				}
@@ -1330,12 +1333,22 @@ extern char *replace_node(char *cmd_ptr, uid_t cmd_uid,
 	if ((rc != SLURM_SUCCESS) && (will_run_time == 0) && will_run_idle) {
 		/* Submit job for later use without using reservation */
 		i = job_allocate(&job_alloc_req, 0, 0, NULL, 1, cmd_uid,
-				 &new_job_ptr, NULL);
+				 &new_job_ptr, NULL, SLURM_PROTOCOL_VERSION);
 		if (i == SLURM_SUCCESS)
 			will_run_time = will_run_idle;
 	}
+	xfree(job_alloc_req.account);
+	xfree(job_alloc_req.dependency);
+	xfree(job_alloc_req.exc_nodes);
+	xfree(job_alloc_req.features);
+	xfree(job_alloc_req.gres);
+	xfree(job_alloc_req.name);
+	xfree(job_alloc_req.network);
+	xfree(job_alloc_req.partition);
+	xfree(job_alloc_req.qos);
+	xfree(job_alloc_req.wckey);
 
-	pthread_mutex_lock(&job_fail_mutex);	/* Resume lock */
+	slurm_mutex_lock(&job_fail_mutex);	/* Resume lock */
 
 	if (rc != SLURM_SUCCESS) {
 		if (will_run_time) {
@@ -1364,29 +1377,22 @@ extern char *replace_node(char *cmd_ptr, uid_t cmd_uid,
 		goto fini;
 	}
 
-	xfree(job_alloc_req.account);
-	xfree(job_alloc_req.dependency);
-	xfree(job_alloc_req.exc_nodes);
-	xfree(job_alloc_req.features);
-	xfree(job_alloc_req.gres);
-	xfree(job_alloc_req.name);
-	xfree(job_alloc_req.network);
-	xfree(job_alloc_req.partition);
-	xfree(job_alloc_req.qos);
-	xfree(job_alloc_req.reservation);
-	xfree(job_alloc_req.wckey);
-
-merge:	new_node_name = strdup(new_job_ptr->nodes);
+merge:
+	if (!new_job_ptr) {	/* Fix for CLANG false positive */
+		error("%s: New job is NULL", __func__);
+		return resp;
+	}
+	new_node_name = strdup(new_job_ptr->nodes);
 
 	/* Shrink the size of the new job to zero */
 	slurm_init_job_desc_msg(&job_alloc_req);
 	job_alloc_req.job_id	= new_job_ptr->job_id;
 	job_alloc_req.min_nodes	= 0;
-	rc = update_job(&job_alloc_req, cmd_uid);
+	rc = _update_job(&job_alloc_req, cmd_uid);
 
 	/* Without unlock, the job_fini_callback() function will deadlock.
 	 * Not a great solution, but perhaps the least bad solution. */
-	pthread_mutex_unlock(&job_fail_mutex);
+	slurm_mutex_unlock(&job_fail_mutex);
 
 	if (rc) {
 		info("slurmctld/nonstop: can not shrink job %u: %s",
@@ -1395,17 +1401,17 @@ merge:	new_node_name = strdup(new_job_ptr->nodes);
 		xstrfmtcat(resp, "%s ENODEREPLACEFAIL %s:",
 			   SLURM_VERSION_STRING,
 			   slurm_strerror(rc));
-		pthread_mutex_lock(&job_fail_mutex);	/* Resume lock */
+		slurm_mutex_lock(&job_fail_mutex);	/* Resume lock */
 		goto fini;
 	}
 	_kill_job(new_job_ptr->job_id, cmd_uid);
-	pthread_mutex_lock(&job_fail_mutex);	/* Resume lock */
+	slurm_mutex_lock(&job_fail_mutex);	/* Resume lock */
 
 	/* Grow the size of the old job to include the new node */
 	slurm_init_job_desc_msg(&job_alloc_req);
 	job_alloc_req.job_id	= job_id;
 	job_alloc_req.min_nodes	= INFINITE;
-	rc = update_job(&job_alloc_req, cmd_uid);
+	rc = _update_job(&job_alloc_req, cmd_uid);
 	if (rc) {
 		info("slurmctld/nonstop: can not grow job %u: %s",
 		     job_id, slurm_strerror(rc));
@@ -1441,12 +1447,13 @@ merge:	new_node_name = strdup(new_job_ptr->nodes);
 		job_alloc_req.job_id	= job_id;
 		job_alloc_req.req_nodes	= hostlist_ranged_string_xmalloc(hl);
 		hostlist_destroy(hl);
-		rc = update_job(&job_alloc_req, cmd_uid);
+		rc = _update_job(&job_alloc_req, cmd_uid);
 		if (rc) {
 			info("slurmctld/nonstop: can remove failing node %s "
 			     "from job %u: %s",
 			     node_name, job_id, slurm_strerror(rc));
 		}
+		xfree(job_alloc_req.req_nodes);
 	}
 
 	/* Work complete */
@@ -1471,7 +1478,7 @@ merge:	new_node_name = strdup(new_job_ptr->nodes);
 	}
 
 fini:	job_fail_update_time = time(NULL);
-	pthread_mutex_unlock(&job_fail_mutex);
+	slurm_mutex_unlock(&job_fail_mutex);
 	if (new_node_name)
 		free(new_node_name);
 	debug("%s: replying to library: %s", __func__, resp);
@@ -1542,7 +1549,7 @@ extern char *show_job(char *cmd_ptr, uid_t cmd_uid, uint32_t protocol_version)
 	sep1 = cmd_ptr + 15;
 	job_id = atoi(sep1);
 
-	pthread_mutex_lock(&job_fail_mutex);
+	slurm_mutex_lock(&job_fail_mutex);
 
 	job_fail_ptr = list_find_first(job_fail_list, _job_fail_find, &job_id);
 	if (!job_fail_ptr || !_valid_job_ptr(job_fail_ptr)) {
@@ -1611,7 +1618,7 @@ extern char *show_job(char *cmd_ptr, uid_t cmd_uid, uint32_t protocol_version)
 	xstrfmtcat(resp, "TIME_EXTEND_AVAIL %u",
 		   job_fail_ptr->time_extend_avail);
 
-fini:	pthread_mutex_unlock(&job_fail_mutex);
+fini:	slurm_mutex_unlock(&job_fail_mutex);
 	debug("%s: replying to library: %s", __func__, resp);
 	return resp;
 }
@@ -1635,7 +1642,7 @@ extern char *time_incr(char *cmd_ptr, uid_t cmd_uid, uint32_t protocol_version)
 	sep1 = cmd_ptr + 16;
 	job_id = atoi(sep1);
 
-	pthread_mutex_lock(&job_fail_mutex);
+	slurm_mutex_lock(&job_fail_mutex);
 	sep1 = strstr(cmd_ptr + 16, "MINUTES:");
 	if (!sep1) {
 		xstrfmtcat(resp, "%s ECMD", SLURM_VERSION_STRING);
@@ -1674,7 +1681,7 @@ extern char *time_incr(char *cmd_ptr, uid_t cmd_uid, uint32_t protocol_version)
 		job_specs.job_id = job_id;
 		job_specs.time_limit  = job_fail_ptr->job_ptr->time_limit;
 		job_specs.time_limit += minutes;
-		rc = update_job(&job_specs, cmd_uid);
+		rc = _update_job(&job_specs, cmd_uid);
 	}
 	if (rc) {
 		xstrfmtcat(resp, "%s EJOBUPDATE %s", SLURM_VERSION_STRING,
@@ -1685,7 +1692,7 @@ extern char *time_incr(char *cmd_ptr, uid_t cmd_uid, uint32_t protocol_version)
 	}
 
 fini:	job_fail_update_time = time(NULL);
-	pthread_mutex_unlock(&job_fail_mutex);
+	slurm_mutex_unlock(&job_fail_mutex);
 	debug("%s: replying to library: %s", __func__, resp);
 	return resp;
 }
@@ -1705,7 +1712,7 @@ static void _send_event_callbacks(void)
 	if (!job_fail_list)
 		return;
 
-	pthread_mutex_lock(&job_fail_mutex);
+	slurm_mutex_lock(&job_fail_mutex);
 	job_iterator = list_iterator_create(job_fail_list);
 	while ((job_fail_ptr = (job_failures_t *) list_next(job_iterator))) {
 		if (job_fail_ptr->callback_flags == 0)
@@ -1726,7 +1733,7 @@ static void _send_event_callbacks(void)
 			job_fail_ptr->callback_flags = 0;
 			callback_jobid = job_fail_ptr->job_id;
 			/* Release locks for I/O, which could be slow */
-			pthread_mutex_unlock(&job_fail_mutex);
+			slurm_mutex_unlock(&job_fail_mutex);
 			fd = slurm_open_msg_conn(&callback_addr);
 			sent = 0;
 			if (fd < 0) {
@@ -1734,7 +1741,7 @@ static void _send_event_callbacks(void)
 				      callback_jobid);
 				goto io_fini;
 			}
-			sent = _slurm_msg_sendto_timeout(fd,
+			sent = slurm_msg_sendto_timeout(fd,
 					(char *) &callback_flags,
 					sizeof(uint32_t), 0, 100000);
 			while ((slurm_shutdown_msg_conn(fd) < 0) &&
@@ -1745,7 +1752,7 @@ static void _send_event_callbacks(void)
 				}
 			}
 			/* Reset locks and clean-up as needed */
-io_fini:		pthread_mutex_lock(&job_fail_mutex);
+io_fini:		slurm_mutex_lock(&job_fail_mutex);
 			if ((sent != sizeof(uint32_t)) &&
 			    (job_fail_ptr->magic == FAILURE_MAGIC) &&
 			    (callback_jobid == job_fail_ptr->job_id)) {
@@ -1757,7 +1764,7 @@ io_fini:		pthread_mutex_lock(&job_fail_mutex);
 	}
 	list_iterator_destroy(job_iterator);
 	job_fail_save_time = time(NULL);
-	pthread_mutex_unlock(&job_fail_mutex);
+	slurm_mutex_unlock(&job_fail_mutex);
 }
 
 static void *_state_thread(void *no_data)
@@ -1768,7 +1775,7 @@ static void *_state_thread(void *no_data)
 
 	last_save_time = last_callback_time = time(NULL);
 	while (!thread_shutdown) {
-		sleep(1);
+		usleep(200000);
 
 		now = time(NULL);
 		if (difftime(now, last_callback_time) >= NONSTOP_EVENT_PERIOD) {
@@ -1788,21 +1795,15 @@ static void *_state_thread(void *no_data)
 /* Spawn thread to periodically save nonstop plugin state to disk */
 extern int spawn_state_thread(void)
 {
-	pthread_attr_t thread_attr_msg;
-
-	pthread_mutex_lock(&thread_flag_mutex);
+	slurm_mutex_lock(&thread_flag_mutex);
 	if (thread_running) {
-		pthread_mutex_unlock(&thread_flag_mutex);
+		slurm_mutex_unlock(&thread_flag_mutex);
 		return SLURM_ERROR;
 	}
 
-	slurm_attr_init(&thread_attr_msg);
-	if (pthread_create(&msg_thread_id, &thread_attr_msg,
-			   _state_thread, NULL))
-		fatal("pthread_create %m");
-	slurm_attr_destroy(&thread_attr_msg);
+	slurm_thread_create(&msg_thread_id, _state_thread, NULL);
 	thread_running = true;
-	pthread_mutex_unlock(&thread_flag_mutex);
+	slurm_mutex_unlock(&thread_flag_mutex);
 
 	return SLURM_SUCCESS;
 }
@@ -1810,7 +1811,7 @@ extern int spawn_state_thread(void)
 /* Terminate thread used to periodically save nonstop plugin state to disk */
 extern void term_state_thread(void)
 {
-	pthread_mutex_lock(&thread_flag_mutex);
+	slurm_mutex_lock(&thread_flag_mutex);
 	if (thread_running) {
 		thread_shutdown = true;
 		pthread_join(msg_thread_id, NULL);
@@ -1818,5 +1819,5 @@ extern void term_state_thread(void)
 		thread_shutdown = false;
 		thread_running = false;
 	}
-	pthread_mutex_unlock(&thread_flag_mutex);
+	slurm_mutex_unlock(&thread_flag_mutex);
 }

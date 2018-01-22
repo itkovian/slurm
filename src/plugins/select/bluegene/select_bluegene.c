@@ -8,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -69,10 +69,10 @@ time_t last_job_update __attribute__((weak_import));
 char *alpha_num  __attribute__((weak_import)) =
 	"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 void *acct_db_conn  __attribute__((weak_import)) = NULL;
-char *slurmctld_cluster_name  __attribute__((weak_import)) = NULL;
 slurmdb_cluster_rec_t *working_cluster_rec  __attribute__((weak_import)) = NULL;
 uint32_t g_qos_count __attribute__((weak_import));
 List assoc_mgr_qos_list __attribute__((weak_import)) = NULL;
+bool  ignore_state_errors __attribute__((weak_import)) = true;
 #else
 slurmctld_config_t slurmctld_config;
 slurm_ctl_conf_t slurmctld_conf;
@@ -84,10 +84,10 @@ time_t last_node_update;
 time_t last_job_update;
 char *alpha_num = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 void *acct_db_conn = NULL;
-char *slurmctld_cluster_name = NULL;
 slurmdb_cluster_rec_t *working_cluster_rec = NULL;
 uint32_t g_qos_count;
 List assoc_mgr_qos_list = NULL;
+bool ignore_state_errors = true;
 #endif
 
 /*
@@ -112,16 +112,13 @@ List assoc_mgr_qos_list = NULL;
  * only load select plugins if the plugin_type string has a
  * prefix of "select/".
  *
- * plugin_version - an unsigned 32-bit integer giving the version number
- * of the plugin.  If major and minor revisions are desired, the major
- * version number may be multiplied by a suitable magnitude constant such
- * as 100 or 1000.  Various SLURM versions will likely require a certain
- * minimum version for their plugins as the node selection API matures.
+ * plugin_version - an unsigned 32-bit integer containing the Slurm version
+ * (major.minor.micro combined into a single number).
  */
 const char plugin_name[]       	= "BlueGene node selection plugin";
 const char plugin_type[]       	= "select/bluegene";
-const uint32_t plugin_id	= 100;
-const uint32_t plugin_version	= 110;
+const uint32_t plugin_id	= SELECT_PLUGIN_BLUEGENE;
+const uint32_t plugin_version	= SLURM_VERSION_NUMBER;
 
 /* Global variables */
 bg_config_t *bg_conf = NULL;
@@ -132,17 +129,18 @@ int blocks_are_created = 0;
 int num_unused_cpus = 0;
 int num_possible_unused_cpus = 0;
 slurmctld_lock_t job_read_lock = {
-	NO_LOCK, READ_LOCK, NO_LOCK, NO_LOCK };
+	NO_LOCK, READ_LOCK, NO_LOCK, NO_LOCK, NO_LOCK };
+slurmctld_lock_t node_write_lock = {
+	NO_LOCK, READ_LOCK, WRITE_LOCK, NO_LOCK, NO_LOCK };
+slurmctld_lock_t part_write_lock = {
+	NO_LOCK, READ_LOCK, WRITE_LOCK, WRITE_LOCK, NO_LOCK };
 
 extern int select_p_alter_node_cnt(enum select_node_cnt type, void *data);
 
 static void _destroy_bg_config(bg_config_t *bg_conf)
 {
 	if (bg_conf) {
-		if (bg_conf->blrts_list) {
-			list_destroy(bg_conf->blrts_list);
-			bg_conf->blrts_list = NULL;
-		}
+		FREE_NULL_LIST(bg_conf->blrts_list);
 
 		xfree(bg_conf->bridge_api_file);
 
@@ -150,22 +148,9 @@ static void _destroy_bg_config(bg_config_t *bg_conf)
 		xfree(bg_conf->default_linuximage);
 		xfree(bg_conf->default_mloaderimage);
 		xfree(bg_conf->default_ramdiskimage);
-
-		if (bg_conf->linux_list) {
-			list_destroy(bg_conf->linux_list);
-			bg_conf->linux_list = NULL;
-		}
-
-		if (bg_conf->mloader_list) {
-			list_destroy(bg_conf->mloader_list);
-			bg_conf->mloader_list = NULL;
-		}
-
-		if (bg_conf->ramdisk_list) {
-			list_destroy(bg_conf->ramdisk_list);
-			bg_conf->ramdisk_list = NULL;
-		}
-
+		FREE_NULL_LIST(bg_conf->linux_list);
+		FREE_NULL_LIST(bg_conf->mloader_list);
+		FREE_NULL_LIST(bg_conf->ramdisk_list);
 		FREE_NULL_BITMAP(bg_conf->reboot_qos_bitmap);
 		xfree(bg_conf->slurm_user_name);
 		xfree(bg_conf->slurm_node_prefix);
@@ -176,38 +161,17 @@ static void _destroy_bg_config(bg_config_t *bg_conf)
 static void _destroy_bg_lists(bg_lists_t *bg_lists)
 {
 	if (bg_lists) {
-		if (bg_lists->booted) {
-			list_destroy(bg_lists->booted);
-			bg_lists->booted = NULL;
-		}
+		FREE_NULL_LIST(bg_lists->booted);
 
 		if (bg_lists->job_running) {
-			list_destroy(bg_lists->job_running);
-			bg_lists->job_running = NULL;
+			FREE_NULL_LIST(bg_lists->job_running);
 			num_unused_cpus = 0;
 		}
-
-		if (bg_lists->main) {
-			list_destroy(bg_lists->main);
-			bg_lists->main = NULL;
-		}
-
-		if (bg_lists->valid_small32) {
-			list_destroy(bg_lists->valid_small32);
-			bg_lists->valid_small32 = NULL;
-		}
-		if (bg_lists->valid_small64) {
-			list_destroy(bg_lists->valid_small64);
-			bg_lists->valid_small64 = NULL;
-		}
-		if (bg_lists->valid_small128) {
-			list_destroy(bg_lists->valid_small128);
-			bg_lists->valid_small128 = NULL;
-		}
-		if (bg_lists->valid_small256) {
-			list_destroy(bg_lists->valid_small256);
-			bg_lists->valid_small256 = NULL;
-		}
+		FREE_NULL_LIST(bg_lists->main);
+		FREE_NULL_LIST(bg_lists->valid_small32);
+		FREE_NULL_LIST(bg_lists->valid_small64);
+		FREE_NULL_LIST(bg_lists->valid_small128);
+		FREE_NULL_LIST(bg_lists->valid_small256);
 
 		xfree(bg_lists);
 	}
@@ -256,8 +220,8 @@ static int _delete_old_blocks(List curr_block_list, List found_block_list)
 		while ((init_record = list_next(itr_curr))) {
 			itr_found = list_iterator_create(found_block_list);
 			while ((found_record = list_next(itr_found))) {
-				if (!strcmp(init_record->bg_block_id,
-					    found_record->bg_block_id)) {
+				if (!xstrcmp(init_record->bg_block_id,
+					     found_record->bg_block_id)) {
 					/* don't delete this one */
 					break;
 				}
@@ -320,7 +284,7 @@ static int _delete_old_blocks(List curr_block_list, List found_block_list)
 	slurm_mutex_unlock(&block_state_mutex);
 
 	free_block_list(NO_VAL, destroy_list, 1, 0);
-	list_destroy(destroy_list);
+	FREE_NULL_LIST(destroy_list);
 
 	return SLURM_SUCCESS;
 }
@@ -332,16 +296,13 @@ static void _set_bg_lists()
 
 	slurm_mutex_lock(&block_state_mutex);
 
-	if (bg_lists->booted)
-		list_destroy(bg_lists->booted);
+	FREE_NULL_LIST(bg_lists->booted);
 	bg_lists->booted = list_create(NULL);
 
-	if (bg_lists->job_running)
-		list_destroy(bg_lists->job_running);
+	FREE_NULL_LIST(bg_lists->job_running);
 	bg_lists->job_running = list_create(NULL);
 
-	if (bg_lists->main)
-		list_destroy(bg_lists->main);
+	FREE_NULL_LIST(bg_lists->main);
 	bg_lists->main = list_create(destroy_bg_record);
 
 	slurm_mutex_unlock(&block_state_mutex);
@@ -379,7 +340,7 @@ static bg_record_t *_translate_info_2_record(block_info_t *block_info)
 	if (block_info->ionode_str) {
 		ba_set_ionode_str(bg_record);
 		if (!bg_record->ionode_str
-		    || strcmp(block_info->ionode_str, bg_record->ionode_str)) {
+		    || xstrcmp(block_info->ionode_str, bg_record->ionode_str)) {
 			error("block %s didn't compute with the correct "
 			      "ionode_str.  Stored as '%s' and "
 			      "came back as '%s'",
@@ -484,7 +445,7 @@ static void _pack_block(bg_record_t *bg_record, Buf buffer,
 	struct job_record *job_ptr;
 	ListIterator itr;
 
-	if (protocol_version >= SLURM_2_5_PROTOCOL_VERSION) {
+	if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
 		packstr(bg_record->bg_block_id, buffer);
 		packstr(bg_record->blrtsimage, buffer);
 		pack_bit_fmt(bg_record->mp_bitmap, buffer);
@@ -529,8 +490,6 @@ static void _pack_block(bg_record_t *bg_record, Buf buffer,
 		} else
 			pack32(count, buffer);
 
-		count = NO_VAL;
-
 		packstr(bg_record->linuximage, buffer);
 		packstr(bg_record->mloaderimage, buffer);
 		packstr(bg_record->mp_str, buffer);
@@ -554,7 +513,7 @@ static void _pack_block_ext(bg_record_t *bg_record, Buf buffer,
 
 	xassert(bg_record);
 
-	if (protocol_version >= SLURM_2_5_PROTOCOL_VERSION) {
+	if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
 		if (bg_record->ba_mp_list)
 			count = list_count(bg_record->ba_mp_list);
 		pack32(count, buffer);
@@ -588,7 +547,7 @@ static int _unpack_block_ext(bg_record_t *bg_record, Buf buffer,
 	uint16_t temp16;
 	uint32_t temp32;
 
-	if (protocol_version >= SLURM_2_5_PROTOCOL_VERSION) {
+	if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
 		safe_unpack32(&count, buffer);
 		if (count == NO_VAL) {
 			error("_unpack_block_ext: bg_record record has no "
@@ -631,7 +590,7 @@ static int _unpack_block_ext(bg_record_t *bg_record, Buf buffer,
 unpack_error:
 	error("Problem unpacking extended block info for %s, "
 	      "removing from list",
-	      bg_record->bg_block_id);
+	      bg_record ? bg_record->bg_block_id : "Uknown block");
 	return SLURM_ERROR;
 }
 
@@ -653,7 +612,7 @@ static int _load_state_file(List curr_block_list, char *dir_name)
 	struct part_record *part_ptr = NULL;
 	bitstr_t *usable_mp_bitmap = NULL;
 	ListIterator itr = NULL;
-	uint16_t protocol_version = (uint16_t)NO_VAL;
+	uint16_t protocol_version = NO_VAL16;
 	uint32_t record_count;
 
 	xassert(curr_block_list);
@@ -693,14 +652,12 @@ static int _load_state_file(List curr_block_list, char *dir_name)
 	buffer = create_buf(data, data_size);
 	safe_unpackstr_xmalloc(&ver_str, &ver_str_len, buffer);
 	debug3("Version string in block_state header is %s", ver_str);
-	if (ver_str) {
-		if (!strcmp(ver_str, BLOCK_STATE_VERSION)) {
-			safe_unpack16(&protocol_version, buffer);
-		} else
-			protocol_version = SLURM_2_6_PROTOCOL_VERSION;
-	}
+	if (ver_str && !xstrcmp(ver_str, BLOCK_STATE_VERSION))
+		safe_unpack16(&protocol_version, buffer);
 
-	if (protocol_version == (uint16_t)NO_VAL) {
+	if (protocol_version == NO_VAL16) {
+		if (!ignore_state_errors)
+			fatal("Can not recover block state, data version incompatible, start with '-i' to ignore this");
 		error("***********************************************");
 		error("Can not recover block state, "
 		      "data version incompatible");
@@ -759,7 +716,7 @@ static int _load_state_file(List curr_block_list, char *dir_name)
 			error("block %s(%s) can't be made in the current "
 			      "system, but was around in the previous one.",
 			      bg_record->bg_block_id, bg_record->mp_str);
-			list_destroy(results);
+			FREE_NULL_LIST(results);
 			destroy_bg_record(bg_record);
 			continue;
 		}
@@ -811,7 +768,7 @@ static int _load_state_file(List curr_block_list, char *dir_name)
 			if (!name) {
 				error("I was unable to make the "
 				      "requested block.");
-				list_destroy(results);
+				FREE_NULL_LIST(results);
 				destroy_bg_record(bg_record);
 				bg_record = NULL;
 				continue;
@@ -823,21 +780,20 @@ static int _load_state_file(List curr_block_list, char *dir_name)
 				 name);
 
 			xfree(name);
-			if (strcmp(temp, bg_record->mp_str)) {
+			if (xstrcmp(temp, bg_record->mp_str)) {
 				fatal("bad wiring in preserved state "
 				      "(found %s, but allocated %s) "
 				      "YOU MUST COLDSTART",
 				      bg_record->mp_str, temp);
 			}
-			if (bg_record->ba_mp_list)
-				list_destroy(bg_record->ba_mp_list);
+			FREE_NULL_LIST(bg_record->ba_mp_list);
 #ifdef HAVE_BGQ
 			bg_record->ba_mp_list =	results;
 			results = NULL;
 #else
 			bg_record->ba_mp_list =	list_create(destroy_ba_mp);
 			copy_node_path(results, &bg_record->ba_mp_list);
-			list_destroy(results);
+			FREE_NULL_LIST(results);
 #endif
 		}
 
@@ -857,9 +813,11 @@ static int _load_state_file(List curr_block_list, char *dir_name)
 	return SLURM_SUCCESS;
 
 unpack_error:
+	if (!ignore_state_errors)
+		fatal("Incomplete block data checkpoint file, start with '-i' to ignore this");
+	error("Incomplete block data checkpoint file");
 	FREE_NULL_BITMAP(usable_mp_bitmap);
 	slurm_mutex_unlock(&block_state_mutex);
-	error("Incomplete block data checkpoint file");
 	free_buf(buffer);
 
 	return SLURM_FAILURE;
@@ -938,7 +896,9 @@ static int _validate_config_blocks(List curr_block_list,
 
 	/* read in state from last run. */
 	if (bg_recover)
-		rc = _load_state_file(curr_block_list, dir);
+		rc = _load_state_file(curr_block_list, dir); /* False Clang
+							      * Positive
+							      */
 
 #ifndef HAVE_BG_FILES
 	if (rc != SLURM_SUCCESS)
@@ -1009,7 +969,7 @@ static int _validate_config_blocks(List curr_block_list,
 					   parse_blockreq() function.
 					*/
 					if (bg_record->conn_type[dim] ==
-					    (uint16_t)NO_VAL) {
+					    NO_VAL16) {
 						dim = SYSTEM_DIMENSIONS;
 						break;
 					}
@@ -1273,17 +1233,13 @@ extern int init(void)
 		bg_conf->slurm_debug_level = slurmctld_conf.slurmctld_debug;
 		slurm_conf_unlock();
 
-		if (bg_conf->blrts_list)
-			list_destroy(bg_conf->blrts_list);
+		FREE_NULL_LIST(bg_conf->blrts_list);
 		bg_conf->blrts_list = list_create(destroy_image);
-		if (bg_conf->linux_list)
-			list_destroy(bg_conf->linux_list);
+		FREE_NULL_LIST(bg_conf->linux_list);
 		bg_conf->linux_list = list_create(destroy_image);
-		if (bg_conf->mloader_list)
-			list_destroy(bg_conf->mloader_list);
+		FREE_NULL_LIST(bg_conf->mloader_list);
 		bg_conf->mloader_list = list_create(destroy_image);
-		if (bg_conf->ramdisk_list)
-			list_destroy(bg_conf->ramdisk_list);
+		FREE_NULL_LIST(bg_conf->ramdisk_list);
 		bg_conf->ramdisk_list = list_create(destroy_image);
 		bg_conf->reboot_qos_bitmap = NULL;
 
@@ -1461,10 +1417,8 @@ extern int select_p_state_restore(char *dir_name)
 		}
 	}
 
-	list_destroy(curr_block_list);
-	curr_block_list = NULL;
-	list_destroy(found_block_list);
-	found_block_list = NULL;
+	FREE_NULL_LIST(curr_block_list);
+	FREE_NULL_LIST(found_block_list);
 
 	slurm_mutex_lock(&block_state_mutex);
 	last_bg_update = time(NULL);
@@ -1504,7 +1458,7 @@ extern int select_p_node_init(struct node_record *node_ptr_array, int node_cnt)
 {
 #ifdef HAVE_BG
 	int i = 0;
-	uint32_t real_memory, threads, cores;
+	uint64_t real_memory, threads, cores;
 
 	if (!node_ptr_array)
 		return SLURM_SUCCESS;
@@ -1564,6 +1518,11 @@ extern int select_p_node_init(struct node_record *node_ptr_array, int node_cnt)
 		nodeinfo->ba_mp->state = node_ptr->node_state;
 		slurm_mutex_unlock(&ba_system_mutex);
 	}
+
+	/* Always send false for fast_schedule since we will use the
+	   hardcoded values above.
+	*/
+	cr_init_global_core_data(node_ptr_array, node_cnt, false);
 
 	return SLURM_SUCCESS;
 #else
@@ -1638,7 +1597,7 @@ extern int select_p_block_init(List part_list)
 
 /*
  * select_p_job_test - Given a specification of scheduling requirements,
- *	identify the nodes which "best" satify the request. The specified
+ *	identify the nodes which "best" satisfy the request. The specified
  *	nodes may be DOWN or BUSY at the time of this test as may be used
  *	to deterime if a job could ever run.
  * IN/OUT job_ptr - pointer to job being scheduled start_time is set
@@ -1679,7 +1638,7 @@ extern int select_p_job_test(struct job_record *job_ptr, bitstr_t *bitmap,
 
 	return submit_job(job_ptr, bitmap, min_nodes, max_nodes,
 			  req_nodes, mode, preemptee_candidates,
-			  preemptee_job_list);
+			  preemptee_job_list, exc_core_bitmap);
 #else
 	return SLURM_ERROR;
 #endif
@@ -1744,7 +1703,7 @@ extern int select_p_job_ready(struct job_record *job_ptr)
 			} else if (!bg_record->free_cnt
 				   && (uid == job_ptr->user_id)
 				   && (bg_record->state == BG_BLOCK_INITED)) {
-				/* Clear the state just incase we
+				/* Clear the state just in case we
 				 * missed it somehow. */
 				job_ptr->job_state &= (~JOB_CONFIGURING);
 				last_job_update = time(NULL);
@@ -1793,6 +1752,11 @@ extern int select_p_job_expand(struct job_record *from_job_ptr,
 }
 
 extern int select_p_job_signal(struct job_record *job_ptr, int signal)
+{
+	return SLURM_SUCCESS;
+}
+
+extern int select_p_job_mem_confirm(struct job_record *job_ptr)
 {
 	return SLURM_SUCCESS;
 }
@@ -2043,7 +2007,7 @@ extern bitstr_t *select_p_step_pick_nodes(struct job_record *job_ptr,
 			char rel_str[step_jobinfo->dim_cnt+1];
 			for (dim = 0; dim < step_jobinfo->dim_cnt; dim++) {
 				if (step_jobinfo->conn_type[dim]
-				    == (uint16_t)NO_VAL)
+				    == NO_VAL16)
 					rel_str[dim] = alpha_num[0];
 				else
 					rel_str[dim] = alpha_num[
@@ -2074,7 +2038,7 @@ extern int select_p_step_start(struct step_record *step_ptr)
 	return SLURM_SUCCESS;
 }
 
-extern int select_p_step_finish(struct step_record *step_ptr)
+extern int select_p_step_finish(struct step_record *step_ptr, bool killing_step)
 {
 	bg_record_t *bg_record = NULL;
 	select_jobinfo_t *jobinfo = NULL, *step_jobinfo = NULL;
@@ -2083,8 +2047,11 @@ extern int select_p_step_finish(struct step_record *step_ptr)
 
 	xassert(step_ptr);
 
+	if (killing_step)	/* Do not care if SIGKILL being sent to step */
+		return SLURM_SUCCESS;
 
-	if (IS_JOB_COMPLETING(step_ptr->job_ptr)) {
+	if (IS_JOB_COMPLETING(step_ptr->job_ptr) ||
+	    IS_JOB_FINISHED(step_ptr->job_ptr)) {
 		debug("step completion %u.%u was received after job "
 		      "allocation is already completing, no cleanup needed",
 		      step_ptr->job_ptr->job_id, step_ptr->step_id);
@@ -2169,7 +2136,7 @@ extern int select_p_pack_select_info(time_t last_query_time,
 		pack32(blocks_packed, buffer);
 		pack_time(last_bg_update, buffer);
 
-		if (protocol_version >= SLURM_2_5_PROTOCOL_VERSION) {
+		if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
 			if (bg_lists->main) {
 				/* Lock job read before block to avoid
 				 * deadlock job lock is needed because
@@ -2401,8 +2368,7 @@ extern int select_p_update_block(update_block_msg_t *block_desc_ptr)
 	if (kill_job_list) {
 		slurm_mutex_unlock(&block_state_mutex);
 		bg_status_process_kill_job_list(kill_job_list, JOB_FAILED, 0);
-		list_destroy(kill_job_list);
-		kill_job_list = NULL;
+		FREE_NULL_LIST(kill_job_list);
 		slurm_mutex_lock(&block_state_mutex);
 		if (!block_ptr_exist_in_list(bg_lists->main, bg_record)) {
 			slurm_mutex_unlock(&block_state_mutex);
@@ -2478,7 +2444,7 @@ extern int select_p_update_block(update_block_msg_t *block_desc_ptr)
 		if (bg_conf->layout_mode == LAYOUT_DYNAMIC)
 			delete_it = 1;
 		free_block_list(NO_VAL, delete_list, delete_it, 0);
-		list_destroy(delete_list);
+		FREE_NULL_LIST(delete_list);
 		put_block_in_error_state(bg_record, reason);
 	} else if (block_desc_ptr->state == BG_BLOCK_FREE) {
 		/* Resume the block first and then free the block */
@@ -2610,7 +2576,7 @@ extern int select_p_update_block(update_block_msg_t *block_desc_ptr)
 
 		slurm_mutex_unlock(&block_state_mutex);
 		free_block_list(NO_VAL, delete_list, 1, 0);
-		list_destroy(delete_list);
+		FREE_NULL_LIST(delete_list);
 	} else if (block_desc_ptr->state == BG_BLOCK_BOOTING) {
 		/* This means recreate the block, remove it and then
 		   recreate it.
@@ -2783,7 +2749,7 @@ extern int select_p_update_sub_node (update_block_msg_t *block_desc_ptr)
 
 	if (set != 2) {
 		error("update_sub_node: "
-		      "I didn't get the base partition and the sub part.");
+		      "I didn't get the midplane and the sub mp.");
 		rc = SLURM_ERROR;
 		goto end_it;
 	}
@@ -3074,7 +3040,7 @@ extern int select_p_alter_node_cnt(enum select_node_cnt type, void *data)
 		}
 		break;
 	case SELECT_GET_NODE_CPU_CNT:
-		if ((*cpus) != (uint16_t)INFINITE)
+		if ((*cpus) != INFINITE16)
 			(*cpus) = bg_conf->cpu_ratio;
 		break;
 	case SELECT_GET_MP_CPU_CNT:
@@ -3123,7 +3089,7 @@ extern int select_p_alter_node_cnt(enum select_node_cnt type, void *data)
 		set_select_jobinfo(job_desc->select_jobinfo->data,
 				   SELECT_JOBDATA_ALTERED, &tmp);
 
-		if (job_desc->min_nodes == (uint32_t) NO_VAL)
+		if (job_desc->min_nodes == NO_VAL)
 			return SLURM_SUCCESS;
 
 #ifdef HAVE_BG_L_P
@@ -3136,7 +3102,7 @@ extern int select_p_alter_node_cnt(enum select_node_cnt type, void *data)
 			 && (job_desc->min_cpus != NO_VAL)) {
 			job_desc->min_nodes = job_desc->min_cpus;
 			if (job_desc->ntasks_per_node
-			    && job_desc->ntasks_per_node != (uint16_t)NO_VAL)
+			    && job_desc->ntasks_per_node != NO_VAL16)
 				job_desc->min_nodes /=
 					job_desc->ntasks_per_node;
 		}
@@ -3146,7 +3112,7 @@ extern int select_p_alter_node_cnt(enum select_node_cnt type, void *data)
 				   SELECT_JOBDATA_GEOMETRY, &req_geometry);
 
 		if (req_geometry[0] != 0
-		    && req_geometry[0] != (uint16_t)NO_VAL) {
+		    && req_geometry[0] != NO_VAL16) {
 			job_desc->min_nodes = 1;
 			for (i=0; i<SYSTEM_DIMENSIONS; i++)
 				job_desc->min_nodes *=
@@ -3178,7 +3144,7 @@ extern int select_p_alter_node_cnt(enum select_node_cnt type, void *data)
 					 * validated beforehand. */
 					if (job_desc->ntasks_per_node
 					    && (job_desc->ntasks_per_node
-						!= (uint16_t)NO_VAL))
+						!= NO_VAL16))
 						divisor = (float)job_desc->
 							ntasks_per_node
 							/ bg_conf->cpu_ratio;
@@ -3207,11 +3173,11 @@ extern int select_p_alter_node_cnt(enum select_node_cnt type, void *data)
 		/* initialize min_cpus to the min_nodes */
 		job_desc->min_cpus = job_desc->min_nodes * bg_conf->cpu_ratio;
 
-		if ((job_desc->max_nodes == (uint32_t) NO_VAL)
+		if ((job_desc->max_nodes == NO_VAL)
 		    || (job_desc->max_nodes < job_desc->min_nodes))
 			job_desc->max_nodes = job_desc->min_nodes;
 
-		/* See if min_nodes is greater than one base partition */
+		/* See if min_nodes is greater than one midplane */
 		if (job_desc->min_nodes > bg_conf->mp_cnode_cnt) {
 			/*
 			 * if it is make sure it is a factor of
@@ -3344,14 +3310,15 @@ extern int select_p_reconfigure(void)
 #ifdef HAVE_BG
 	slurm_conf_lock();
 	if (!slurmctld_conf.slurm_user_name
-	    || strcmp(bg_conf->slurm_user_name, slurmctld_conf.slurm_user_name))
+	    || xstrcmp(bg_conf->slurm_user_name,
+		       slurmctld_conf.slurm_user_name))
 		error("The slurm user has changed from '%s' to '%s'.  "
 		      "If this is really what you "
 		      "want you will need to restart slurm for this "
 		      "change to be enforced in the bluegene plugin.",
 		      bg_conf->slurm_user_name, slurmctld_conf.slurm_user_name);
 	if (!slurmctld_conf.node_prefix
-	    || strcmp(bg_conf->slurm_node_prefix, slurmctld_conf.node_prefix))
+	    || xstrcmp(bg_conf->slurm_node_prefix, slurmctld_conf.node_prefix))
 		error("Node Prefix has changed from '%s' to '%s'.  "
 		      "If this is really what you "
 		      "want you will need to restart slurm for this "
@@ -3368,10 +3335,13 @@ extern int select_p_reconfigure(void)
 #endif
 }
 
-extern bitstr_t *select_p_resv_test(bitstr_t *avail_bitmap, uint32_t node_cnt,
-				    uint32_t *core_cnt, bitstr_t **core_bitmap,
-				    uint32_t flags)
+extern bitstr_t *select_p_resv_test(resv_desc_msg_t *resv_desc_ptr,
+				    uint32_t node_cnt,
+				    bitstr_t *avail_bitmap,
+				    bitstr_t **core_bitmap)
 {
+
+	bitstr_t *tmp_bitmap = NULL;
 #ifdef HAVE_BG
 	/* Reserve a block of appropriate geometry by issuing a fake job
 	 * WILL_RUN call */
@@ -3381,58 +3351,136 @@ extern bitstr_t *select_p_resv_test(bitstr_t *avail_bitmap, uint32_t node_cnt,
 	uint16_t geo[SYSTEM_DIMENSIONS];
 	uint16_t reboot = 0;
 	uint16_t rotate = 1;
-	List preemptee_candidates, preemptee_job_list;
+	List preemptee_candidates = NULL, preemptee_job_list = NULL;
 	struct job_record job_rec;
-	bitstr_t *tmp_bitmap;
+	select_jobinfo_t *jobinfo;
+	uint16_t mode = SELECT_MODE_RESV;
+	static uint32_t cnodes_per_mp = 0;
+
+	if (!cnodes_per_mp)
+		select_p_alter_node_cnt(SELECT_GET_NODE_SCALING,
+					&cnodes_per_mp);
 
 	memset(&job_rec, 0, sizeof(struct job_record));
 	job_rec.details = xmalloc(sizeof(struct job_details));
 	job_rec.select_jobinfo = select_g_select_jobinfo_alloc();
+	jobinfo = job_rec.select_jobinfo->data;
 
 	tmp_u32 = 1;
-	set_select_jobinfo(job_rec.select_jobinfo->data,
-			   SELECT_JOBDATA_ALTERED, &tmp_u32);
-	set_select_jobinfo(job_rec.select_jobinfo->data,
-			   SELECT_JOBDATA_NODE_CNT, &node_cnt);
+	set_select_jobinfo(jobinfo, SELECT_JOBDATA_ALTERED, &tmp_u32);
+	set_select_jobinfo(jobinfo, SELECT_JOBDATA_NODE_CNT, &node_cnt);
 	for (i = 0; i < SYSTEM_DIMENSIONS; i++) {
 		conn_type[i] = SELECT_NAV;
 		geo[i] = 0;
 	}
-	select_g_select_jobinfo_set(job_rec.select_jobinfo,
-				    SELECT_JOBDATA_GEOMETRY, &geo);
-	select_g_select_jobinfo_set(job_rec.select_jobinfo,
-				    SELECT_JOBDATA_CONN_TYPE, &conn_type);
-	select_g_select_jobinfo_set(job_rec.select_jobinfo,
-				    SELECT_JOBDATA_REBOOT, &reboot);
-	select_g_select_jobinfo_set(job_rec.select_jobinfo,
-				    SELECT_JOBDATA_ROTATE, &rotate);
+	set_select_jobinfo(jobinfo, SELECT_JOBDATA_GEOMETRY, &geo);
+	set_select_jobinfo(jobinfo, SELECT_JOBDATA_CONN_TYPE, &conn_type);
+	set_select_jobinfo(jobinfo, SELECT_JOBDATA_REBOOT, &reboot);
+	set_select_jobinfo(jobinfo, SELECT_JOBDATA_ROTATE, &rotate);
+	if (resv_desc_ptr->core_cnt) {
+		uint32_t cores;
+		if (node_cnt > 1) {
+			error("select_p_resv_test: You can only reserve less "
+			      "than a midplane when only requesting 1, "
+			      "you requested %d", node_cnt);
+			rc = SLURM_ERROR;
+			goto end_it;
+		}
+		job_rec.details->min_cpus = jobinfo->cnode_cnt =
+			resv_desc_ptr->core_cnt[0];
+#ifdef HAVE_BGL
+		cores = 2;
+#elif defined HAVE_BGP
+		cores = 4;
+#else
+		/* BGQ */
+		cores = 16;
+#endif
+		job_rec.details->min_cpus *= cores;
+	} else {
+		jobinfo->cnode_cnt = node_cnt * cnodes_per_mp;
+		job_rec.details->min_cpus = node_cnt * bg_conf->cpus_per_mp;
+	}
 
-	job_rec.details->min_cpus = node_cnt * bg_conf->cpus_per_mp;
 	job_rec.details->max_cpus = job_rec.details->min_cpus;
-	tmp_bitmap = bit_copy(avail_bitmap);
+	job_rec.details->core_spec = NO_VAL16;
 
 	preemptee_candidates = list_create(NULL);
 
+	if (core_bitmap && *core_bitmap) {
+		int j = 0;
+		int offset;
+		/* If a midplane is full of reservations we must
+		 * update the avail_bitmap to reflect this so we can
+		 * move to another midplane.
+		 */
+		for (j = 0; j < bit_size(avail_bitmap); j++) {
+			if (!bit_test(avail_bitmap, j)) /* already set */
+				continue;
+			offset = cr_get_coremap_offset(j);
+			i = bit_clear_count_range(*core_bitmap, offset,
+						  offset+bg_conf->mp_cnode_cnt);
+			/* If there are less clear than we need mark
+			 * midplane as unusable.
+			 */
+			if (i < jobinfo->cnode_cnt)
+				bit_clear(avail_bitmap, j);
+		}
+	}
+
+	tmp_bitmap = bit_copy(avail_bitmap);
+
+	/* If the reservation is for maintanance ignore blocks in
+	 * error state.
+	 */
+	if (resv_desc_ptr->flags & RESERVE_FLAG_MAINT)
+		mode |= SELECT_MODE_IGN_ERR;
+
 	rc = submit_job(&job_rec, tmp_bitmap, node_cnt, node_cnt, node_cnt,
-			SELECT_MODE_WILL_RUN, preemptee_candidates,
-			&preemptee_job_list);
+			mode, preemptee_candidates, &preemptee_job_list,
+			core_bitmap ? *core_bitmap : NULL);
 
-	list_destroy(preemptee_candidates);
+end_it:
+	FREE_NULL_LIST(preemptee_candidates);
 	xfree(job_rec.details);
-	select_g_select_jobinfo_free(job_rec.select_jobinfo);
 
-	if (rc == SLURM_SUCCESS) {
-		char *resv_nodes = bitmap2node_name(tmp_bitmap);
+	if (rc == SLURM_SUCCESS && job_rec.start_time != INFINITE) {
+		xfree(resv_desc_ptr->node_list);
+		resv_desc_ptr->node_list = xstrdup_select_jobinfo(
+			jobinfo, SELECT_PRINT_NODES);
+		if (jobinfo->ionode_str) {
+			int offset = cr_get_coremap_offset(bit_ffs(tmp_bitmap));
+			if (!*core_bitmap)
+				*core_bitmap = cr_create_cluster_core_bitmap(
+					cnodes_per_mp);
+			else
+				bit_clear_all(*core_bitmap);
+
+			for (i=0; i < bg_conf->mp_cnode_cnt; i++) {
+				/* Skip any bit set, since unset bits
+				 * are those available to run on. */
+				if (bit_test(jobinfo->units_used, i))
+					continue;
+				bit_set(*core_bitmap, i+offset);
+			}
+		} else {
+			/* This means we ended up doing full nodes, so clear out
+			 * anything vestigal that would say otherwise.
+			 */
+			FREE_NULL_BITMAP(*core_bitmap);
+			xfree(resv_desc_ptr->core_cnt);
+		}
+
 		info("Reservation request for %u nodes satisfied with %s",
-		     node_cnt, resv_nodes);
-		xfree(resv_nodes);
-		return tmp_bitmap;
+		     node_cnt, resv_desc_ptr->node_list);
 	} else {
 		info("Reservation request for %u nodes failed", node_cnt);
 		FREE_NULL_BITMAP(tmp_bitmap);
+		FREE_NULL_BITMAP(*core_bitmap);
 	}
+	select_g_select_jobinfo_free(job_rec.select_jobinfo);
 #endif
-	return NULL;
+	return tmp_bitmap;
 }
 
 extern void select_p_ba_init(node_info_msg_t *node_info_ptr, bool sanity_check)
@@ -3452,4 +3500,14 @@ extern int *select_p_ba_get_dims(void)
 #else
 	return NULL;
 #endif
+}
+
+extern bitstr_t *select_p_ba_cnodelist2bitmap(char *cnodelist)
+{
+#ifdef HAVE_BG
+	return ba_cnodelist2bitmap(cnodelist);
+#else
+	return NULL;
+#endif
+
 }

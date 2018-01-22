@@ -5,13 +5,15 @@ AUTOMAKE_OPTIONS = foreign
 
 sbin_PROGRAMS = slurmstepd
 
-AM_CPPFLAGS = -I$(top_srcdir)
+AM_CPPFLAGS = -I$(top_srcdir) $(SSH2_CPPFLAGS)
 
-slurmstepd_LDADD = 				   \
+depend_libs = 				   \
 	$(top_builddir)/src/common/libdaemonize.la \
-	$(top_builddir)/src/api/libslurm.o $(DL_LIBS) \
-	$(PAM_LIBS) $(UTIL_LIBS) \
-	../common/libslurmd_common.la
+	../common/libslurmd_common.o
+
+slurmstepd_LDADD = $(depend_libs) $(LIB_SLURM) \
+	$(HWLOC_LDFLAGS) $(HWLOC_LIBS) \
+	$(DL_LIBS) $(PAM_LIBS) $(UTIL_LIBS) $(SSH2_LIBS)
 
 slurmstepd_SOURCES = 	        	\
 	slurmstepd.c slurmstepd.h	\
@@ -19,7 +21,6 @@ slurmstepd_SOURCES = 	        	\
 	task.c task.h			\
 	slurmstepd_job.c slurmstepd_job.h \
 	io.c io.h			\
-	fname.c fname.h			\
 	ulimits.c ulimits.h     	\
 	pdebug.c pdebug.h		\
 	pam_ses.c pam_ses.h		\
@@ -27,16 +28,16 @@ slurmstepd_SOURCES = 	        	\
 	multi_prog.c multi_prog.h	\
 	step_terminate_monitor.c step_terminate_monitor.h
 
-if HAVE_AIX
-# We need to set maxdata back to 0 because this effects the "max memory size"
-# ulimit, and the ulimit is inherited by child processes.
-slurmstepd_LDFLAGS = -export-dynamic $(CMD_LDFLAGS) \
-	$(HWLOC_LDFLAGS) $(HWLOC_LIBS) -Wl,-bmaxdata:0x0
+if WITH_SLURM_X11
+slurmstepd_SOURCES += x11_forwarding.c x11_forwarding.h
 else
-slurmstepd_LDFLAGS = -export-dynamic $(CMD_LDFLAGS) \
-	$(HWLOC_LDFLAGS) $(HWLOC_LIBS)
+EXTRA_slurmstepd_SOURCES = x11_forwarding.c x11_forwarding.h
 endif
 
+slurmstepd_LDFLAGS = -export-dynamic $(CMD_LDFLAGS) $(SSH2_LDFLAGS)
+
+slurmstepd_DEPENDENCIES = $(depend_libs) $(LIB_SLURM_BUILD)
+
 force:
-$(slurmstepd_LDADD) : force
+$(slurmstepd_DEPENDENCIES) : force
 	@cd `dirname $@` && $(MAKE) `basename $@`

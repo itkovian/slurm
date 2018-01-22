@@ -8,14 +8,11 @@ AM_CPPFLAGS = -I$(top_srcdir)
 
 sbin_PROGRAMS = slurmdbd
 
-slurmdbd_LDADD = 					\
-	$(top_builddir)/src/common/libdaemonize.la \
-	$(top_builddir)/src/api/libslurm.o $(DL_LIBS)
+depend_libs = $(top_builddir)/src/common/libdaemonize.la
+slurmdbd_LDADD = $(depend_libs) $(LIB_SLURM) $(DL_LIBS)
 
 
 slurmdbd_SOURCES = 		\
-	agent.c			\
-	agent.h			\
 	backup.c		\
 	backup.h		\
 	proc_req.c		\
@@ -27,9 +24,10 @@ slurmdbd_SOURCES = 		\
 	slurmdbd.c  		\
 	slurmdbd.h
 
-slurmdbd_LDFLAGS = -export-dynamic $(CMD_LDFLAGS) \
-	$(HWLOC_LDFLAGS) $(HWLOC_LIBS)
+slurmdbd_LDFLAGS = -export-dynamic $(CMD_LDFLAGS)
+
+slurmdbd_DEPENDENCIES = $(depend_libs) $(LIB_SLURM_BUILD)
 
 force:
-$(slurmdbd_LDADD) : force
+$(slurmdbd_DEPENDENCIES) : force
 	@cd `dirname $@` && $(MAKE) `basename $@`

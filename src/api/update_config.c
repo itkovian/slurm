@@ -1,6 +1,5 @@
 /****************************************************************************\
  *  update_config.c - request that slurmctld update its configuration
- *  $Id$
  *****************************************************************************
  *  Copyright (C) 2002-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
@@ -9,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -37,10 +36,6 @@
  *  with SLURM; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
-
-#ifdef HAVE_CONFIG_H
-#  include "config.h"
-#endif
 
 #include <errno.h>
 #include <stdio.h>
@@ -72,9 +67,75 @@ slurm_update_front_end (update_front_end_msg_t * front_end_msg)
  * RET 0 on success, otherwise return -1 and set errno to indicate the error
  */
 int
-slurm_update_job ( job_desc_msg_t * job_msg)
+slurm_update_job (job_desc_msg_t * job_msg)
 {
+	if (job_msg->job_id_str) {
+		error("Use slurm_update_job2() rather than slurm_update_job() "
+		      "with job_msg->job_id_str to get multiple error codes "
+		      "for various job array task and avoid memory leaks");
+	}
 	return _slurm_update ((void *) job_msg, REQUEST_UPDATE_JOB);
+}
+
+/*
+ * slurm_update_job2 - issue RPC to a job's configuration per request,
+ *	only usable by user root or (for some parameters) the job's owner
+ * IN job_msg - description of job updates
+ * OUT resp - per task response to the request,
+ *	      free using slurm_free_job_array_resp()
+ * RET 0 on success, otherwise return -1 and set errno to indicate the error
+ */
+extern int
+slurm_update_job2 (job_desc_msg_t * job_msg, job_array_resp_msg_t **resp)
+{
+	int rc = SLURM_SUCCESS;
+	slurm_msg_t req_msg, resp_msg;
+	slurmdb_cluster_rec_t *save_working_cluster_rec = working_cluster_rec;
+
+	slurm_msg_t_init(&req_msg);
+	req_msg.msg_type	= REQUEST_UPDATE_JOB;
+	req_msg.data		= job_msg;
+
+tryagain:
+	slurm_msg_t_init(&resp_msg);
+
+	rc = slurm_send_recv_controller_msg(&req_msg, &resp_msg,
+					    working_cluster_rec);
+	switch (resp_msg.msg_type) {
+	case RESPONSE_SLURM_REROUTE_MSG:
+	{
+		reroute_msg_t *rr_msg = (reroute_msg_t *)resp_msg.data;
+
+		/* Don't expect mutliple hops but in the case it does
+		 * happen, free the previous rr cluster_rec. */
+		if (working_cluster_rec &&
+		    working_cluster_rec != save_working_cluster_rec)
+			slurmdb_destroy_cluster_rec(
+						working_cluster_rec);
+
+		working_cluster_rec = rr_msg->working_cluster_rec;
+		slurmdb_setup_cluster_rec(working_cluster_rec);
+		rr_msg->working_cluster_rec = NULL;
+		goto tryagain;
+	}
+	case RESPONSE_JOB_ARRAY_ERRORS:
+		*resp = (job_array_resp_msg_t *) resp_msg.data;
+		break;
+	case RESPONSE_SLURM_RC:
+		rc = ((return_code_msg_t *) resp_msg.data)->return_code;
+		if (rc)
+			slurm_seterrno(rc);
+		break;
+	default:
+		slurm_seterrno(SLURM_UNEXPECTED_MSG_ERROR);
+	}
+
+	if (working_cluster_rec != save_working_cluster_rec) {
+		slurmdb_destroy_cluster_rec(working_cluster_rec);
+		working_cluster_rec = save_working_cluster_rec;
+	}
+
+	return rc;
 }
 
 /*
@@ -87,6 +148,17 @@ int
 slurm_update_node ( update_node_msg_t * node_msg)
 {
 	return _slurm_update ((void *) node_msg, REQUEST_UPDATE_NODE);
+}
+/*
+ * slurm_update_layout - issue RPC to a layout's configuration per request,
+ *	only usable by user root
+ * IN layout_msg - command line (same format as conf)
+ * RET 0 on success, otherwise return -1 and set errno to indicate the error
+ */
+int
+slurm_update_layout ( update_layout_msg_t * layout_msg)
+{
+	return _slurm_update ((void *) layout_msg, REQUEST_UPDATE_LAYOUT);
 }
 
 /*
@@ -125,6 +197,17 @@ slurm_delete_partition ( delete_part_msg_t * part_msg )
 }
 
 /*
+ * slurm_update_powercap - issue RPC to update powercapping cap 
+ * IN powercap_msg - description of powercapping updates
+ * RET 0 on success, otherwise return -1 and set errno to indicate the error
+ */
+int
+slurm_update_powercap ( update_powercap_msg_t * powercap_msg )
+{
+	return _slurm_update ((void *) powercap_msg, REQUEST_UPDATE_POWERCAP);
+}
+
+/*
  * slurm_create_reservation - create a new reservation, only usable by user root
  * IN resv_msg - description of reservation
  * RET name of reservation on success (caller must free the memory),
@@ -145,7 +228,10 @@ slurm_create_reservation (resv_desc_msg_t * resv_msg)
 	req_msg.msg_type = REQUEST_CREATE_RESERVATION;
 	req_msg.data     = resv_msg;
 
-	rc = slurm_send_recv_controller_msg(&req_msg, &resp_msg);
+	rc = slurm_send_recv_controller_msg(&req_msg, &resp_msg,
+					    working_cluster_rec);
+	if (rc)
+		slurm_seterrno(rc);
 	switch (resp_msg.msg_type) {
 	case RESPONSE_CREATE_RESERVATION:
 		resp = (reservation_name_msg_t *) resp_msg.data;
@@ -207,6 +293,31 @@ slurm_update_step (step_update_request_msg_t * step_msg)
 	return _slurm_update ((void *) step_msg, REQUEST_UPDATE_JOB_STEP);
 }
 
+/*
+ * Move the specified job ID to the top of the queue for a given user ID,
+ *	partition, account, and QOS.
+ * IN job_id_str - a job id
+ * RET 0 or -1 on error */
+extern int
+slurm_top_job(char *job_id_str)
+{
+	int rc = SLURM_SUCCESS;
+	top_job_msg_t top_job_req;
+	slurm_msg_t req_msg;
+
+	slurm_msg_t_init(&req_msg);
+	top_job_req.job_id_str = job_id_str;
+	req_msg.msg_type       = REQUEST_TOP_JOB;
+	req_msg.data           = &top_job_req;
+
+	if (slurm_send_recv_controller_rc_msg(&req_msg, &rc,
+					      working_cluster_rec) < 0)
+		return SLURM_ERROR;
+
+	slurm_seterrno(rc);
+	return rc;
+}
+
 /* _slurm_update - issue RPC for all update requests */
 static int
 _slurm_update (void *data, slurm_msg_type_t msg_type)
@@ -218,7 +329,8 @@ _slurm_update (void *data, slurm_msg_type_t msg_type)
 	req_msg.msg_type = msg_type;
 	req_msg.data     = data;
 
-	if (slurm_send_recv_controller_rc_msg(&req_msg, &rc) < 0)
+	if (slurm_send_recv_controller_rc_msg(&req_msg, &rc,
+					      working_cluster_rec) < 0)
 		return SLURM_ERROR;
 
 	if (rc != SLURM_SUCCESS)

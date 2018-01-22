@@ -1,11 +1,10 @@
 /*****************************************************************************\
  *  src/plugins/task/affinity/affinity.h - task affinity plugin
- *  $Id: affinity.h,v 1.2 2005/11/04 02:46:51 palermo Exp $
  *****************************************************************************
  *  Copyright (C) 2005 Hewlett-Packard Development Company, L.P.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -33,50 +32,57 @@
  *  with SLURM; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
+
 #ifdef HAVE_CONFIG_H
 #  include "config.h"
+#endif
+
+#ifndef _GNU_SOURCE
+#  define _GNU_SOURCE
+#endif
+
+#ifndef __USE_GNU
+#  define  __USE_GNU
 #endif
 
 #ifdef HAVE_NUMA
 #  include <numa.h>
 #endif
 
-#ifdef HAVE_SYS_TYPES_H
-#  include <sys/types.h>
+/*
+ * FreeBSD and Linux affinity functions have a slightly different interface
+ * and are defined in different headers.  See platform-dependencies in
+ * affinity.c.
+ */
+#ifdef __FreeBSD__
+#  include <sys/param.h>
+#  include <sys/cpuset.h>
+   typedef cpuset_t cpu_set_t;
 #endif
 
 #ifdef HAVE_SYS_PRCTL_H
 #  include <sys/prctl.h>
 #endif
 
-#include <sys/wait.h>
-#include <sys/stat.h>
-#include <sys/param.h>
-#include <sys/poll.h>
-#include <sys/stat.h>
 #include <fcntl.h>
-#include <pwd.h>
 #include <grp.h>
+#include <poll.h>
+#include <pwd.h>
+#include <sched.h> /* SMB */
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <sys/param.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 #include <sys/utsname.h>
+#include <sys/wait.h>
 #include <unistd.h>
 
-#ifndef   _GNU_SOURCE
-#  define _GNU_SOURCE
-#endif
-#ifndef   __USE_GNU
-#define   __USE_GNU
-#endif
-
-#include <sched.h> /* SMB */
-
-#ifdef HAVE_STDLIB_H
-#  include <stdlib.h>
-#endif
-
 #include "slurm/slurm_errno.h"
+
 #include "src/common/slurm_xlator.h"
+#include "src/slurmd/common/task_plugin.h"
 #include "src/slurmd/slurmd/slurmd.h"
 #include "src/slurmd/slurmstepd/slurmstepd_job.h"
 
@@ -86,7 +92,6 @@
 #include "src/common/log.h"
 #include "src/common/node_select.h"
 #include "src/common/fd.h"
-#include "src/common/safeopen.h"
 #include "src/common/switch.h"
 #include "src/common/xsignal.h"
 #include "src/common/xstring.h"
@@ -125,5 +130,6 @@ uint16_t slurm_get_numa_node(uint16_t cpuid);
 /*** from schedutils.c ***/
 int	char_to_val(int c);
 int	str_to_cpuset(cpu_set_t *mask, const char* str);
+int	str_to_cnt(const char* str);
 char *	cpuset_to_str(const cpu_set_t *mask, char *str);
 int	val_to_char(int v);

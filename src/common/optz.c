@@ -6,7 +6,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -35,16 +35,13 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#if HAVE_CONFIG_H
-#  include <config.h>
-#endif
-
 #include <string.h>
 
 #include "slurm/slurm_errno.h"
 
 #include "src/common/optz.h"
 #include "src/common/xmalloc.h"
+#include "src/common/xstring.h"
 
 static const struct option opt_table_end = { NULL, 0, NULL, 0 };
 
@@ -68,7 +65,7 @@ int optz_add(struct option **optz, const struct option *opt)
 	struct option *t = *optz;
 
 	for (; op->name != NULL; op++) {
-		if (strcmp(op->name, opt->name) == 0)
+		if (xstrcmp(op->name, opt->name) == 0)
 			slurm_seterrno_ret(EEXIST);
 		len++;
 	}

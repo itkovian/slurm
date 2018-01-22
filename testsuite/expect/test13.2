@@ -1,4 +1,4 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Test of NRT functionality
 #          Test of switch/nrt options (--network option).
@@ -10,7 +10,7 @@
 # Copyright (C) 2012 SchedMD LLC
 #
 # This file is part of SLURM, a resource management program.
-# For details, see <http://slurm.schedmd.com/>.
+# For details, see <https://slurm.schedmd.com/>.
 # Please also read the included file: DISCLAIMER.
 #
 # SLURM is free software; you can redistribute it and/or modify it under
@@ -38,7 +38,7 @@ set smd_system 1
 print_header $test_id
 
 if {[test_switch_nrt] == 0} {
-	send_user "\nWARNING: This test is only compatable with switch/nrt systems\n"
+	send_user "\nWARNING: This test is only compatible with switch/nrt systems\n"
 	exit 0
 }
 

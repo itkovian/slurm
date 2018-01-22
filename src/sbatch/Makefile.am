@@ -7,14 +7,14 @@ AM_CPPFLAGS = -I$(top_srcdir)
 
 bin_PROGRAMS = sbatch
 
-sbatch_SOURCES = sbatch.c mult_cluster.c mult_cluster.h opt.c opt.h
+sbatch_SOURCES = sbatch.c opt.c opt.h
 
-convenience_libs = $(top_builddir)/src/api/libslurm.o $(DL_LIBS)
+convenience_libs = $(LIB_SLURM) $(DL_LIBS)
+sbatch_DEPENDENCIES = $(LIB_SLURM_BUILD)
 
 sbatch_LDADD = $(convenience_libs)
 
-sbatch_LDFLAGS = -export-dynamic $(CMD_LDFLAGS) \
-	$(HWLOC_LDFLAGS) $(HWLOC_LIBS)
+sbatch_LDFLAGS = -export-dynamic $(CMD_LDFLAGS)
 
 force:
 $(convenience_libs) : force

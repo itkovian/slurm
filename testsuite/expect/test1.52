@@ -1,4 +1,4 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Test of srun functionality
 #          Test of hostfile option (-hostfile).
@@ -14,7 +14,7 @@
 # CODE-OCEC-09-009. All rights reserved.
 #
 # This file is part of SLURM, a resource management program.
-# For details, see <http://slurm.schedmd.com/>.
+# For details, see <https://slurm.schedmd.com/>.
 # Please also read the included file: DISCLAIMER.
 #
 # SLURM is free software; you can redistribute it and/or modify it under
@@ -37,7 +37,7 @@ set test_id     "1.52"
 set exit_code   0
 set num_nodes   2
 set num_tasks   2
-set node_count  0
+set idle_nodes  0
 set max_nodes   0
 set task_count  0
 set hostfile    "test$test_id.hostfile"
@@ -45,10 +45,13 @@ set hostfile    "test$test_id.hostfile"
 print_header $test_id
 
 if { [test_front_end] } {
-	send_user "\nWARNING: This test incompatible with front-end Systems\n"
+	send_user "\nWARNING: This test incompatible with front-end systems\n"
 	exit $exit_code
 } elseif {[test_launch_poe]} {
 	send_user "\nWARNING: This test is incompatible with POE systems\n"
+	exit $exit_code
+} elseif {[test_serial]} {
+	send_user "\nWARNING: This test is incompatible with serial systems\n"
 	exit $exit_code
 }
 
@@ -68,10 +71,6 @@ expect {
 		set max_nodes 999999
 		exp_continue
 	}
-	-re "TotalNodes=($number)" {
-		set node_count $expect_out(1,string)
-		exp_continue
-	}
 	timeout {
 		send_user "\nFAILURE: scontrol not responding\n"
 		exit 1
@@ -80,8 +79,14 @@ expect {
 		wait
 	}
 }
-if { ($node_count < 3) || ($max_nodes < 3) } {
-	send_user "WARNING: system must have at least 3 nodes to run this test on. $node_count $max_nodes\n"
+
+set idle_nodes [available_nodes $def_part idle]
+if { ($idle_nodes < 3) || ($max_nodes < 3) } {
+	if { $max_nodes == 999999 } {
+		send_user "WARNING: partition $def_part must have at least 3 idle nodes and MaxNodes >= 3 to run this test on. IDLE:$idle_nodes MaxNodes:UNLIMITED\n"
+	} else {
+		send_user "WARNING: partition $def_part must have at least 3 idle nodes and MaxNodes >= 3 to run this test on. IDLE:$idle_nodes MaxNodes:$max_nodes\n"
+	}
 	exit $exit_code
 }
 
@@ -89,7 +94,6 @@ exec $bin_rm -f %hostfile
 set node0       0
 set node1       0
 set node2       0
-set no_hostfile 0
 set timeout $max_job_delay
 for {set i 0} {$i<3} {incr i} {
 	if { $i==1 } {
@@ -123,20 +127,18 @@ for {set i 0} {$i<3} {incr i} {
 	#
 	# execute srun with a specific node count
 	#
-	set node0  ""
-	set node1  ""
-	set node2  ""
+	set node0  0
+	set node1  0
+	set node2  0
+	set task_cnt 0
 	if { $i == 0} {
 		set srun_pid [spawn $srun -N3 -t1 -l $bin_printenv SLURMD_NODENAME]
 	} else {
 		set srun_pid [spawn $srun -N3 -t1 -l --distribution=arbitrary $bin_printenv SLURMD_NODENAME]
 	}
 	expect {
-		-re "SwitchType does not permit arbitrary task distribution" {
-			set no_hostfile 1
-			exp_continue
-		}
 		-re "($number): ($alpha_numeric_under)" {
+			incr task_cnt
 			set task_id $expect_out(1,string)
 			if {$task_id == 0} {
 				set node0 $expect_out(2,string)
@@ -156,7 +158,7 @@ for {set i 0} {$i<3} {incr i} {
 			wait
 		}
 	}
-	if { $no_hostfile != 0 } {
+	if { $task_cnt != 3 } {
 		send_user "\nNo worries, test just can not run here\n"
 	} elseif { $i == 1 } {
 		if { [string compare $node0 $1node0] } {

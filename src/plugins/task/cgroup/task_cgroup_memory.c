@@ -5,7 +5,7 @@
  *  Written by Matthieu Hautreux <matthieu.hautreux@cea.fr>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -34,12 +34,9 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#if HAVE_CONFIG_H
-#include "config.h"
-#endif
-
+#include <limits.h>
+#include <stdlib.h>		/* getenv */
 #include <sys/types.h>
-#include <stdlib.h>		/* getenv     */
 
 #include "slurm/slurm_errno.h"
 #include "slurm/slurm.h"
@@ -47,14 +44,8 @@
 #include "src/slurmd/slurmd/slurmd.h"
 
 #include "src/common/xstring.h"
-#include "src/common/xcgroup_read_config.h"
-#include "src/common/xcgroup.h"
 
 #include "task_cgroup.h"
-
-#ifndef PATH_MAX
-#define PATH_MAX 256
-#endif
 
 extern slurmd_conf_t *conf;
 
@@ -69,15 +60,20 @@ static xcgroup_t job_memory_cg;
 static xcgroup_t step_memory_cg;
 
 static bool constrain_ram_space;
+static bool constrain_kmem_space;
 static bool constrain_swap_space;
 
 static float allowed_ram_space;   /* Allowed RAM in percent       */
 static float allowed_swap_space;  /* Allowed Swap percent         */
+static float allowed_kmem_space;  /* Allowed Kmem number          */
+static float max_kmem_percent;	   /* Allowed Kernel memory percent*/
 
+static uint64_t max_kmem;       /* Upper bound for kmem.limit_in_bytes  */
 static uint64_t max_ram;        /* Upper bound for memory.limit_in_bytes  */
 static uint64_t max_swap;       /* Upper bound for swap                   */
 static uint64_t totalram;       /* Total real memory available on node    */
-static uint64_t min_ram_space;  /* Don't constrain RAM below this value       */
+static uint64_t min_ram_space;  /* Don't constrain RAM below this value   */
+static uint64_t min_kmem_space; /* Don't constrain Kernel mem below       */
 
 static uint64_t percent_in_bytes (uint64_t mb, float percent)
 {
@@ -86,6 +82,9 @@ static uint64_t percent_in_bytes (uint64_t mb, float percent)
 
 extern int task_cgroup_memory_init(slurm_cgroup_conf_t *slurm_cgroup_conf)
 {
+	xcgroup_t memory_cg;
+	bool set_swappiness;
+
 	/* initialize user/job/jobstep cgroup relative paths */
 	user_cgroup_path[0]='\0';
 	job_cgroup_path[0]='\0';
@@ -94,10 +93,30 @@ extern int task_cgroup_memory_init(slurm_cgroup_conf_t *slurm_cgroup_conf)
 	/* initialize memory cgroup namespace */
 	if (xcgroup_ns_create(slurm_cgroup_conf, &memory_ns, "", "memory")
 	    != XCGROUP_SUCCESS) {
-		error("task/cgroup: unable to create memory namespace");
+		error("task/cgroup: unable to create memory namespace. "
+			"You may need to set the Linux kernel option "
+			"cgroup_enable=memory (and reboot), or disable "
+			"ConstrainRAMSpace in cgroup.conf.");
 		return SLURM_ERROR;
 	}
 
+	/* Enable memory.use_hierarchy in the root of the cgroup.
+	 */
+	if (xcgroup_create(&memory_ns, &memory_cg, "", 0, 0)
+	    != XCGROUP_SUCCESS) {
+		error("task/cgroup: unable to create root memory cgroup: %m");
+		return SLURM_ERROR;
+	}
+	xcgroup_set_param(&memory_cg, "memory.use_hierarchy","1");
+
+	set_swappiness = (slurm_cgroup_conf->memory_swappiness != NO_VAL64);
+	if (set_swappiness)
+		xcgroup_set_uint64_param(&memory_cg, "memory.swappiness",
+					 slurm_cgroup_conf->memory_swappiness);
+
+	xcgroup_destroy(&memory_cg);
+
+	constrain_kmem_space = slurm_cgroup_conf->constrain_kmem_space;
 	constrain_ram_space = slurm_cgroup_conf->constrain_ram_space;
 	constrain_swap_space = slurm_cgroup_conf->constrain_swap_space;
 
@@ -113,28 +132,45 @@ extern int task_cgroup_memory_init(slurm_cgroup_conf_t *slurm_cgroup_conf)
 	else
 		allowed_ram_space = 100.0;
 
+	allowed_kmem_space = slurm_cgroup_conf->allowed_kmem_space;
 	allowed_swap_space = slurm_cgroup_conf->allowed_swap_space;
 
 	if ((totalram = (uint64_t) conf->real_memory_size) == 0)
 		error ("task/cgroup: Unable to get RealMemory size");
 
+	max_kmem = percent_in_bytes(totalram, slurm_cgroup_conf->max_kmem_percent);
 	max_ram = percent_in_bytes(totalram, slurm_cgroup_conf->max_ram_percent);
 	max_swap = percent_in_bytes(totalram, slurm_cgroup_conf->max_swap_percent);
 	max_swap += max_ram;
 	min_ram_space = slurm_cgroup_conf->min_ram_space * 1024 * 1024;
+	max_kmem_percent = slurm_cgroup_conf->max_kmem_percent;
+	min_kmem_space = slurm_cgroup_conf->min_kmem_space * 1024 * 1024;
 
-	debug ("task/cgroup/memory: total:%luM allowed:%.4g%%(%s), "
-	       "swap:%.4g%%(%s), max:%.4g%%(%luM) max+swap:%.4g%%(%luM) min:%uM",
-	       (unsigned long) totalram,
-	       allowed_ram_space,
-	       constrain_ram_space?"enforced":"permissive",
-	       allowed_swap_space,
-	       constrain_swap_space?"enforced":"permissive",
-	       slurm_cgroup_conf->max_ram_percent,
-	       (unsigned long) (max_ram/(1024*1024)),
-	       slurm_cgroup_conf->max_swap_percent,
-	       (unsigned long) (max_swap/(1024*1024)),
-	       (unsigned) slurm_cgroup_conf->min_ram_space);
+	debug("task/cgroup/memory: total:%"PRIu64"M allowed:%.4g%%(%s), "
+	      "swap:%.4g%%(%s), max:%.4g%%(%"PRIu64"M) "
+	      "max+swap:%.4g%%(%"PRIu64"M) min:%"PRIu64"M "
+	      "kmem:%.4g%%(%"PRIu64"M %s) min:%"PRIu64"M "
+	      "swappiness:%"PRIu64"(%s)",
+
+	      totalram, allowed_ram_space,
+	      constrain_ram_space ? "enforced" : "permissive",
+
+	      allowed_swap_space,
+	      constrain_swap_space ? "enforced" : "permissive",
+	      slurm_cgroup_conf->max_ram_percent,
+	      (uint64_t) (max_ram / (1024 * 1024)),
+
+	      slurm_cgroup_conf->max_swap_percent,
+	      (uint64_t) (max_swap / (1024 * 1024)),
+	      slurm_cgroup_conf->min_ram_space,
+
+	      slurm_cgroup_conf->max_kmem_percent,
+	      (uint64_t) (max_kmem / (1024 * 1024)),
+	      constrain_kmem_space ? "enforced" : "permissive",
+	      slurm_cgroup_conf->min_kmem_space,
+
+	      set_swappiness ? slurm_cgroup_conf->memory_swappiness : 0,
+	      set_swappiness ? "set" : "unset");
 
         /*
          *  Warning: OOM Killer must be disabled for slurmstepd
@@ -159,8 +195,10 @@ extern int task_cgroup_memory_fini(slurm_cgroup_conf_t *slurm_cgroup_conf)
 
 	if (user_cgroup_path[0] == '\0' ||
 	     job_cgroup_path[0] == '\0' ||
-	     jobstep_cgroup_path[0] == '\0')
+	     jobstep_cgroup_path[0] == '\0') {
+		xcgroup_ns_destroy(&memory_ns);
 		return SLURM_SUCCESS;
+	}
 	/*
 	 * Lock the root memcg and try to remove the different memcgs.
 	 * The reason why we are locking here is that if a concurrent
@@ -174,9 +212,7 @@ extern int task_cgroup_memory_fini(slurm_cgroup_conf_t *slurm_cgroup_conf)
 	 * After that, try to remove the user memcg. If it fails, it is due
 	 * to jobs that are still running for the same user on the node or
 	 * because of tasks attached directly to the user cg by an other
-	 * component (PAM). The user memcg was created with the
-	 * notify_on_release=1 flag (default) so it will be removed
-	 * automatically after that.
+	 * component (PAM).
 	 * For now, do not try to detect if only externally attached tasks
 	 * are present to see if they can be be moved to an orhpan memcg.
 	 * That could be done in the future, if it is necessary.
@@ -215,7 +251,7 @@ extern int task_cgroup_memory_fini(slurm_cgroup_conf_t *slurm_cgroup_conf)
 /*
  *  Return configured memory limit in bytes given a memory limit in MB.
  */
-static uint64_t mem_limit_in_bytes (uint64_t mem)
+static uint64_t mem_limit_in_bytes (uint64_t mem, bool with_allowed)
 {
 	/*
 	 *  If mem == 0 then assume there was no SLURM limit imposed
@@ -224,8 +260,12 @@ static uint64_t mem_limit_in_bytes (uint64_t mem)
 	 */
 	if (mem == 0)
 		mem = totalram * 1024 * 1024;
-	else
-		mem = percent_in_bytes (mem, allowed_ram_space);
+	else {
+		if (with_allowed)
+			mem = percent_in_bytes (mem, allowed_ram_space);
+		else
+			mem = percent_in_bytes(mem, 100.0);
+	}
 	if (mem < min_ram_space)
 		return (min_ram_space);
 	if (mem > max_ram)
@@ -247,7 +287,7 @@ static uint64_t swap_limit_in_bytes (uint64_t mem)
 	 *  If mem == 0 assume "unlimited" and use totalram.
 	 */
 	swap = percent_in_bytes (mem ? mem : totalram, allowed_swap_space);
-	mem = mem_limit_in_bytes (mem) + swap;
+	mem = mem_limit_in_bytes (mem, true) + swap;
 	if (mem < min_ram_space)
 		return (min_ram_space);
 	if (mem > max_swap)
@@ -255,24 +295,45 @@ static uint64_t swap_limit_in_bytes (uint64_t mem)
 	return (mem);
 }
 
+/*
+ * If Kmem space is disabled, it set to max percent of its RAM usage.
+ */
+static uint64_t kmem_limit_in_bytes (uint64_t mlb)
+{
+	uint64_t totalKmem = percent_in_bytes(mlb, max_kmem_percent);
+	if ( ! constrain_kmem_space )
+		return totalKmem;
+	if ( allowed_kmem_space < 0 ) {	/* Initial value */
+		if ( mlb > totalKmem )
+			return totalKmem;
+		if ( mlb < min_kmem_space )
+			return min_kmem_space;
+		return mlb;
+	}
+	if ( allowed_kmem_space > totalKmem )
+		return totalKmem;
+	if ( allowed_kmem_space < min_kmem_space )
+		return min_kmem_space;
+	return allowed_kmem_space;
+}
+
 static int memcg_initialize (xcgroup_ns_t *ns, xcgroup_t *cg,
 			     char *path, uint64_t mem_limit, uid_t uid,
-			     gid_t gid, uint32_t notify)
+			     gid_t gid)
 {
-	uint64_t mlb = mem_limit_in_bytes (mem_limit);
+	uint64_t mlb = mem_limit_in_bytes (mem_limit, true);
+	uint64_t mlb_soft = mem_limit_in_bytes(mem_limit, false);
 	uint64_t mls = swap_limit_in_bytes  (mem_limit);
 
 	if (xcgroup_create (ns, cg, path, uid, gid) != XCGROUP_SUCCESS)
 		return -1;
 
-	cg->notify = notify;
-
-	if (xcgroup_instanciate (cg) != XCGROUP_SUCCESS) {
+	if (xcgroup_instantiate (cg) != XCGROUP_SUCCESS) {
 		xcgroup_destroy (cg);
 		return -1;
 	}
 
-	xcgroup_set_param (cg, "memory.use_hierarchy","1");
+	xcgroup_set_param (cg, "memory.use_hierarchy", "1");
 
 	/* when RAM space has not to be constrained and we are here, it
 	 * means that only Swap space has to be constrained. Thus set
@@ -280,6 +341,17 @@ static int memcg_initialize (xcgroup_ns_t *ns, xcgroup_t *cg,
 	if ( ! constrain_ram_space )
 		mlb = mls;
 	xcgroup_set_uint64_param (cg, "memory.limit_in_bytes", mlb);
+
+	/* Set the soft limit to the allocated RAM.  */
+	xcgroup_set_uint64_param(cg, "memory.soft_limit_in_bytes", mlb_soft);
+
+	/*
+	 * Also constrain kernel memory (if available).
+	 * See https://lwn.net/Articles/516529/
+	 */
+	if (constrain_kmem_space)
+		xcgroup_set_uint64_param (cg, "memory.kmem.limit_in_bytes",
+					  kmem_limit_in_bytes(mlb));
 
 	/* this limit has to be set only if ConstrainSwapSpace is set to yes */
 	if ( constrain_swap_space ) {
@@ -303,15 +375,12 @@ static int memcg_initialize (xcgroup_ns_t *ns, xcgroup_t *cg,
 extern int task_cgroup_memory_create(stepd_step_rec_t *job)
 {
 	int fstatus = SLURM_ERROR;
-
 	xcgroup_t memory_cg;
-
 	uint32_t jobid = job->jobid;
 	uint32_t stepid = job->stepid;
 	uid_t uid = job->uid;
 	gid_t gid = job->gid;
-
-	char* slurm_cgpath ;
+	char *slurm_cgpath;
 
 	/* create slurm root cg in this cg namespace */
 	slurm_cgpath = task_cgroup_create_slurm_cg(&memory_ns);
@@ -336,17 +405,28 @@ extern int task_cgroup_memory_create(stepd_step_rec_t *job)
 		if (snprintf(job_cgroup_path,PATH_MAX,"%s/job_%u",
 			      user_cgroup_path,jobid) >= PATH_MAX) {
 			error("task/cgroup: unable to build job %u memory "
-			      "cg relative path : %m",jobid);
+			      "cg relative path : %m", jobid);
 			return SLURM_ERROR;
 		}
 	}
 
 	/* build job step cgroup relative path (should not be) */
 	if (*jobstep_cgroup_path == '\0') {
-		if (snprintf(jobstep_cgroup_path,PATH_MAX,"%s/step_%u",
-			      job_cgroup_path,stepid) >= PATH_MAX) {
-			error("task/cgroup: unable to build job step %u memory "
-			      "cg relative path : %m",stepid);
+		int cc;
+		if (stepid == SLURM_BATCH_SCRIPT) {
+			cc = snprintf(jobstep_cgroup_path, PATH_MAX,
+				      "%s/step_batch", job_cgroup_path);
+		} else if (stepid == SLURM_EXTERN_CONT) {
+			cc = snprintf(jobstep_cgroup_path, PATH_MAX,
+				      "%s/step_extern", job_cgroup_path);
+		} else {
+			cc = snprintf(jobstep_cgroup_path, PATH_MAX,
+				      "%s/step_%u",
+				      job_cgroup_path, stepid);
+		}
+		if (cc >= PATH_MAX) {
+			error("task/cgroup: unable to build job step %u.%u "
+			      "memory cg relative path : %m", jobid, stepid);
 			return SLURM_ERROR;
 		}
 	}
@@ -363,7 +443,7 @@ extern int task_cgroup_memory_create(stepd_step_rec_t *job)
 	 * a task. The release_agent will have to lock the root memory cgroup
 	 * to avoid this scenario.
 	 */
-	if (xcgroup_create(&memory_ns,&memory_cg,"",0,0) != XCGROUP_SUCCESS) {
+	if (xcgroup_create(&memory_ns, &memory_cg, "",0,0) != XCGROUP_SUCCESS) {
 		error("task/cgroup: unable to create root memory xcgroup");
 		return SLURM_ERROR;
 	}
@@ -383,16 +463,16 @@ extern int task_cgroup_memory_create(stepd_step_rec_t *job)
 	 * are not working well so it will be really difficult to manage
 	 * addition/removal of memory amounts at this level. (kernel 2.6.34)
 	 */
-	if (xcgroup_create(&memory_ns,&user_memory_cg,
+	if (xcgroup_create(&memory_ns, &user_memory_cg,
 			    user_cgroup_path,
 			    getuid(),getgid()) != XCGROUP_SUCCESS) {
 		goto error;
 	}
-	if (xcgroup_instanciate(&user_memory_cg) != XCGROUP_SUCCESS) {
+	if (xcgroup_instantiate(&user_memory_cg) != XCGROUP_SUCCESS) {
 		xcgroup_destroy(&user_memory_cg);
 		goto error;
 	}
-	if ( xcgroup_set_param(&user_memory_cg,"memory.use_hierarchy","1")
+	if ( xcgroup_set_param(&user_memory_cg, "memory.use_hierarchy", "1")
 	     != XCGROUP_SUCCESS ) {
 		error("task/cgroup: unable to ask for hierarchical accounting"
 		      "of user memcg '%s'",user_memory_cg.path);
@@ -403,11 +483,9 @@ extern int task_cgroup_memory_create(stepd_step_rec_t *job)
 	/*
 	 * Create job cgroup in the memory ns (it could already exist)
 	 * and set the associated memory limits.
-	 * Disable notify_on_release for this memcg, it will be
-	 * manually removed by the plugin at the end of the step.
 	 */
 	if (memcg_initialize (&memory_ns, &job_memory_cg, job_cgroup_path,
-	                      job->job_mem, getuid(), getgid(), 0) < 0) {
+	                      job->job_mem, getuid(), getgid()) < 0) {
 		xcgroup_destroy (&user_memory_cg);
 		goto error;
 	}
@@ -415,16 +493,15 @@ extern int task_cgroup_memory_create(stepd_step_rec_t *job)
 	/*
 	 * Create step cgroup in the memory ns (it should not exists)
 	 * and set the associated memory limits.
-	 * Disable notify_on_release for the step memcg, it will be
-	 * manually removed by the plugin at the end of the step.
 	 */
 	if (memcg_initialize (&memory_ns, &step_memory_cg, jobstep_cgroup_path,
-	                      job->step_mem, uid, gid, 0) < 0) {
+	                      job->step_mem, uid, gid) < 0) {
 		xcgroup_destroy(&user_memory_cg);
 		xcgroup_destroy(&job_memory_cg);
 		goto error;
 	}
 
+	fstatus = SLURM_SUCCESS;
 error:
 	xcgroup_unlock(&memory_cg);
 	xcgroup_destroy(&memory_cg);
@@ -432,16 +509,11 @@ error:
 	return fstatus;
 }
 
-extern int task_cgroup_memory_attach_task(stepd_step_rec_t *job)
+extern int task_cgroup_memory_attach_task(stepd_step_rec_t *job, pid_t pid)
 {
 	int fstatus = SLURM_ERROR;
-	pid_t pid;
 
-	/*
-	 * Attach the current task to the step memory cgroup
-	 */
-	pid = getpid();
-	if (xcgroup_add_pids(&step_memory_cg,&pid,1) != XCGROUP_SUCCESS) {
+	if (xcgroup_add_pids(&step_memory_cg, &pid, 1) != XCGROUP_SUCCESS) {
 		error("task/cgroup: unable to add task[pid=%u] to "
 		      "memory cg '%s'",pid,step_memory_cg.path);
 		fstatus = SLURM_ERROR;
@@ -470,6 +542,7 @@ int failcnt_non_zero(xcgroup_t* cg, char* param)
 extern int task_cgroup_memory_check_oom(stepd_step_rec_t *job)
 {
 	xcgroup_t memory_cg;
+	int rc = SLURM_SUCCESS;
 
 	if (xcgroup_create(&memory_ns, &memory_cg, "", 0, 0)
 	    == XCGROUP_SUCCESS) {
@@ -479,34 +552,51 @@ extern int task_cgroup_memory_check_oom(stepd_step_rec_t *job)
 			 * can't tell which is which so we'll treat
 			 * them the same */
 			if (failcnt_non_zero(&step_memory_cg,
-					     "memory.memsw.failcnt"))
-				error("Exceeded step memory limit at some "
-				      "point. oom-killer likely killed a "
-				      "process.");
-			else if(failcnt_non_zero(&step_memory_cg,
-						 "memory.failcnt"))
-				error("Exceeded step memory limit at some "
-				      "point. Step may have been partially "
-				      "swapped out to disk.");
+					     "memory.memsw.failcnt")) {
+				/* reports the number of times that the
+				 * memory plus swap space limit has
+				 * reached the value set in
+				 * memory.memsw.limit_in_bytes.
+				 */
+				error("Step %u.%u hit memory+swap limit at least once during execution. This may or may not result in some failure.",
+				      job->jobid, job->stepid);
+				rc = ENOMEM;
+			} else if (failcnt_non_zero(&step_memory_cg,
+						    "memory.failcnt")) {
+				/* reports the number of times that the
+				 * memory limit has reached the value set
+				 * in memory.limit_in_bytes.
+				 */
+				error("Step %u.%u hit memory limit at least once during execution. This may or may not result in some failure.",
+				      job->jobid, job->stepid);
+				rc = ENOMEM;
+			}
 			if (failcnt_non_zero(&job_memory_cg,
-					     "memory.memsw.failcnt"))
-				error("Exceeded job memory limit at some "
-				      "point. oom-killer likely killed a "
-				      "process.");
-			else if (failcnt_non_zero(&job_memory_cg,
-						  "memory.failcnt"))
-				error("Exceeded job memory limit at some "
-				      "point. Job may have been partially "
-				      "swapped out to disk.");
+					     "memory.memsw.failcnt")) {
+				error("Job %u hit memory+swap limit at least once during execution. This may or may not result in some failure.",
+				      job->jobid);
+				rc = ENOMEM;
+			} else if (failcnt_non_zero(&job_memory_cg,
+						    "memory.failcnt")) {
+				error("Job %u hit memory limit at least once during execution. This may or may not result in some failure.",
+				      job->jobid);
+				rc = ENOMEM;
+			}
 			xcgroup_unlock(&memory_cg);
-		} else
+		} else {
 			error("task/cgroup task_cgroup_memory_check_oom: "
 			      "task_cgroup_memory_check_oom: unable to lock "
 			      "root memcg : %m");
+		}
 		xcgroup_destroy(&memory_cg);
 	} else
 		error("task/cgroup task_cgroup_memory_check_oom: "
 		      "unable to create root memcg : %m");
 
-	return SLURM_SUCCESS;
+	return rc;
+}
+
+extern int task_cgroup_memory_add_pid(pid_t pid)
+{
+	return xcgroup_add_pids(&step_memory_cg, &pid, 1);
 }

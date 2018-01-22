@@ -1,6 +1,5 @@
 /*****************************************************************************\
  * src/common/uid.h - uid/gid lookup utility functions
- * $Id$
  *****************************************************************************
  *  Copyright (C) 2002 The Regents of the University of California.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -8,7 +7,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -43,6 +42,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <pwd.h>
+#include <stdbool.h>
 
 /*
  * In an ideal world, we could use sysconf(_SC_GETPW_R_SIZE_MAX) to get the
@@ -79,14 +79,57 @@ gid_t gid_from_uid (uid_t uid);
 int gid_from_string (char *name, gid_t *gidp);
 
 /*
+ * Translate uid to user name.
+ * Will return NULL on error.
+ * NOTE: xfree the return value.
+ */
+char *uid_to_string_or_null(uid_t uid);
+
+/*
  * Translate uid to user name,
  * NOTE: xfree the return value
  */
 char *uid_to_string (uid_t uid);
+
+/* Free any memory allocated by uid_to_string_cached() */
+extern void uid_cache_clear(void);
+
+/*
+ * Translate uid to user name, using a cache.
+ * Call uid_cache_clear() to free memory.
+ */
+extern char *uid_to_string_cached(uid_t uid);
 
 /*
  * Same as uid_to_string, but for group name.
  * NOTE: xfree the return value
  */
 char *gid_to_string (gid_t gid);
+
+/* slurm_find_group_user()
+ *
+ * Find the user entry in the group gid. As groups could
+ * be split across multiple lines in /etc/group we
+ * have to iterate on them.
+ */
+int
+slurm_find_group_user(struct passwd *pwd, gid_t gid);
+
+/* slurm_valid_uid_gid()
+ *
+ * IN - uid - User id to verify
+ * IN/OUT - gid - Group id to verify or set
+ * IN/OUT - user_name - User name for the uid, this will be set if not
+ *                      already set.
+ * IN - name_already_verfied - If set we will only validate the
+ *                             *user_name exists and return 1, else we
+ *                             will validate uid and fill in *user_name.
+ * IN - validate_gid - If set we will validate the gid as well as the
+ *                     uid.  Set gid with correct gid if root launched job.
+ * RET - returns 0 if invalid uid/gid, otherwise returns 1
+ */
+extern int slurm_valid_uid_gid(uid_t uid, gid_t *gid, char **user_name,
+			       bool name_already_verified,
+			       bool validate_gid);
+
 #endif /*__SLURM_UID_UTILITY_H__*/

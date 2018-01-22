@@ -7,7 +7,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -40,6 +40,29 @@
 #include <unistd.h>
 #include <sys/time.h>
 #include "src/common/log.h"
+#include "src/common/slurm_time.h"
+
+/* Return the number of micro-seconds between now and argument "tv",
+ * Initialize tv to NOW if zero on entry */
+extern int slurm_delta_tv(struct timeval *tv)
+{
+	struct timeval now = {0, 0};
+	int delta_t;
+
+	if (gettimeofday(&now, NULL))
+		return 1;		/* Some error */
+
+	if (tv->tv_sec == 0) {
+		tv->tv_sec  = now.tv_sec;
+		tv->tv_usec = now.tv_usec;
+		return 0;
+	}
+
+	delta_t  = (now.tv_sec - tv->tv_sec) * 1000000;
+	delta_t += (now.tv_usec - tv->tv_usec);
+
+	return delta_t;
+}
 
 /*
  * slurm_diff_tv_str - build a string showing the time difference between two
@@ -51,26 +74,42 @@
  * IN from - where the function was called form
  */
 extern void slurm_diff_tv_str(struct timeval *tv1, struct timeval *tv2,
-			      char *tv_str, int len_tv_str, char *from,
+			      char *tv_str, int len_tv_str, const char *from,
 			      long limit, long *delta_t)
 {
 	char p[64] = "";
 	struct tm tm;
+	int debug_limit = limit;
 
-	(*delta_t)  = (tv2->tv_sec  - tv1->tv_sec) * 1000000;
-	(*delta_t) +=  tv2->tv_usec - tv1->tv_usec;
+	(*delta_t)  = (tv2->tv_sec - tv1->tv_sec) * 1000000;
+	(*delta_t) += tv2->tv_usec;
+	(*delta_t) -= tv1->tv_usec;
 	snprintf(tv_str, len_tv_str, "usec=%ld", *delta_t);
 	if (from) {
-		if (!limit)
-			limit = 1000000;
-		if (*delta_t > limit) {
-			if (!localtime_r(&tv1->tv_sec, &tm))
-				fprintf(stderr, "localtime_r() failed\n");
+		if (!limit) {
+			/* NOTE: The slurmctld scheduler's default run time
+			 * limit is 4 seconds, but that would not typically
+			 * be reached. See "max_sched_time=" logic in
+			 * src/slurmctld/job_scheduler.c */
+			limit = 3000000;
+			debug_limit = 1000000;
+		}
+		if ((*delta_t > debug_limit) || (*delta_t > limit)) {
+			if (!slurm_localtime_r(&tv1->tv_sec, &tm))
+				error("localtime_r(): %m");
 			if (strftime(p, sizeof(p), "%T", &tm) == 0)
-				fprintf(stderr, "strftime() returned 0\n");
-			verbose("Warning: Note very large processing "
-				"time from %s: %s began=%s.%3.3d",
-				from, tv_str, p, (int)(tv1->tv_usec / 1000));
+				error("strftime(): %m");
+			if (*delta_t > limit) {
+				verbose("Warning: Note very large processing "
+					"time from %s: %s began=%s.%3.3d",
+					from, tv_str, p,
+					(int)(tv1->tv_usec / 1000));
+			} else {	/* Log anything over 1 second here */
+				debug("Note large processing time from %s: "
+				      "%s began=%s.%3.3d",
+				      from, tv_str, p,
+				      (int)(tv1->tv_usec / 1000));
+			}
 		}
 	}
 }

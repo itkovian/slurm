@@ -10,7 +10,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -39,17 +39,19 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#if     HAVE_CONFIG_H
-#  include "config.h"
-#endif
+#include "config.h"
 
 #include <ctype.h>
 #include <dirent.h>
+#include <limits.h>
 #include <signal.h>
 #include <sys/types.h>
 
 #include "affinity.h"
 #include "dist_tasks.h"
+
+#include "src/slurmd/common/task_plugin.h"
+
 
 /* Enable purging of cpuset directories
  * after each task and the step are done.
@@ -77,15 +79,12 @@
  * of how this plugin satisfies that application.  SLURM will only load
  * a task plugin if the plugin_type string has a prefix of "task/".
  *
- * plugin_version - an unsigned 32-bit integer giving the version number
- * of the plugin.  If major and minor revisions are desired, the major
- * version number may be multiplied by a suitable magnitude constant such
- * as 100 or 1000.  Various SLURM versions will likely require a certain
- * minimum version for their plugins as this API matures.
+ * plugin_version - an unsigned 32-bit integer containing the Slurm version
+ * (major.minor.micro combined into a single number).
  */
 const char plugin_name[]        = "task affinity plugin";
 const char plugin_type[]        = "task/affinity";
-const uint32_t plugin_version   = 100;
+const uint32_t plugin_version   = SLURM_VERSION_NUMBER;
 
 /*
  * init() is called when the plugin is loaded, before any other functions
@@ -93,7 +92,13 @@ const uint32_t plugin_version   = 100;
  */
 extern int init (void)
 {
-	verbose("%s loaded", plugin_name);
+	cpu_set_t cur_mask;
+	char mstr[1 + CPU_SETSIZE / 4];
+
+	slurm_getaffinity(0, sizeof(cur_mask), &cur_mask);
+	task_cpuset_to_str(&cur_mask, mstr);
+	verbose("%s loaded with CPU mask %s", plugin_name, mstr);
+
 	return SLURM_SUCCESS;
 }
 
@@ -103,7 +108,7 @@ extern int init (void)
  */
 extern int fini (void)
 {
-	verbose("%s unloaded", plugin_name);
+	debug("%s unloaded", plugin_name);
 	return SLURM_SUCCESS;
 }
 
@@ -113,43 +118,44 @@ static void _update_bind_type(launch_tasks_request_msg_t *req)
 {
 	bool set_bind = false;
 
-	if (conf->task_plugin_param & CPU_BIND_NONE) {
-		req->cpu_bind_type |= CPU_BIND_NONE;
-		req->cpu_bind_type &= (~CPU_BIND_TO_SOCKETS);
-		req->cpu_bind_type &= (~CPU_BIND_TO_CORES);
-		req->cpu_bind_type &= (~CPU_BIND_TO_THREADS);
-		req->cpu_bind_type &= (~CPU_BIND_TO_LDOMS);
-		set_bind = true;
-	} else if (conf->task_plugin_param & CPU_BIND_TO_SOCKETS) {
-		req->cpu_bind_type &= (~CPU_BIND_NONE);
-		req->cpu_bind_type |= CPU_BIND_TO_SOCKETS;
-		req->cpu_bind_type &= (~CPU_BIND_TO_CORES);
-		req->cpu_bind_type &= (~CPU_BIND_TO_THREADS);
-		req->cpu_bind_type &= (~CPU_BIND_TO_LDOMS);
-		set_bind = true;
-	} else if (conf->task_plugin_param & CPU_BIND_TO_CORES) {
-		req->cpu_bind_type &= (~CPU_BIND_NONE);
-		req->cpu_bind_type &= (~CPU_BIND_TO_SOCKETS);
-		req->cpu_bind_type |= CPU_BIND_TO_CORES;
-		req->cpu_bind_type &= (~CPU_BIND_TO_THREADS);
-		req->cpu_bind_type &= (~CPU_BIND_TO_LDOMS);
-		set_bind = true;
-	} else if (conf->task_plugin_param & CPU_BIND_TO_THREADS) {
-		req->cpu_bind_type &= (~CPU_BIND_NONE);
-		req->cpu_bind_type &= (~CPU_BIND_TO_SOCKETS);
-		req->cpu_bind_type &= (~CPU_BIND_TO_CORES);
-		req->cpu_bind_type |= CPU_BIND_TO_THREADS;
-		req->cpu_bind_type &= (~CPU_BIND_TO_LDOMS);
-		set_bind = true;
-	} else if (conf->task_plugin_param & CPU_BIND_TO_LDOMS) {
-		req->cpu_bind_type &= (~CPU_BIND_NONE);
-		req->cpu_bind_type &= (~CPU_BIND_TO_SOCKETS);
-		req->cpu_bind_type &= (~CPU_BIND_TO_CORES);
-		req->cpu_bind_type &= (~CPU_BIND_TO_THREADS);
-		req->cpu_bind_type &= CPU_BIND_TO_LDOMS;
-		set_bind = true;
+	if ((req->cpu_bind_type & (~CPU_BIND_VERBOSE)) == 0) {
+		if (conf->task_plugin_param & CPU_BIND_NONE) {
+			req->cpu_bind_type |= CPU_BIND_NONE;
+			req->cpu_bind_type &= (~CPU_BIND_TO_SOCKETS);
+			req->cpu_bind_type &= (~CPU_BIND_TO_CORES);
+			req->cpu_bind_type &= (~CPU_BIND_TO_THREADS);
+			req->cpu_bind_type &= (~CPU_BIND_TO_LDOMS);
+			set_bind = true;
+		} else if (conf->task_plugin_param & CPU_BIND_TO_SOCKETS) {
+			req->cpu_bind_type &= (~CPU_BIND_NONE);
+			req->cpu_bind_type |= CPU_BIND_TO_SOCKETS;
+			req->cpu_bind_type &= (~CPU_BIND_TO_CORES);
+			req->cpu_bind_type &= (~CPU_BIND_TO_THREADS);
+			req->cpu_bind_type &= (~CPU_BIND_TO_LDOMS);
+			set_bind = true;
+		} else if (conf->task_plugin_param & CPU_BIND_TO_CORES) {
+			req->cpu_bind_type &= (~CPU_BIND_NONE);
+			req->cpu_bind_type &= (~CPU_BIND_TO_SOCKETS);
+			req->cpu_bind_type |= CPU_BIND_TO_CORES;
+			req->cpu_bind_type &= (~CPU_BIND_TO_THREADS);
+			req->cpu_bind_type &= (~CPU_BIND_TO_LDOMS);
+			set_bind = true;
+		} else if (conf->task_plugin_param & CPU_BIND_TO_THREADS) {
+			req->cpu_bind_type &= (~CPU_BIND_NONE);
+			req->cpu_bind_type &= (~CPU_BIND_TO_SOCKETS);
+			req->cpu_bind_type &= (~CPU_BIND_TO_CORES);
+			req->cpu_bind_type |= CPU_BIND_TO_THREADS;
+			req->cpu_bind_type &= (~CPU_BIND_TO_LDOMS);
+			set_bind = true;
+		} else if (conf->task_plugin_param & CPU_BIND_TO_LDOMS) {
+			req->cpu_bind_type &= (~CPU_BIND_NONE);
+			req->cpu_bind_type &= (~CPU_BIND_TO_SOCKETS);
+			req->cpu_bind_type &= (~CPU_BIND_TO_CORES);
+			req->cpu_bind_type &= (~CPU_BIND_TO_THREADS);
+			req->cpu_bind_type &= CPU_BIND_TO_LDOMS;
+			set_bind = true;
+		}
 	}
-
 	if (conf->task_plugin_param & CPU_BIND_VERBOSE) {
 		req->cpu_bind_type |= CPU_BIND_VERBOSE;
 		set_bind = true;
@@ -240,9 +246,7 @@ extern int task_p_slurmd_resume_job (uint32_t job_id)
 extern int task_p_slurmd_release_resources (uint32_t job_id)
 {
 	DIR *dirp;
-	struct dirent entry;
-	struct dirent *result;
-	int rc;
+	struct dirent *entryp;
 	char base[PATH_MAX];
 	char path[PATH_MAX];
 
@@ -291,15 +295,12 @@ extern int task_p_slurmd_release_resources (uint32_t job_id)
 	}
 
 	while (1) {
-		rc = readdir_r(dirp, &entry, &result);
-		if (rc && (errno == EAGAIN))
-			continue;
-		if (rc || (result == NULL))
+		if (!(entryp = readdir(dirp)))
 			break;
-		if (strncmp(entry.d_name, "slurm", 5))
+		if (xstrncmp(entryp->d_name, "slurm", 5))
 			continue;
 		if (snprintf(path, PATH_MAX, "%s/%s",
-					 base, entry.d_name) >= PATH_MAX) {
+			     base, entryp->d_name) >= PATH_MAX) {
 			error("%s: cpuset path too long", __func__);
 			break;
 		}
@@ -327,39 +328,53 @@ extern int task_p_slurmd_release_resources (uint32_t job_id)
 extern int task_p_pre_setuid (stepd_step_rec_t *job)
 {
 	char path[PATH_MAX];
-	int rc;
+	int rc = SLURM_SUCCESS;
 
-	if (!(conf->task_plugin_param & CPU_BIND_CPUSETS))
-		return SLURM_SUCCESS;
-
+	if (conf->task_plugin_param & CPU_BIND_CPUSETS) {
 #ifdef MULTIPLE_SLURMD
-	if (snprintf(path, PATH_MAX, "%s/slurm_%s_%u",
-		     CPUSET_DIR,
-		     (conf->node_name != NULL)?conf->node_name:"",
-		     job->jobid) > PATH_MAX) {
-		error("cpuset path too long");
-		return SLURM_ERROR;
-	}
+		if (snprintf(path, PATH_MAX, "%s/slurm_%s_%u",
+			     CPUSET_DIR,
+			     (conf->node_name != NULL)?conf->node_name:"",
+			     job->jobid) > PATH_MAX) {
+			error("%s: cpuset path too long", __func__);
+			rc = SLURM_ERROR;
+		}
 #else
-	if (snprintf(path, PATH_MAX, "%s/slurm%u",
-		     CPUSET_DIR, job->jobid) > PATH_MAX) {
-		error("cpuset path too long");
-		return SLURM_ERROR;
-	}
+		if (snprintf(path, PATH_MAX, "%s/slurm%u",
+			     CPUSET_DIR, job->jobid) > PATH_MAX) {
+			error("%s: cpuset path too long", __func__);
+			rc = SLURM_ERROR;
+		}
 #endif
-
-	rc = slurm_build_cpuset(CPUSET_DIR, path, job->uid, job->gid);
-	if (rc != SLURM_SUCCESS) {
-		error("%s: slurm_build_cpuset() failed", __func__);
-		return SLURM_ERROR;
+		if (rc == SLURM_SUCCESS) {
+			rc = slurm_build_cpuset(CPUSET_DIR, path, job->uid,
+						job->gid);
+			if (rc != SLURM_SUCCESS) {
+				error("%s: slurm_build_cpuset() failed",
+				       __func__);
+			}
+		}
 	}
 
-	/* if cpuset was built ok, check for cpu frequency setting */
-	if (job->cpu_freq != NO_VAL)
+	if (rc == SLURM_SUCCESS)
 		cpu_freq_cpuset_validate(job);
 
 	return rc;
 }
+
+#ifdef HAVE_NUMA
+static void _numa_set_preferred(nodemask_t *new_mask)
+{
+	int i;
+
+	for (i = 0; i < NUMA_NUM_NODES; i++) {
+		if (nodemask_isset(new_mask, i)) {
+			numa_set_preferred(i);
+			break;
+		}
+	}
+}
+#endif
 
 /*
  * task_p_pre_launch() is called prior to exec of application task.
@@ -426,8 +441,8 @@ extern int task_p_pre_launch (stepd_step_rec_t *job)
 						  &cur_mask);
 			}
 		}
-		slurm_chkaffinity(rc ? &cur_mask : &new_mask,
-				  job, rc);
+		task_slurm_chkaffinity(rc ? &cur_mask : &new_mask,
+				       job, rc);
 	} else if (job->mem_bind_type &&
 		   (conf->task_plugin_param & CPU_BIND_CPUSETS)) {
 		cpu_set_t cur_mask;
@@ -449,8 +464,12 @@ extern int task_p_pre_launch (stepd_step_rec_t *job)
 		if (get_memset(&new_mask, job) &&
 		    (!(job->mem_bind_type & MEM_BIND_NONE))) {
 			slurm_set_memset(path, &new_mask);
-			if (numa_available() >= 0)
-				numa_set_membind(&new_mask);
+			if (numa_available() >= 0) {
+				if (job->mem_bind_type & MEM_BIND_PREFER)
+					_numa_set_preferred(&new_mask);
+				else
+					numa_set_membind(&new_mask);
+			}
 			cur_mask = new_mask;
 		}
 		slurm_chk_memset(&cur_mask, job);
@@ -460,7 +479,10 @@ extern int task_p_pre_launch (stepd_step_rec_t *job)
 		cur_mask = numa_get_membind();
 		if (get_memset(&new_mask, job)
 		    &&  (!(job->mem_bind_type & MEM_BIND_NONE))) {
-			numa_set_membind(&new_mask);
+			if (job->mem_bind_type & MEM_BIND_PREFER)
+				_numa_set_preferred(&new_mask);
+			else
+				numa_set_membind(&new_mask);
 			cur_mask = new_mask;
 		}
 		slurm_chk_memset(&cur_mask, job);
@@ -473,7 +495,7 @@ extern int task_p_pre_launch (stepd_step_rec_t *job)
  * task_p_pre_launch_priv() is called prior to exec of application task.
  * in privileged mode, just after slurm_spank_task_init_privileged
  */
-extern int task_p_pre_launch_priv (stepd_step_rec_t *job)
+extern int task_p_pre_launch_priv(stepd_step_rec_t *job, pid_t pid)
 {
 	return SLURM_SUCCESS;
 }
@@ -513,11 +535,13 @@ extern int task_p_post_term (stepd_step_rec_t *job, stepd_step_task_info_t *task
 #endif
 	if (snprintf(path, PATH_MAX, "%s/slurm%u.%u_%d",
 				 base, job->jobid, job->stepid,
-				 job->envtp->localid) >= PATH_MAX) {
+				 task->id) >= PATH_MAX) {
 		error("%s: cpuset path too long", __func__);
 		return SLURM_ERROR;
 	}
-	if (rmdir(path) != 0) {
+	/* Only error out if it failed to remove the cpuset dir. The cpuset
+	 * dir may have already been removed by the release_agent. */
+	if (rmdir(path) != 0 && errno != ENOENT) {
 		error("%s: rmdir(%s) failed %m", __func__, path);
 		return SLURM_ERROR;
 	}
@@ -531,6 +555,14 @@ extern int task_p_post_term (stepd_step_rec_t *job, stepd_step_task_info_t *task
  * (all the task)
  */
 extern int task_p_post_step (stepd_step_rec_t *job)
+{
+	return SLURM_SUCCESS;
+}
+
+/*
+ * Keep track a of a pid.
+ */
+extern int task_p_add_pid (pid_t pid)
 {
 	return SLURM_SUCCESS;
 }

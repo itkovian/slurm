@@ -7,7 +7,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -36,24 +36,14 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#ifdef HAVE_CONFIG_H
-#  include "config.h"
-#endif /* HAVE_CONFIG_H */
-
-#if HAVE_STDINT_H
-#  include <stdint.h>
-#endif
-
-#if HAVE_INTTYPES_H
-#  include <inttypes.h>
-#endif
+#include "config.h"
 
 #ifdef HAVE_TERMCAP_H
 #  include <termcap.h>
 #endif
 
-#include <sys/ioctl.h>
 #include <termios.h>
+#include <sys/ioctl.h>
 
 #include "src/common/slurm_priority.h"
 #include "src/common/xstring.h"
@@ -69,22 +59,20 @@ uint32_t weight_fs; /* weight for Fairshare factor */
 uint32_t weight_js; /* weight for Job Size factor */
 uint32_t weight_part; /* weight for Partition factor */
 uint32_t weight_qos; /* weight for QOS factor */
+char    *weight_tres; /* weights for TRES factors */
 
-static int _get_info(priority_factors_request_msg_t *factors_req,
-		     priority_factors_response_msg_t **factors_resp);
-
-int main (int argc, char *argv[])
+int main (int argc, char **argv)
 {
 	char *prio_type = NULL;
 	int error_code = SLURM_SUCCESS;
-	priority_factors_request_msg_t req_msg;
 	priority_factors_response_msg_t *resp_msg = NULL;
 	log_options_t opts = LOG_OPTS_STDERR_ONLY ;
+	uint16_t show_flags = 0;
 
 	slurm_conf_init(NULL);
 	log_init(xbasename(argv[0]), opts, SYSLOG_FACILITY_USER, NULL);
 
-	parse_command_line( argc, argv );
+	parse_command_line(argc, argv);
 	if (params.verbose) {
 		opts.stderr_level += params.verbose;
 		log_alter(opts, SYSLOG_FACILITY_USER, NULL);
@@ -104,6 +92,7 @@ int main (int argc, char *argv[])
 		weight_js   = slurm_ctl_conf_ptr->priority_weight_js;
 		weight_part = slurm_ctl_conf_ptr->priority_weight_part;
 		weight_qos  = slurm_ctl_conf_ptr->priority_weight_qos;
+		weight_tres = slurm_ctl_conf_ptr->priority_weight_tres;
 		prio_type   = xstrdup(slurm_ctl_conf_ptr->priority_type);
 		slurm_free_ctl_conf(slurm_ctl_conf_ptr);
 	} else {
@@ -112,35 +101,29 @@ int main (int argc, char *argv[])
 		weight_js   = slurm_get_priority_weight_job_size();
 		weight_part = slurm_get_priority_weight_partition();
 		weight_qos  = slurm_get_priority_weight_qos();
+		weight_tres = slurm_get_priority_weight_tres();
 		prio_type   = slurm_get_priority_type();
 	}
 
 	/* Check to see if we are running a supported accounting plugin */
-	if (strncasecmp(prio_type, "priority/multifactor", 20)) {
+	if (xstrcasecmp(prio_type, "priority/basic") == 0) {
 		fprintf (stderr, "You are not running a supported "
 			 "priority plugin\n(%s).\n"
-			 "Only 'priority/multifactor' and "
-			 "'priority/multifactor2' are supported.\n",
+			 "Only 'priority/multifactor' is supported.\n",
 			 prio_type);
 		exit(1);
 	}
 	xfree(prio_type);
 
-
-	memset(&req_msg, 0, sizeof(priority_factors_request_msg_t));
-
-	if (params.jobs)
-		req_msg.job_id_list = params.job_list;
-	else
-		req_msg.job_id_list = NULL;
-
-	if (params.users)
-		req_msg.uid_list = params.user_list;
-	else
-		req_msg.uid_list = NULL;
-
-	error_code = _get_info(&req_msg, &resp_msg);
-
+	if (params.federation)
+		show_flags |= SHOW_FEDERATION;
+	if (params.clusters || params.local)
+		show_flags |= SHOW_LOCAL;
+	if (params.sibling)
+		show_flags |= SHOW_FEDERATION | SHOW_SIBLING;
+	error_code = slurm_load_job_prio(&resp_msg, params.job_list,
+					 params.parts, params.user_list,
+					 show_flags);
 	if (error_code) {
 		slurm_perror("Couldn't get priority factors from controller");
 		exit(error_code);
@@ -148,11 +131,13 @@ int main (int argc, char *argv[])
 
 	if (params.format == NULL) {
 		if (params.normalized) {
-			if (params.long_list)
-				params.format = "%.15i %.8u %10y %10a %10f "
-					"%10j %10p %10q";
-			else{
-				params.format = xstrdup("%.15i");
+			if (params.long_list) {
+				params.format = "%.15i %9r %.8u %10y %10a %10f "
+					"%10j %10p %10q %20t";
+			} else {
+				params.format = xstrdup("%.15i %9r");
+				if (params.sibling && !params.local)
+					xstrcat(params.format, " %.8c");
 				if (params.users)
 					xstrcat(params.format, " %.8u");
 				xstrcat(params.format, " %10y");
@@ -166,13 +151,17 @@ int main (int argc, char *argv[])
 					xstrcat(params.format, " %10p");
 				if (weight_qos)
 					xstrcat(params.format, " %10q");
+				if (weight_tres)
+					xstrcat(params.format, " %20t");
 			}
 		} else {
-			if (params.long_list)
-				params.format = "%.15i %.8u %.10Y %.10A %.10F "
-					"%.10J %.10P %.10Q %.6N";
-			else{
-				params.format = xstrdup("%.15i");
+			if (params.long_list) {
+				params.format = "%.15i %9r %.8u %.10Y %.10A %.10F "
+					"%.10J %.10P %.10Q %.11N %.20T";
+			} else {
+				params.format = xstrdup("%.15i %9r");
+				if (params.sibling && !params.local)
+					xstrcat(params.format, " %.8c");
 				if (params.users)
 					xstrcat(params.format, " %.8u");
 				xstrcat(params.format, " %.10Y");
@@ -186,6 +175,8 @@ int main (int argc, char *argv[])
 					xstrcat(params.format, " %.10P");
 				if (weight_qos)
 					xstrcat(params.format, " %.10Q");
+				if (weight_tres)
+					xstrcat(params.format, " %.20T");
 			}
 		}
 	}
@@ -200,48 +191,13 @@ int main (int argc, char *argv[])
 		print_jobs_array(resp_msg->priority_factors_list,
 				 params.format_list);
 	}
-#if 0
+
+#ifdef MEMORY_LEAK_DEBUG
 	/* Free storage here if we want to verify that logic.
 	 * Since we exit next, this is not important */
- 	list_destroy(params.format_list);
+	FREE_NULL_LIST(params.format_list);
 	slurm_free_priority_factors_response_msg(resp_msg);
 #endif
 
 	exit (error_code);
-}
-
-static int _get_info(priority_factors_request_msg_t *factors_req,
-		     priority_factors_response_msg_t **factors_resp)
-{
-	int rc;
-        slurm_msg_t req_msg;
-        slurm_msg_t resp_msg;
-
-	slurm_msg_t_init(&req_msg);
-	slurm_msg_t_init(&resp_msg);
-
-        req_msg.msg_type = REQUEST_PRIORITY_FACTORS;
-        req_msg.data     = factors_req;
-
-	if (slurm_send_recv_controller_msg(&req_msg, &resp_msg) < 0)
-		return SLURM_ERROR;
-
-	switch (resp_msg.msg_type) {
-	case RESPONSE_PRIORITY_FACTORS:
-		*factors_resp =
-			(priority_factors_response_msg_t *) resp_msg.data;
-		break;
-	case RESPONSE_SLURM_RC:
-		rc = ((return_code_msg_t *) resp_msg.data)->return_code;
-		slurm_free_return_code_msg(resp_msg.data);
-		if (rc)
-			slurm_seterrno_ret(rc);
-		*factors_resp = NULL;
-		break;
-	default:
-		slurm_seterrno_ret(SLURM_UNEXPECTED_MSG_ERROR);
-		break;
-	}
-
-	return SLURM_PROTOCOL_SUCCESS;
 }

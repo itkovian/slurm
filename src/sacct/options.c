@@ -3,12 +3,13 @@
  *****************************************************************************
  *  Copyright (C) 2006-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2009 Lawrence Livermore National Security.
+ *  Portions Copyright (C) 2010-2017 SchedMD LLC
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Danny Auble <da@llnl.gov>.
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -37,22 +38,30 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
+#include "src/common/parse_time.h"
 #include "src/common/proc_args.h"
 #include "src/common/read_config.h"
-#include "src/common/parse_time.h"
+#include "src/common/slurm_time.h"
 #include "src/common/uid.h"
+#include "src/common/xstring.h"
 #include "sacct.h"
 #include <time.h>
 
 /* getopt_long options, integers but not characters */
-#define OPT_LONG_NAME	0x100
+#define OPT_LONG_DELIMITER 0x100
+#define OPT_LONG_LOCAL     0x101
+#define OPT_LONG_NAME      0x102
+#define OPT_LONG_NOCONVERT 0x103
+#define OPT_LONG_UNITS     0x104
+#define OPT_LONG_FEDR      0x105
 
-void _help_fields_msg(void);
-void _help_msg(void);
-void _usage(void);
-void _init_params();
+#define JOB_HASH_SIZE 1000
 
-int selected_state[STATE_COUNT];
+static void _help_fields_msg(void);
+static void _help_msg(void);
+static void _init_params(void);
+static void _usage(void);
+
 List selected_parts = NULL;
 List selected_steps = NULL;
 void *acct_db_conn = NULL;
@@ -61,8 +70,24 @@ List print_fields_list = NULL;
 ListIterator print_fields_itr = NULL;
 int field_count = 0;
 List g_qos_list = NULL;
+List g_tres_list = NULL;
 
-void _help_fields_msg(void)
+static List _build_cluster_list(slurmdb_federation_rec_t *fed)
+{
+	slurmdb_cluster_rec_t *cluster;
+	ListIterator iter;
+	List cluster_list;
+
+	cluster_list = list_create(slurm_destroy_char);
+	iter = list_iterator_create(fed->cluster_list);
+	while ((cluster = (slurmdb_cluster_rec_t *) list_next(iter)))
+		(void) slurm_addto_char_list(cluster_list, cluster->name);
+	list_iterator_destroy(iter);
+
+	return cluster_list;
+}
+
+static void _help_fields_msg(void)
 {
 	int i;
 
@@ -122,7 +147,7 @@ static int _addto_id_char_list(List char_list, char *names, bool gid)
 			i++;
 		}
 		start = i;
-		while(names[i]) {
+		while (names[i]) {
 			//info("got %d - %d = %d", i, start, i-start);
 			if (quote && names[i] == quote_c)
 				break;
@@ -135,8 +160,9 @@ static int _addto_id_char_list(List char_list, char *names, bool gid)
 					//info("got %s %d", name, i-start);
 					name = _convert_to_id( name, gid );
 
-					while((tmp_char = list_next(itr))) {
-						if (!strcasecmp(tmp_char, name))
+					while ((tmp_char = list_next(itr))) {
+						if (!xstrcasecmp(tmp_char,
+								 name))
 							break;
 					}
 
@@ -163,8 +189,8 @@ static int _addto_id_char_list(List char_list, char *names, bool gid)
 			memcpy(name, names+start, (i-start));
 			name = _convert_to_id(name, gid);
 
-			while((tmp_char = list_next(itr))) {
-				if (!strcasecmp(tmp_char, name))
+			while ((tmp_char = list_next(itr))) {
+				if (!xstrcasecmp(tmp_char, name))
 					break;
 			}
 
@@ -182,7 +208,8 @@ static int _addto_id_char_list(List char_list, char *names, bool gid)
 /* returns number of objects added to list */
 static int _addto_state_char_list(List char_list, char *names)
 {
-	int i=0, start=0, c;
+	int i = 0, start = 0;
+	uint32_t c;
 	char *name = NULL, *tmp_char = NULL;
 	ListIterator itr = NULL;
 	char quote_c = '\0';
@@ -202,7 +229,7 @@ static int _addto_state_char_list(List char_list, char *names)
 			i++;
 		}
 		start = i;
-		while(names[i]) {
+		while (names[i]) {
 			//info("got %d - %d = %d", i, start, i-start);
 			if (quote && names[i] == quote_c)
 				break;
@@ -213,14 +240,14 @@ static int _addto_state_char_list(List char_list, char *names)
 					name = xmalloc((i-start+1));
 					memcpy(name, names+start, (i-start));
 					c = job_state_num(name);
-					if (c == -1)
-						fatal("unrecognized job "
-						      "state value");
+					if (c == NO_VAL)
+						fatal("unrecognized job state value %s", name);
 					xfree(name);
 					name = xstrdup_printf("%d", c);
 
-					while((tmp_char = list_next(itr))) {
-						if (!strcasecmp(tmp_char, name))
+					while ((tmp_char = list_next(itr))) {
+						if (!xstrcasecmp(tmp_char,
+								 name))
 							break;
 					}
 
@@ -246,13 +273,14 @@ static int _addto_state_char_list(List char_list, char *names)
 			name = xmalloc((i-start)+1);
 			memcpy(name, names+start, (i-start));
 			c = job_state_num(name);
-			if (c == -1)
-				fatal("unrecognized job state value");
+			if (c == NO_VAL)
+				fatal("unrecognized job state value '%s'",
+				      name);
 			xfree(name);
 			name = xstrdup_printf("%d", c);
 
-			while((tmp_char = list_next(itr))) {
-				if (!strcasecmp(tmp_char, name))
+			while ((tmp_char = list_next(itr))) {
+				if (!xstrcasecmp(tmp_char, name))
 					break;
 			}
 
@@ -267,131 +295,10 @@ static int _addto_state_char_list(List char_list, char *names)
 	return count;
 }
 
-/* returns number of objects added to list */
-static int _addto_step_list(List step_list, char *names)
+static void _help_msg(void)
 {
-	int i=0, start=0;
-	char *name = NULL, *dot = NULL;
-	slurmdb_selected_step_t *selected_step = NULL;
-	slurmdb_selected_step_t *curr_step = NULL;
-
-	ListIterator itr = NULL;
-	char quote_c = '\0';
-	int quote = 0;
-	int count = 0;
-
-	if (!step_list) {
-		error("No list was given to fill in");
-		return 0;
-	}
-
-	itr = list_iterator_create(step_list);
-	if (names) {
-		if (names[i] == '\"' || names[i] == '\'') {
-			quote_c = names[i];
-			quote = 1;
-			i++;
-		}
-		start = i;
-		while(names[i]) {
-			//info("got %d - %d = %d", i, start, i-start);
-			if (quote && names[i] == quote_c)
-				break;
-			else if (names[i] == '\"' || names[i] == '\'')
-				names[i] = '`';
-			else if (names[i] == ',') {
-				if ((i-start) > 0) {
-					char *dot = NULL;
-					name = xmalloc((i-start+1));
-					memcpy(name, names+start, (i-start));
-
-					selected_step = xmalloc(
-						sizeof(slurmdb_selected_step_t));
-					dot = strstr(name, ".");
-					if (dot == NULL) {
-						debug2("No jobstep requested");
-						selected_step->stepid = NO_VAL;
-					} else {
-						*dot++ = 0;
-						/* can't use NO_VAL
-						 * since that means all */
-						if (!strcmp(dot, "batch"))
-							selected_step->stepid =
-								INFINITE;
-						else
-							selected_step->stepid =
-								atoi(dot);
-					}
-					selected_step->jobid = atoi(name);
-					xfree(name);
-
-					while((curr_step = list_next(itr))) {
-						if ((curr_step->jobid
-						    == selected_step->jobid)
-						   && (curr_step->stepid
-						       == selected_step->
-						       stepid))
-							break;
-					}
-
-					if (!curr_step) {
-						list_append(step_list,
-							    selected_step);
-						count++;
-					} else
-						slurmdb_destroy_selected_step(
-							selected_step);
-					list_iterator_reset(itr);
-				}
-				i++;
-				start = i;
-			}
-			i++;
-		}
-		if ((i-start) > 0) {
-			name = xmalloc((i-start)+1);
-			memcpy(name, names+start, (i-start));
-
-			selected_step =
-				xmalloc(sizeof(slurmdb_selected_step_t));
-			dot = strstr(name, ".");
-			if (dot == NULL) {
-				debug2("No jobstep requested");
-				selected_step->stepid = NO_VAL;
-			} else {
-				*dot++ = 0;
-				/* can't use NO_VAL since that means all */
-				if (!strcmp(dot, "batch"))
-					selected_step->stepid = INFINITE;
-				else
-					selected_step->stepid = atoi(dot);
-			}
-			selected_step->jobid = atoi(name);
-			xfree(name);
-
-			while((curr_step = list_next(itr))) {
-				if ((curr_step->jobid == selected_step->jobid)
-				   && (curr_step->stepid
-				       == selected_step->stepid))
-					break;
-			}
-
-			if (!curr_step) {
-				list_append(step_list, selected_step);
-				count++;
-			} else
-				slurmdb_destroy_selected_step(
-					selected_step);
-		}
-	}
-	list_iterator_destroy(itr);
-	return count;
-}
-
-void _help_msg(void)
-{
-	printf("\
-sacct [<OPTION>]                                                            \n\
+    printf("\
+sacct [<OPTION>]                                                            \n \
     Valid <OPTION> values are:                                              \n\
      -a, --allusers:                                                        \n\
 	           Display jobs for all users. By default, only the         \n\
@@ -403,9 +310,14 @@ sacct [<OPTION>]                                                            \n\
      -b, --brief:                                                           \n\
 	           Equivalent to '--format=jobstep,state,error'.            \n\
      -c, --completion: Use job completion instead of accounting data.       \n\
+         --delimiter:                                                       \n\
+	           ASCII characters used to separate the fields when        \n\
+	           specifying the  -p  or  -P options. The default delimiter\n\
+	           is a '|'. This options is ignored if -p or -P options    \n\
+	           are not specified.                                       \n\
      -D, --duplicates:                                                      \n\
-	           If SLURM job ids are reset, some job numbers will        \n\
-	           probably appear more than once refering to different jobs.\n\
+	           If SLURM job ids are reset, some job numbers may         \n\
+	           appear more than once referring to different jobs.       \n\
 	           Without this option only the most recent jobs will be    \n\
                    displayed.                                               \n\
      -e, --helpformat:                                                      \n\
@@ -415,6 +327,7 @@ sacct [<OPTION>]                                                            \n\
                    Select jobs eligible before this time.  If states are    \n\
                    given with the -s option return jobs in this state before\n\
                    this period.                                             \n\
+         --federation: Report jobs from federation if a member of a one.    \n\
      -f, --file=file:                                                       \n\
 	           Read data from the specified file, rather than SLURM's   \n\
                    current accounting log file. (Only appliciable when      \n\
@@ -431,7 +344,7 @@ sacct [<OPTION>]                                                            \n\
      -j, --jobs:                                                            \n\
 	           Format is <job(.step)>. Display information about this   \n\
                    job or comma-separated list of jobs. The default is all  \n\
-                   jobs. Adding .step will display the specfic job step of  \n\
+                   jobs. Adding .step will display the specific job step of \n\
                    that job. (A step id of 'batch' will display the         \n\
                    information about the batch step.)                       \n\
      -k, --timelimit-min:                                                   \n\
@@ -442,6 +355,8 @@ sacct [<OPTION>]                                                            \n\
                    Ignored by itself, but if timelimit_min is set this will \n\
                    be the maximum timelimit of the range.  Default is no    \n\
                    restriction.                                             \n\
+         --local   Report information only about jobs on the local cluster. \n\
+	           Overrides --federation.                                  \n\
      -l, --long:                                                            \n\
 	           Equivalent to specifying                                 \n\
 	           '--format=jobid,jobname,partition,maxvmsize,maxvmsizenode,\n\
@@ -449,23 +364,28 @@ sacct [<OPTION>]                                                            \n\
                              maxrsstask,averss,maxpages,maxpagesnode,       \n\
                              maxpagestask,avepages,mincpu,mincpunode,       \n\
                              mincputask,avecpu,ntasks,alloccpus,elapsed,    \n\
-                             state,exitcode,avecpufreq,consumedenergy,      \n\
+                             state,exitcode,avecpufreq,reqcpufreqmin,       \n\
+                             reqcpufreqmax,reqcpufreqgov,consumedenergy,    \n\
                              maxdiskread,maxdiskreadnode,maxdiskreadtask,   \n\
                              avediskread,maxdiskwrite,maxdiskwritenode,     \n\
-                             maxdiskwritetask,avediskread'                  \n\
+                             maxdiskwritetask,avediskread,allocgres,reqgres \n\
      -L, --allclusters:                                                     \n\
 	           Display jobs ran on all clusters. By default, only jobs  \n\
                    ran on the cluster from where sacct is called are        \n\
                    displayed.                                               \n\
      -M, --clusters:                                                        \n\
-                   Only send data about these clusters. -1 for all clusters.\n\
+                   Only send data about these clusters. Use \"all\" for all \n\
+                   clusters.\n\
      -n, --noheader:                                                        \n\
 	           No header will be added to the beginning of output.      \n\
                    The default is to print a header.                        \n\
+     --noconvert:                                                           \n\
+		   Don't convert units from their original type             \n\
+		   (e.g. 2048M won't be converted to 2G).                   \n\
      -N, --nodelist:                                                        \n\
                    Display jobs that ran on any of these nodes,             \n\
                    can be one or more using a ranged string.                \n\
-         --name:                                                            \n\
+     --name:                                                                \n\
                    Display jobs that have any of these name(s).             \n\
      -o, --format:                                                          \n\
 	           Comma separated list of fields. (use \"--helpformat\"    \n\
@@ -480,8 +400,8 @@ sacct [<OPTION>]                                                            \n\
      -s, --state:                                                           \n\
 	           Select jobs based on their current state or the state    \n\
                    they were in during the time period given: running (r),  \n\
-                   completed (cd), failed (f), timeout (to), resizing (rs)  \n\
-                   and node_fail (nf).                                      \n\
+                   completed (cd), failed (f), timeout (to), resizing (rs), \n\
+                   deadline (dl) and node_fail (nf).                        \n\
      -S, --starttime:                                                       \n\
                    Select jobs eligible after this time.  Default is        \n\
                    00:00:00 of the current day, unless '-s' is set then     \n\
@@ -494,6 +414,9 @@ sacct [<OPTION>]                                                            \n\
 	           Use this comma separated list of uids or user names      \n\
                    to select jobs to display.  By default, the running      \n\
                    user's uid is used.                                      \n\
+     --units=[KMGTP]:                                                       \n\
+                   Display values in specified unit type. Takes precedence  \n\
+		   over --noconvert option.                                 \n\
      --usage:      Display brief usage message.                             \n\
      -v, --verbose:                                                         \n\
 	           Primarily for debugging purposes, report the state of    \n\
@@ -517,29 +440,123 @@ sacct [<OPTION>]                                                            \n\
 	return;
 }
 
-void _usage(void)
+static void _usage(void)
 {
 	printf("Usage: sacct [options]\n\tUse --help for help\n");
 }
 
-void _init_params()
+static void _init_params(void)
 {
 	memset(&params, 0, sizeof(sacct_parameters_t));
 	params.job_cond = xmalloc(sizeof(slurmdb_job_cond_t));
 	params.job_cond->without_usage_truncation = 1;
+	params.convert_flags = CONVERT_NUM_UNIT_EXACT;
+	params.units = NO_VAL;
 }
 
-int get_data(void)
+static int _sort_desc_submit_time(void *x, void *y)
+{
+	slurmdb_job_rec_t *j1 = *(slurmdb_job_rec_t **)x;
+	slurmdb_job_rec_t *j2 = *(slurmdb_job_rec_t **)y;
+
+	if (j1->submit < j2->submit)
+		return -1;
+	else if (j1->submit > j2->submit)
+		return 1;
+
+	return 0;
+}
+
+static int _sort_asc_submit_time(void *x, void *y)
+{
+	slurmdb_job_rec_t *j1 = *(slurmdb_job_rec_t **)x;
+	slurmdb_job_rec_t *j2 = *(slurmdb_job_rec_t **)y;
+
+	if (j1->submit < j2->submit)
+		return 1;
+	else if (j1->submit > j2->submit)
+		return -1;
+
+	return 0;
+}
+
+static void _remove_duplicate_fed_jobs(List jobs)
+{
+	int i, j;
+	uint32_t hash_inx;
+	bool found = false;
+	uint32_t *hash_tbl_size = NULL;
+	slurmdb_job_rec_t ***hash_job = NULL;
+	slurmdb_job_rec_t *job = NULL;
+	ListIterator itr = NULL;
+
+	xassert(jobs);
+
+	hash_tbl_size = xmalloc(sizeof(uint32_t) * JOB_HASH_SIZE);
+	hash_job = xmalloc(sizeof(slurmdb_job_rec_t **) * JOB_HASH_SIZE);
+
+	for (i = 0; i < JOB_HASH_SIZE; i++) {
+		hash_tbl_size[i] = 100;
+		hash_job[i] = xmalloc(sizeof(slurmdb_job_rec_t *) *
+				      hash_tbl_size[i]);
+	}
+
+	/* Put newest jobs at the front so that the later jobs can be removed
+	 * easily */
+	list_sort(jobs, _sort_asc_submit_time);
+
+	itr = list_iterator_create(jobs);
+	while ((job = list_next(itr))) {
+		found = false;
+
+		hash_inx = job->jobid % JOB_HASH_SIZE;
+		for (j = 0; (j < hash_tbl_size[hash_inx] &&
+			     hash_job[hash_inx][j]); j++) {
+			if (job->jobid == hash_job[hash_inx][j]->jobid) {
+				found = true;
+				break;
+			}
+		}
+		if (found) {
+			/* Show sibling jobs that are related. e.g. when a
+			 * pending sibling job is cancelled all siblings have
+			 * the state as cancelled. Since jobids won't roll in a
+			 * day -- unless the system is amazing -- just remove
+			 * jobs that are older than a day. */
+			if (hash_job[hash_inx][j]->submit > (job->submit +
+							     86400))
+				list_delete_item(itr);
+		} else {
+			if (j >= hash_tbl_size[hash_inx]) {
+				hash_tbl_size[hash_inx] *= 2;
+				xrealloc(hash_job[hash_inx],
+					 sizeof(slurmdb_job_rec_t *) *
+					 hash_tbl_size[hash_inx]);
+			}
+			hash_job[hash_inx][j] = job;
+		}
+	}
+	list_iterator_destroy(itr);
+
+	/* Put jobs back in desc order */
+	list_sort(jobs, _sort_desc_submit_time);
+
+	for (i = 0; i < JOB_HASH_SIZE; i++)
+		xfree(hash_job[i]);
+	xfree(hash_tbl_size);
+	xfree(hash_job);
+}
+
+extern int get_data(void)
 {
 	slurmdb_job_rec_t *job = NULL;
 	slurmdb_step_rec_t *step = NULL;
-
 	ListIterator itr = NULL;
 	ListIterator itr_step = NULL;
 	slurmdb_job_cond_t *job_cond = params.job_cond;
 
 	if (params.opt_completion) {
-		jobs = g_slurm_jobcomp_get_jobs(job_cond);
+		jobs = slurmdb_jobcomp_jobs_get(job_cond);
 		return SLURM_SUCCESS;
 	} else {
 		jobs = slurmdb_jobs_get(acct_db_conn, job_cond);
@@ -548,8 +565,16 @@ int get_data(void)
 	if (!jobs)
 		return SLURM_ERROR;
 
+	/* Remove duplicate federated jobs. The db will remove duplicates for
+	 * one cluster but not when jobs for multiple clusters are requested.
+	 * Remove the current job if there were jobs with the same id submitted
+	 * in the future. */
+	if (params.cluster_name && !params.opt_dup)
+	    _remove_duplicate_fed_jobs(jobs);
+
 	itr = list_iterator_create(jobs);
-	while((job = list_next(itr))) {
+	while ((job = list_next(itr))) {
+
 		if (job->user) {
 			struct	passwd *pw = NULL;
 			if ((pw=getpwnam(job->user)))
@@ -560,9 +585,8 @@ int get_data(void)
 			continue;
 
 		itr_step = list_iterator_create(job->steps);
-		while((step = list_next(itr_step)) != NULL) {
+		while ((step = list_next(itr_step)) != NULL) {
 			/* now aggregate the aggregatable */
-			job->alloc_cpus = MAX(job->alloc_cpus, step->ncpus);
 
 			if (step->state < JOB_COMPLETE)
 				continue;
@@ -587,7 +611,7 @@ int get_data(void)
 	return SLURM_SUCCESS;
 }
 
-void parse_command_line(int argc, char **argv)
+extern void parse_command_line(int argc, char **argv)
 {
 	extern int optind;
 	int c, i, optionIndex = 0;
@@ -597,9 +621,9 @@ void parse_command_line(int argc, char **argv)
 	struct stat stat_buf;
 	char *dot = NULL;
 	char *env_val = NULL;
-	bool brief_output = FALSE, long_output = FALSE;
-	bool all_users = 0;
-	bool all_clusters = 0;
+	bool brief_output = false, long_output = false;
+	bool all_users = false;
+	bool all_clusters = false;
 	slurmdb_job_cond_t *job_cond = params.job_cond;
 	log_options_t opts = LOG_OPTS_STDERR_ONLY ;
 	int verbosity;		/* count of -v options */
@@ -611,7 +635,9 @@ void parse_command_line(int argc, char **argv)
                 {"allocations",    no_argument,       0,    'X'},
                 {"brief",          no_argument,       0,    'b'},
                 {"completion",     no_argument,       0,    'c'},
+                {"delimiter",      required_argument, 0,    OPT_LONG_DELIMITER},
                 {"duplicates",     no_argument,       0,    'D'},
+                {"federation",     no_argument,       0,    OPT_LONG_FEDR},
                 {"helpformat",     no_argument,       0,    'e'},
                 {"help-fields",    no_argument,       0,    'e'},
                 {"endtime",        required_argument, 0,    'E'},
@@ -619,6 +645,7 @@ void parse_command_line(int argc, char **argv)
                 {"gid",            required_argument, 0,    'g'},
                 {"group",          required_argument, 0,    'g'},
                 {"help",           no_argument,       0,    'h'},
+                {"local",          no_argument,       0,    OPT_LONG_LOCAL},
                 {"name",           required_argument, 0,    OPT_LONG_NAME},
                 {"nnodes",         required_argument, 0,    'i'},
                 {"ncpus",          required_argument, 0,    'I'},
@@ -630,6 +657,8 @@ void parse_command_line(int argc, char **argv)
                 {"cluster",        required_argument, 0,    'M'},
                 {"clusters",       required_argument, 0,    'M'},
                 {"nodelist",       required_argument, 0,    'N'},
+                {"noconvert",      no_argument,       0,    OPT_LONG_NOCONVERT},
+                {"units",          required_argument, 0,    OPT_LONG_UNITS},
                 {"noheader",       no_argument,       0,    'n'},
                 {"fields",         required_argument, 0,    'o'},
                 {"format",         required_argument, 0,    'o'},
@@ -656,6 +685,15 @@ void parse_command_line(int argc, char **argv)
 	log_init("sacct", opts, SYSLOG_FACILITY_DAEMON, NULL);
 	opterr = 1;		/* Let getopt report problems to the user */
 
+	if (slurmctld_conf.fed_params &&
+	    strstr(slurmctld_conf.fed_params, "fed_display"))
+		params.opt_federation = true;
+
+	if (getenv("SACCT_FEDERATION"))
+		params.opt_federation = true;
+	if (getenv("SACCT_LOCAL"))
+		params.opt_local = true;
+
 	while (1) {		/* now cycle through the command line */
 		c = getopt_long(argc, argv,
 				"aA:bcC:DeE:f:g:hi:I:j:k:K:lLM:nN:o:pPq:r:s:S:Ttu:UvVW:x:X",
@@ -664,7 +702,7 @@ void parse_command_line(int argc, char **argv)
 			break;
 		switch (c) {
 		case 'a':
-			all_users = 1;
+			all_users = true;
 			break;
 		case 'A':
 			if (!job_cond->acct_list)
@@ -678,16 +716,21 @@ void parse_command_line(int argc, char **argv)
 		case 'c':
 			params.opt_completion = 1;
 			break;
+		case OPT_LONG_DELIMITER:
+			fields_delimiter = optarg;
+			break;
 		case 'C':
 			/* 'C' is deprecated since 'M' is cluster on
 			   everything else.
 			*/
 		case 'M':
-			if (!strcasecmp(optarg, "-1")) {
-				all_clusters = 1;
+			if (!xstrcasecmp(optarg, "all") ||
+			    !xstrcasecmp(optarg, "-1")) {	/* vestigial */
+				all_clusters = true;
 				break;
 			}
-			all_clusters=0;
+			all_clusters = false;
+			params.opt_local = true;
 			if (!job_cond->cluster_list)
 				job_cond->cluster_list =
 					list_create(slurm_destroy_char);
@@ -746,18 +789,12 @@ void parse_command_line(int argc, char **argv)
 			}
 			break;
 		case 'j':
-			if ((strspn(optarg, "0123456789, ") < strlen(optarg))
-			    && (strspn(optarg, ".batch0123456789, ")
-				< strlen(optarg))) {
-				fprintf(stderr, "Invalid jobs list: %s\n",
-					optarg);
-				exit(1);
-			}
-
 			if (!job_cond->step_list)
 				job_cond->step_list = list_create(
 					slurmdb_destroy_selected_step);
-			_addto_step_list(job_cond->step_list, optarg);
+			slurm_addto_step_list(job_cond->step_list, optarg);
+			if (!list_count(job_cond->step_list))
+				FREE_NULL_LIST(job_cond->step_list);
 			break;
 		case 'k':
 			job_cond->timelimit_min = time_str2mins(optarg);
@@ -772,10 +809,29 @@ void parse_command_line(int argc, char **argv)
 				fatal("Invalid time limit specification");
 			break;
 		case 'L':
-			all_clusters = 1;
+			all_clusters = true;
 			break;
 		case 'l':
 			long_output = true;
+			break;
+		case OPT_LONG_FEDR:
+			params.opt_federation = true;
+			all_clusters = false;
+			break;
+		case OPT_LONG_LOCAL:
+			params.opt_local = true;
+			all_clusters = false;
+			break;
+		case OPT_LONG_NOCONVERT:
+			params.convert_flags |= CONVERT_NUM_UNIT_NO;
+			break;
+		case OPT_LONG_UNITS:
+		{
+			int type = get_unit_type(*optarg);
+			if (type == SLURM_ERROR)
+				fatal("Invalid unit type");
+			params.units = type;
+		}
 			break;
 		case 'n':
 			print_fields_have_header = 0;
@@ -850,11 +906,11 @@ void parse_command_line(int argc, char **argv)
 			params.opt_help = 3;
 			break;
 		case 'u':
-			if (!strcmp(optarg, "-1")) {
-				all_users = 1;
+			if (!xstrcmp(optarg, "-1")) {
+				all_users = true;
 				break;
 			}
-			all_users = 0;
+			all_users = false;
 			if (!job_cond->userid_list)
 				job_cond->userid_list =
 					list_create(slurm_destroy_char);
@@ -913,7 +969,8 @@ void parse_command_line(int argc, char **argv)
 		*/
 		if (!job_cond->state_list
 		    || !list_count(job_cond->state_list)) {
-			if (!localtime_r(&job_cond->usage_start, &start_tm)) {
+			if (!slurm_localtime_r(&job_cond->usage_start,
+					       &start_tm)) {
 				error("Couldn't get localtime from %ld",
 				      (long)job_cond->usage_start);
 				return;
@@ -922,16 +979,16 @@ void parse_command_line(int argc, char **argv)
 			start_tm.tm_min = 0;
 			start_tm.tm_hour = 0;
 			start_tm.tm_isdst = -1;
-			job_cond->usage_start = mktime(&start_tm);
+			job_cond->usage_start = slurm_mktime(&start_tm);
 		}
 	}
 
 	if (verbosity > 0) {
 		char start_char[25], end_char[25];
 
-		slurm_ctime_r(&job_cond->usage_start, start_char);
+		slurm_ctime2_r(&job_cond->usage_start, start_char);
 		if (job_cond->usage_end)
-			slurm_ctime_r(&job_cond->usage_end, end_char);
+			slurm_ctime2_r(&job_cond->usage_end, end_char);
 		else
 			sprintf(end_char, "Now");
 		info("Jobs eligible from %s - %s", start_char, end_char);
@@ -950,20 +1007,23 @@ void parse_command_line(int argc, char **argv)
 	      params.opt_allocs);
 
 	if (params.opt_completion) {
-		g_slurm_jobcomp_init(params.opt_filein);
+		slurmdb_jobcomp_init(params.opt_filein);
 
 		acct_type = slurm_get_jobcomp_type();
-		if ((strcmp(acct_type, "jobcomp/none") == 0)
+		if ((xstrcmp(acct_type, "jobcomp/none") == 0)
 		    &&  (stat(params.opt_filein, &stat_buf) != 0)) {
 			fprintf(stderr, "SLURM job completion is disabled\n");
 			exit(1);
 		}
 		xfree(acct_type);
 	} else {
-		slurm_acct_storage_init(params.opt_filein);
-
+		if (slurm_acct_storage_init(params.opt_filein) !=
+		    SLURM_SUCCESS) {
+			fprintf(stderr, "SLURM unable to initialize storage plugin\n");
+			exit(1);
+		}
 		acct_type = slurm_get_accounting_storage_type();
-		if ((strcmp(acct_type, "accounting_storage/none") == 0)
+		if ((xstrcmp(acct_type, "accounting_storage/none") == 0)
 		    &&  (stat(params.opt_filein, &stat_buf) != 0)) {
 			fprintf(stderr,
 				"SLURM accounting storage is disabled\n");
@@ -978,18 +1038,44 @@ void parse_command_line(int argc, char **argv)
 	}
 
 	/* specific clusters requested? */
+	if (params.opt_federation && !all_clusters && !job_cond->cluster_list &&
+	    !params.opt_local) {
+		/* Test if in federated cluster and if so, get information from
+		 * all clusters in that federation */
+		slurmdb_federation_rec_t *fed = NULL;
+		slurmdb_federation_cond_t fed_cond;
+		List fed_list = NULL;
+		List cluster_list = list_create(NULL);
+
+		params.cluster_name = slurm_get_cluster_name();
+
+		list_append(cluster_list, params.cluster_name);
+		slurmdb_init_federation_cond(&fed_cond, 0);
+		fed_cond.cluster_list = cluster_list;
+
+		if ((fed_list = slurmdb_federations_get(
+			     acct_db_conn, &fed_cond)) &&
+		    list_count(fed_list) == 1) {
+			fed = list_peek(fed_list);
+			job_cond->cluster_list = _build_cluster_list(fed);
+			/* Leave cluster_name to identify remote only jobs */
+			// xfree(params.cluster_name);
+		} else
+			xfree(params.cluster_name);
+		FREE_NULL_LIST(cluster_list);
+		FREE_NULL_LIST(fed_list);
+	}
 	if (all_clusters) {
 		if (job_cond->cluster_list
 		   && list_count(job_cond->cluster_list)) {
-			list_destroy(job_cond->cluster_list);
-			job_cond->cluster_list = NULL;
+			FREE_NULL_LIST(job_cond->cluster_list);
 		}
 		debug2("Clusters requested:\tall");
 	} else if (job_cond->cluster_list
 		   && list_count(job_cond->cluster_list)) {
 		debug2( "Clusters requested:");
 		itr = list_iterator_create(job_cond->cluster_list);
-		while((start = list_next(itr)))
+		while ((start = list_next(itr)))
 			debug2("\t: %s", start);
 		list_iterator_destroy(itr);
 	} else if (!job_cond->cluster_list
@@ -1008,22 +1094,22 @@ void parse_command_line(int argc, char **argv)
 	if (!job_cond->userid_list || !list_count(job_cond->userid_list))
 		if ((job_cond->step_list && list_count(job_cond->step_list))
 		   || job_cond->used_nodes)
-			all_users=1;
+			all_users = true;
 
 	/* set all_users for user root if not requesting any */
 	if (!job_cond->userid_list && !params.opt_uid)
-		all_users = 1;
+		all_users = true;
 
 	if (all_users) {
-		if (job_cond->userid_list && list_count(job_cond->userid_list)) {
-			list_destroy(job_cond->userid_list);
-			job_cond->userid_list = NULL;
+		if (job_cond->userid_list &&
+		    list_count(job_cond->userid_list)) {
+			FREE_NULL_LIST(job_cond->userid_list);
 		}
 		debug2("Userids requested:\tall");
 	} else if (job_cond->userid_list && list_count(job_cond->userid_list)) {
 		debug2("Userids requested:");
 		itr = list_iterator_create(job_cond->userid_list);
-		while((start = list_next(itr)))
+		while ((start = list_next(itr)))
 			debug2("\t: %s", start);
 		list_iterator_destroy(itr);
 	} else if (!job_cond->userid_list
@@ -1038,7 +1124,7 @@ void parse_command_line(int argc, char **argv)
 	if (job_cond->groupid_list && list_count(job_cond->groupid_list)) {
 		debug2("Groupids requested:");
 		itr = list_iterator_create(job_cond->groupid_list);
-		while((start = list_next(itr)))
+		while ((start = list_next(itr)))
 			debug2("\t: %s", start);
 		list_iterator_destroy(itr);
 	}
@@ -1047,7 +1133,7 @@ void parse_command_line(int argc, char **argv)
 	if (job_cond->partition_list && list_count(job_cond->partition_list)) {
 		debug2("Partitions requested:");
 		itr = list_iterator_create(job_cond->partition_list);
-		while((start = list_next(itr)))
+		while ((start = list_next(itr)))
 			debug2("\t: %s", start);
 		list_iterator_destroy(itr);
 	}
@@ -1063,14 +1149,11 @@ void parse_command_line(int argc, char **argv)
 	if (job_cond->step_list && list_count(job_cond->step_list)) {
 		debug2("Jobs requested:");
 		itr = list_iterator_create(job_cond->step_list);
-		while((selected_step = list_next(itr))) {
-			if (selected_step->stepid != NO_VAL)
-				debug2("\t: %d.%d",
-					selected_step->jobid,
-					selected_step->stepid);
-			else
-				debug2("\t: %d",
-					selected_step->jobid);
+		while ((selected_step = list_next(itr))) {
+			char id[FORMAT_STRING_SIZE];
+
+			debug2("\t: %s", slurmdb_get_selected_step_id(
+				       id, sizeof(id), selected_step));
 		}
 		list_iterator_destroy(itr);
 	}
@@ -1079,7 +1162,7 @@ void parse_command_line(int argc, char **argv)
 	if (job_cond->state_list && list_count(job_cond->state_list)) {
 		debug2("States requested:");
 		itr = list_iterator_create(job_cond->state_list);
-		while((start = list_next(itr))) {
+		while ((start = list_next(itr))) {
 			debug2("\t: %s",
 				job_state_string(atoi(start)));
 		}
@@ -1089,7 +1172,7 @@ void parse_command_line(int argc, char **argv)
 	if (job_cond->wckey_list && list_count(job_cond->wckey_list)) {
 		debug2("Wckeys requested:");
 		itr = list_iterator_create(job_cond->wckey_list);
-		while((start = list_next(itr)))
+		while ((start = list_next(itr)))
 			debug2("\t: %s\n", start);
 		list_iterator_destroy(itr);
 	}
@@ -1111,7 +1194,7 @@ void parse_command_line(int argc, char **argv)
 	if (job_cond->jobname_list && list_count(job_cond->jobname_list)) {
 		debug2("Jobnames requested:");
 		itr = list_iterator_create(job_cond->jobname_list);
-		while((start = list_next(itr))) {
+		while ((start = list_next(itr))) {
 			debug2("\t: %s", start);
 		}
 		list_iterator_destroy(itr);
@@ -1136,7 +1219,7 @@ void parse_command_line(int argc, char **argv)
 		xstrfmtcat(params.opt_field_list, "%s,", dot);
 	}
 
-	if (params.opt_field_list==NULL) {
+	if (params.opt_field_list == NULL) {
 		if (params.opt_completion)
 			dot = DEFAULT_COMP_FIELDS;
 		else if ( ( env_val = getenv("SACCT_FORMAT") ) )
@@ -1168,7 +1251,7 @@ void parse_command_line(int argc, char **argv)
 
 		command_len = strlen(start);
 
-		if (!strncasecmp("ALL", start, command_len)) {
+		if (!xstrncasecmp("ALL", start, command_len)) {
 			for (i = 0; fields[i].name; i++) {
 				if (newlen_set)
 					fields[i].len = newlen;
@@ -1180,7 +1263,7 @@ void parse_command_line(int argc, char **argv)
 		}
 
 		for (i = 0; fields[i].name; i++) {
-			if (!strncasecmp(fields[i].name, start, command_len))
+			if (!xstrncasecmp(fields[i].name, start, command_len))
 				goto foundfield;
 		}
 		error("Invalid field requested: \"%s\"", start);
@@ -1203,7 +1286,7 @@ void parse_command_line(int argc, char **argv)
 	return;
 }
 
-void do_help(void)
+extern void do_help(void)
 {
 	switch (params.opt_help) {
 	case 1:
@@ -1221,6 +1304,15 @@ void do_help(void)
 	}
 }
 
+/* Return true if the specified job id is local to a cluster
+ * (not a federated job) */
+static inline bool _test_local_job(uint32_t job_id)
+{
+	if ((job_id & (~MAX_JOB_ID)) == 0)
+		return true;
+	return false;
+}
+
 /* do_list() -- List the assembled data
  *
  * In:	Nothing explicit.
@@ -1229,7 +1321,7 @@ void do_help(void)
  * At this point, we have already selected the desired data,
  * so we just need to print it for the user.
  */
-void do_list(void)
+extern void do_list(void)
 {
 	ListIterator itr = NULL;
 	ListIterator itr_step = NULL;
@@ -1240,7 +1332,13 @@ void do_list(void)
 		return;
 
 	itr = list_iterator_create(jobs);
-	while((job = list_next(itr))) {
+	while ((job = list_next(itr))) {
+		if ((params.cluster_name) &&
+		    _test_local_job(job->jobid) &&
+		    xstrcmp(params.cluster_name, job->cluster))
+			continue;
+
+
 		if (list_count(job->steps)) {
 			int cnt = list_count(job->steps);
 			job->stats.cpu_ave /= (double)cnt;
@@ -1257,7 +1355,7 @@ void do_list(void)
 		if (!params.opt_allocs
 		    && (job->track_steps || !job->show_full)) {
 			itr_step = list_iterator_create(job->steps);
-			while((step = list_next(itr_step))) {
+			while ((step = list_next(itr_step))) {
 				if (step->end == 0)
 					step->end = job->end;
 				print_fields(JOBSTEP, step);
@@ -1273,10 +1371,11 @@ void do_list(void)
  * In:	Nothing explicit.
  * Out:	void.
  *
+ * NOTE: This data is from the job completion data and not federation compliant.
  * At this point, we have already selected the desired data,
  * so we just need to print it for the user.
  */
-void do_list_completion(void)
+extern void do_list_completion(void)
 {
 	ListIterator itr = NULL;
 	jobcomp_job_rec_t *job = NULL;
@@ -1285,32 +1384,30 @@ void do_list_completion(void)
 		return;
 
 	itr = list_iterator_create(jobs);
-	while((job = list_next(itr))) {
+	while ((job = list_next(itr))) {
 		print_fields(JOBCOMP, job);
 	}
 	list_iterator_destroy(itr);
 }
 
-void sacct_init()
+extern void sacct_init(void)
 {
 	_init_params();
 	print_fields_list = list_create(NULL);
 	print_fields_itr = list_iterator_create(print_fields_list);
 }
 
-void sacct_fini()
+extern void sacct_fini(void)
 {
 	if (print_fields_itr)
 		list_iterator_destroy(print_fields_itr);
-	if (print_fields_list)
-		list_destroy(print_fields_list);
-	if (jobs)
-		list_destroy(jobs);
-	if (g_qos_list)
-		list_destroy(g_qos_list);
+	FREE_NULL_LIST(print_fields_list);
+	FREE_NULL_LIST(jobs);
+	FREE_NULL_LIST(g_qos_list);
+	FREE_NULL_LIST(g_tres_list);
 
 	if (params.opt_completion)
-		g_slurm_jobcomp_fini();
+		slurmdb_jobcomp_fini();
 	else {
 		slurmdb_connection_close(&acct_db_conn);
 		slurm_acct_storage_fini();

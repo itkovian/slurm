@@ -14,7 +14,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -43,14 +43,12 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#ifdef HAVE_CONFIG_H
-#  include "config.h"
-#endif
+#include "config.h"
 
-#include <stdio.h>
 #include <ctype.h>
-#include <string.h>
+#include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -62,6 +60,7 @@
 #include "src/common/xstring.h"
 
 #include "debugger.h"
+#include "multi_prog.h"
 #include "opt.h"
 
 /* Given a program name, translate it to a fully qualified pathname
@@ -99,7 +98,8 @@ _build_path(char* fname)
 	dir = strtok_r(path_env, ":", &ptrptr);
 	while (dir) {
 		snprintf(file_path, sizeof(file_path), "%s/%s", dir, file_name);
-		if (stat(file_path, &buf) == 0)
+		if ((stat(file_path, &buf) == 0)
+		    && (! S_ISDIR(buf.st_mode)))
 			break;
 		dir = strtok_r(NULL, ":", &ptrptr);
 	}
@@ -114,7 +114,7 @@ _build_path(char* fname)
 static void
 _set_range(int low_num, int high_num, char *exec_name, bool ignore_duplicates)
 {
-#if defined HAVE_BG_FILES && !defined HAVE_BG_L_P
+#if defined HAVE_BG_FILES
 	/* Use symbols from the runjob.so library provided by IBM.
 	 * Do NOT use debugger symbols local to the srun command */
 #else
@@ -182,11 +182,13 @@ extern int
 mpir_set_multi_name(int ntasks, const char *config_fname)
 {
 	FILE *config_fd;
-	char line[256];
+	char line[BUF_SIZE];
 	char *ranks, *exec_name, *p, *ptrptr;
 	int line_num = 0;
+	bool last_line_break = false, line_break = false;
+	int line_len;
 
-#if defined HAVE_BG_FILES && !defined HAVE_BG_L_P
+#if defined HAVE_BG_FILES
 	/* Use symbols from the runjob.so library provided by IBM.
 	 * Do NOT use debugger symbols local to the srun command */
 #else
@@ -205,12 +207,25 @@ mpir_set_multi_name(int ntasks, const char *config_fname)
 	}
 	while (fgets(line, sizeof(line), config_fd)) {
 		line_num ++;
-		if (strlen (line) >= (sizeof(line) - 1)) {
+		line_len = strlen(line);
+		if (line_len >= (sizeof(line) - 1)) {
 			error ("Line %d of configuration file %s too long",
 				line_num, config_fname);
 			fclose(config_fd);
 			return -1;
 		}
+		if ((line_len > 0 && line[line_len - 1] == '\\') ||  /* EOF */
+		    (line_len > 1 && line[line_len - 2] == '\\' &&
+				     line[line_len - 1] == '\n'))
+			line_break = true;
+		else
+			line_break = false;
+
+		if (last_line_break) {
+			last_line_break = line_break;
+			continue;
+		}
+		last_line_break = line_break;
 		p = line;
 		while (*p != '\0' && isspace (*p)) /* remove leading spaces */
 			p ++;
@@ -238,7 +253,7 @@ mpir_set_multi_name(int ntasks, const char *config_fname)
 extern void
 mpir_init(int num_tasks)
 {
-#if defined HAVE_BG_FILES && !defined HAVE_BG_L_P
+#if defined HAVE_BG_FILES
 	/* Use symbols from the runjob.so library provided by IBM.
 	 * Do NOT use debugger symbols local to the srun command */
 #else
@@ -254,7 +269,7 @@ mpir_init(int num_tasks)
 extern void
 mpir_cleanup(void)
 {
-#if defined HAVE_BG_FILES && !defined HAVE_BG_L_P
+#if defined HAVE_BG_FILES
 	/* Use symbols from the runjob.so library provided by IBM.
 	 * Do NOT use debugger symbols local to the srun command */
 #else
@@ -268,22 +283,22 @@ mpir_cleanup(void)
 #endif
 }
 
-extern void
-mpir_set_executable_names(const char *executable_name)
+extern void mpir_set_executable_names(const char *executable_name,
+				      uint32_t task_offset,
+				      uint32_t task_count)
 {
-#if defined HAVE_BG_FILES && !defined HAVE_BG_L_P
+#if defined HAVE_BG_FILES
 	/* Use symbols from the runjob.so library provided by IBM.
 	 * Do NOT use debugger symbols local to the srun command */
 #else
 	int i;
 
-	for (i = 0; i < MPIR_proctable_size; i++) {
+	if (task_offset == NO_VAL)
+		task_offset = 0;
+	xassert((task_offset + task_count) <= MPIR_proctable_size);
+	for (i = task_offset; i < (task_offset + task_count); i++) {
 		MPIR_proctable[i].executable_name = xstrdup(executable_name);
-		if (MPIR_proctable[i].executable_name == NULL) {
-			error("Unable to set MPI_proctable executable_name:"
-			      " %m");
-			exit(error_exit);
-		}
+		// info("NAME[%d]:%s", i, executable_name);
 	}
 #endif
 }
@@ -291,7 +306,7 @@ mpir_set_executable_names(const char *executable_name)
 extern void
 mpir_dump_proctable(void)
 {
-#if defined HAVE_BG_FILES && !defined HAVE_BG_L_P
+#if defined HAVE_BG_FILES
 	/* Use symbols from the runjob.so library provided by IBM.
 	 * Do NOT use debugger symbols local to the srun command */
 #else
@@ -300,8 +315,6 @@ mpir_dump_proctable(void)
 
 	for (i = 0; i < MPIR_proctable_size; i++) {
 		tv = &MPIR_proctable[i];
-		if (!tv)
-			break;
 		info("task:%d, host:%s, pid:%d, executable:%s",
 		     i, tv->host_name, tv->pid, tv->executable_name);
 	}
@@ -310,7 +323,7 @@ mpir_dump_proctable(void)
 
 static int
 _update_task_mask(int low_num, int high_num, int *ntasks, bool *ntasks_set,
-		  bitstr_t *task_mask, bool ignore_duplicates)
+		  bitstr_t **task_mask, bool ignore_duplicates)
 {
 	int i;
 
@@ -331,23 +344,24 @@ _update_task_mask(int low_num, int high_num, int *ntasks, bool *ntasks_set,
 			*ntasks = high_num + 1;
 			*ntasks_set = true;
 			i_set_ntasks = true;
-			task_mask = bit_realloc(task_mask, *ntasks);
+			(*task_mask) = bit_realloc((*task_mask), *ntasks);
 		}
 	}
 	for (i=low_num; i<=high_num; i++) {
-		if (bit_test(task_mask, i)) {
+		if (bit_test((*task_mask), i)) {
 			if (ignore_duplicates)
 				continue;
 			error("Duplicate record for task %d", i);
 			return -1;
 		}
-		bit_set(task_mask, i);
+		bit_set((*task_mask), i);
 	}
 	return 0;
 }
 
 static int
-_validate_ranks(char *ranks, int *ntasks, bool *ntasks_set, bitstr_t *task_mask)
+_validate_ranks(char *ranks, int *ntasks, bool *ntasks_set, int32_t *ncmds,
+		bitstr_t **task_mask)
 {
 	static bool has_asterisk = false;
 	char *range = NULL, *p = NULL;
@@ -359,12 +373,18 @@ _validate_ranks(char *ranks, int *ntasks, bool *ntasks_set, bitstr_t *task_mask)
 		high_num = *ntasks - 1;
 		*ntasks_set = true;	/* do not allow to change later */
 		has_asterisk = true;	/* must be last MPMD spec line */
+		(*ncmds)++;
 		return _update_task_mask(low_num, high_num, ntasks, ntasks_set,
 					 task_mask, true);
 	}
 
 	for (range = strtok_r(ranks, ",", &ptrptr); range != NULL;
 			range = strtok_r(NULL, ",", &ptrptr)) {
+		/*
+		 * Non-contiguous tasks are split into multiple commands
+		 * in the mpmd_set so count each token separately
+		 */
+		(*ncmds)++;
 		p = range;
 		while (*p != '\0' && isdigit (*p))
 			p ++;
@@ -405,21 +425,27 @@ _validate_ranks(char *ranks, int *ntasks, bool *ntasks_set, bitstr_t *task_mask)
  * IN config_name - MPMD configuration file name
  * IN/OUT ntasks - number of tasks to launch
  * IN/OUT ntasks_set - true if task count explicitly set by user
+ * OUT ncmds - number of commands
  * RET 0 on success, -1 otherwise
  */
 extern int
-verify_multi_name(char *config_fname, int *ntasks, bool *ntasks_set)
+verify_multi_name(char *config_fname, int *ntasks, bool *ntasks_set,
+		  int32_t *ncmds)
 {
 	FILE *config_fd;
-	char line[256];
+	char line[BUF_SIZE];
 	char *ranks, *exec_name, *p, *ptrptr;
 	int line_num = 0, i, rc = 0;
+	bool last_line_break = false, line_break = false;
+	int line_len;
 	bitstr_t *task_mask;
 
 	if (*ntasks <= 0) {
 		error("Invalid task count %d", *ntasks);
 		return -1;
 	}
+
+	*ncmds = 0;
 
 	config_fd = fopen(config_fname, "r");
 	if (config_fd == NULL) {
@@ -429,13 +455,25 @@ verify_multi_name(char *config_fname, int *ntasks, bool *ntasks_set)
 
 	task_mask = bit_alloc(*ntasks);
 	while (fgets(line, sizeof(line), config_fd)) {
-		line_num ++;
-		if (strlen (line) >= (sizeof(line) - 1)) {
+		line_num++;
+		line_len = strlen(line);
+		if (line_len >= (sizeof(line) - 1)) {
 			error ("Line %d of configuration file %s too long",
 				line_num, config_fname);
 			rc = -1;
 			goto fini;
 		}
+		if ((line_len > 0 && line[line_len - 1] == '\\') ||  /* EOF */
+		    (line_len > 1 && line[line_len - 2] == '\\' &&
+				     line[line_len - 1] == '\n'))
+			line_break = true;
+		else
+			line_break = false;
+		if (last_line_break) {
+			last_line_break = line_break;
+			continue;
+		}
+		last_line_break = line_break;
 		p = line;
 		while (*p != '\0' && isspace (*p)) /* remove leading spaces */
 			p ++;
@@ -454,7 +492,8 @@ verify_multi_name(char *config_fname, int *ntasks, bool *ntasks_set)
 			rc = -1;
 			goto fini;
 		}
-		if (_validate_ranks(ranks, ntasks, ntasks_set, task_mask)) {
+		if (_validate_ranks(ranks, ntasks, ntasks_set, ncmds,
+				    &task_mask)) {
 			error("Line %d of configuration file %s invalid",
 				line_num, config_fname);
 			rc = -1;

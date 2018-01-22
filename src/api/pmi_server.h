@@ -1,6 +1,5 @@
 /*****************************************************************************\
  *  pmi.h - Global PMI data as maintained within srun
- *  $Id$
  *****************************************************************************
  *  Copyright (C) 2005 The Regents of the University of California.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -8,7 +7,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -23,7 +22,7 @@
  *
  *  You should have received a copy of the GNU General Public License along
  *  with SLURM; if not, write to the Free Software Foundation, Inc.,
- *  59 Temple Place, Suite 330, Boston, MA  02111-1307  USA.
+ *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
 #ifndef _PMI_SERVER_H
@@ -33,7 +32,7 @@
 #include "src/common/slurm_protocol_defs.h"
 
 /* Put the supplied kvs values into the common store */
-extern int pmi_kvs_put(struct kvs_comm_set *kvs_set_ptr);
+extern int pmi_kvs_put(kvs_comm_set_t *kvs_set_ptr);
 
 /* Note that a task has reached a barrier,
  * transmit the kvs values to the task */

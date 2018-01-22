@@ -8,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -40,26 +40,15 @@
 #ifndef __SACCTMGR_H__
 #define __SACCTMGR_H__
 
-#if HAVE_CONFIG_H
-#  include "config.h"
-#endif
-
-#if HAVE_GETOPT_H
-#  include <getopt.h>
-#else
-#  include "src/common/getopt.h"
-#endif
+#include "config.h"
 
 #include <ctype.h>
 #include <errno.h>
+#include <getopt.h>
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
-#ifdef HAVE_STRING_H
-#  include <string.h>
-#endif
-#ifdef HAVE_STRINGS_H
-#  include <strings.h>
-#endif
+#include <string.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -67,14 +56,6 @@
 #  include <readline/readline.h>
 #  include <readline/history.h>
 #endif
-
-#if HAVE_INTTYPES_H
-#  include <inttypes.h>
-#else  /* !HAVE_INTTYPES_H */
-#  if HAVE_STDINT_H
-#    include <stdint.h>
-#  endif
-#endif  /* HAVE_INTTYPES_H */
 
 #include "slurm/slurm.h"
 
@@ -87,13 +68,16 @@
 #define CKPT_WAIT	10
 #define	MAX_INPUT_FIELDS 128
 #define BUFFER_SIZE 4096
+#define FORMAT_STRING_SIZE 34
 
 typedef enum {
 	/* COMMON */
 	PRINT_ACCT,
 	PRINT_CLUSTER,
 	PRINT_COORDS,
+	PRINT_CPUS,
 	PRINT_DESC,
+	PRINT_FEDERATION,
 	PRINT_FLAGS,
 	PRINT_NAME,
 	PRINT_PART,
@@ -107,6 +91,9 @@ typedef enum {
 	PRINT_GRPCM,
 	PRINT_GRPCRM,
 	PRINT_GRPC,
+	PRINT_GRPTM,
+	PRINT_GRPTRM,
+	PRINT_GRPT,
 	PRINT_GRPJ,
 	PRINT_GRPMEM,
 	PRINT_GRPN,
@@ -116,11 +103,22 @@ typedef enum {
 	PRINT_MAXCRM,
 	PRINT_MAXC,
 	PRINT_MAXCU,
+	PRINT_MAXTM,
+	PRINT_MAXTRM,
+	PRINT_MAXTRMA,
+	PRINT_MAXT,
+	PRINT_MAXTA,
+	PRINT_MAXTN,
+	PRINT_MAXTU,
 	PRINT_MAXJ,
+	PRINT_MAXJA,
 	PRINT_MAXN,
 	PRINT_MAXNU,
 	PRINT_MAXS,
+	PRINT_MAXSA,
 	PRINT_MAXW,
+	PRINT_MINC,
+	PRINT_MINT,
 
 	/* ASSOCIATION */
 	PRINT_DQOS = 2000,
@@ -134,8 +132,12 @@ typedef enum {
 	PRINT_CHOST = 3000,
 	PRINT_CPORT,
 	PRINT_CLASS,
-	PRINT_CPUS,
+	PRINT_FEATURES,
+	PRINT_FEDSTATE,
+	PRINT_FEDSTATERAW,
+	PRINT_TRES,
 	PRINT_NODECNT,
+	PRINT_NODEINX,
 	PRINT_CLUSTER_NODES,
 	PRINT_RPC_VERSION,
 	PRINT_SELECT,
@@ -169,24 +171,29 @@ typedef enum {
 
 	/* EVENT */
 	PRINT_DURATION,
-	PRINT_END,
+	PRINT_TIMEEND,
 	PRINT_EVENTRAW,
 	PRINT_EVENT,
 	PRINT_NODENAME,
 	PRINT_REASON,
-	PRINT_START,
+	PRINT_TIMESTART,
 	PRINT_STATERAW,
 	PRINT_STATE,
 
 	/* RESOURCE */
 	PRINT_COUNT = 9000,
 	PRINT_TYPE,
-	PRINT_MANAGER,
+	PRINT_SERVERTYPE,
 	PRINT_SERVER,
 	PRINT_CALLOWED,
 	PRINT_ALLOWED,
-	PRINT_CUSED,
+	PRINT_ALLOCATED,
 	PRINT_USED,
+
+	/* RESERVATION */
+	PRINT_ASSOC_NAME = 10000,
+	PRINT_UNUSED,
+
 } sacctmgr_print_t;
 
 
@@ -203,67 +210,75 @@ extern void *db_conn;
 extern uint32_t my_uid;
 extern List g_qos_list;
 extern List g_res_list;
+extern List g_tres_list;
 
 extern bool tree_display;
 
 extern bool sacctmgr_check_default_qos(uint32_t qos_id,
-				       slurmdb_association_cond_t *assoc_cond);
+				       slurmdb_assoc_cond_t *assoc_cond);
 
-extern int sacctmgr_set_association_cond(slurmdb_association_cond_t *assoc_cond,
+extern int sacctmgr_set_assoc_cond(slurmdb_assoc_cond_t *assoc_cond,
 					 char *type, char *value,
 					 int command_len, int option);
-extern int sacctmgr_set_association_rec(slurmdb_association_rec_t *assoc_rec,
+extern int sacctmgr_set_assoc_rec(slurmdb_assoc_rec_t *assoc_rec,
 					char *type, char *value,
 					int command_len, int option);
-extern void sacctmgr_print_association_rec(slurmdb_association_rec_t *assoc,
+extern void sacctmgr_print_assoc_rec(slurmdb_assoc_rec_t *assoc,
 					   print_field_t *field, List tree_list,
 					   bool last);
 
-extern int sacctmgr_add_association(int argc, char *argv[]);
-extern int sacctmgr_add_user(int argc, char *argv[]);
-extern int sacctmgr_add_account(int argc, char *argv[]);
-extern int sacctmgr_add_cluster(int argc, char *argv[]);
-extern int sacctmgr_add_coord(int argc, char *argv[]);
-extern int sacctmgr_add_qos(int argc, char *argv[]);
-extern int sacctmgr_add_res(int argc, char *argv[]);
+extern int sacctmgr_add_assoc(int argc, char **argv);
+extern int sacctmgr_add_user(int argc, char **argv);
+extern int sacctmgr_add_account(int argc, char **argv);
+extern int sacctmgr_add_cluster(int argc, char **argv);
+extern int sacctmgr_add_federation(int argc, char **argv);
+extern int sacctmgr_add_coord(int argc, char **argv);
+extern int sacctmgr_add_qos(int argc, char **argv);
+extern int sacctmgr_add_res(int argc, char **argv);
 
-extern int sacctmgr_list_association(int argc, char *argv[]);
-extern int sacctmgr_list_user(int argc, char *argv[]);
-extern int sacctmgr_list_account(int argc, char *argv[]);
-extern int sacctmgr_list_cluster(int argc, char *argv[]);
+extern int sacctmgr_list_assoc(int argc, char **argv);
+extern int sacctmgr_list_user(int argc, char **argv);
+extern int sacctmgr_list_account(int argc, char **argv);
+extern int sacctmgr_list_cluster(int argc, char **argv);
 extern int sacctmgr_list_config(bool have_db_conn);
-extern int sacctmgr_list_event(int argc, char *argv[]);
-extern int sacctmgr_list_problem(int argc, char *argv[]);
-extern int sacctmgr_list_qos(int argc, char *argv[]);
-extern int sacctmgr_list_res(int argc, char *argv[]);
-extern int sacctmgr_list_wckey(int argc, char *argv[]);
+extern int sacctmgr_list_event(int argc, char **argv);
+extern int sacctmgr_list_federation(int argc, char **argv);
+extern int sacctmgr_list_problem(int argc, char **argv);
+extern int sacctmgr_list_qos(int argc, char **argv);
+extern int sacctmgr_list_res(int argc, char **argv);
+extern int sacctmgr_list_reservation(int argc, char **argv);
+extern int sacctmgr_list_stats(int argc, char **argv);
+extern int sacctmgr_list_tres(int, char **);
+extern int sacctmgr_list_wckey(int argc, char **argv);
 
-extern int sacctmgr_modify_association(int argc, char *argv[]);
-extern int sacctmgr_modify_user(int argc, char *argv[]);
-extern int sacctmgr_modify_account(int argc, char *argv[]);
-extern int sacctmgr_modify_cluster(int argc, char *argv[]);
-extern int sacctmgr_modify_job(int argc, char *argv[]);
-extern int sacctmgr_modify_qos(int argc, char *argv[]);
-extern int sacctmgr_modify_res(int argc, char *argv[]);
+extern int sacctmgr_modify_assoc(int argc, char **argv);
+extern int sacctmgr_modify_user(int argc, char **argv);
+extern int sacctmgr_modify_account(int argc, char **argv);
+extern int sacctmgr_modify_cluster(int argc, char **argv);
+extern int sacctmgr_modify_federation(int argc, char **argv);
+extern int sacctmgr_modify_job(int argc, char **argv);
+extern int sacctmgr_modify_qos(int argc, char **argv);
+extern int sacctmgr_modify_res(int argc, char **argv);
 
-extern int sacctmgr_delete_association(int argc, char *argv[]);
-extern int sacctmgr_delete_user(int argc, char *argv[]);
-extern int sacctmgr_delete_account(int argc, char *argv[]);
-extern int sacctmgr_delete_cluster(int argc, char *argv[]);
-extern int sacctmgr_delete_coord(int argc, char *argv[]);
-extern int sacctmgr_delete_qos(int argc, char *argv[]);
-extern int sacctmgr_delete_res(int argc, char *argv[]);
+extern int sacctmgr_delete_assoc(int argc, char **argv);
+extern int sacctmgr_delete_user(int argc, char **argv);
+extern int sacctmgr_delete_account(int argc, char **argv);
+extern int sacctmgr_delete_cluster(int argc, char **argv);
+extern int sacctmgr_delete_coord(int argc, char **argv);
+extern int sacctmgr_delete_federation(int argc, char **argv);
+extern int sacctmgr_delete_qos(int argc, char **argv);
+extern int sacctmgr_delete_res(int argc, char **argv);
 
-extern int sacctmgr_dump_cluster(int argc, char *argv[]);
+extern int sacctmgr_dump_cluster(int argc, char **argv);
 
-extern int sacctmgr_archive_dump(int argc, char *argv[]);
-extern int sacctmgr_archive_load(int argc, char *argv[]);
+extern int sacctmgr_archive_dump(int argc, char **argv);
+extern int sacctmgr_archive_load(int argc, char **argv);
 
 /* common.c */
 extern int parse_option_end(char *option);
 extern char *strip_quotes(char *option, int *increased, bool make_lower);
-extern int notice_thread_init();
-extern int notice_thread_fini();
+extern void notice_thread_init();
+extern void notice_thread_fini();
 extern int commit_check(char *warning);
 extern int get_uint(char *in_value, uint32_t *out_value, char *type);
 extern int get_uint16(char *in_value, uint16_t *out_value, char *type);
@@ -272,7 +287,6 @@ extern int get_double(char *in_value, double *out_value, char *type);
 extern int addto_qos_char_list(List char_list, List qos_list, char *names,
 			       int option);
 extern int addto_action_char_list(List char_list, char *names);
-extern List copy_char_list(List qos_list);
 extern void sacctmgr_print_coord_list(
 	print_field_t *field, List value, int last);
 extern void sacctmgr_print_qos_list(print_field_t *field, List qos_list,
@@ -280,18 +294,22 @@ extern void sacctmgr_print_qos_list(print_field_t *field, List qos_list,
 extern void sacctmgr_print_qos_bitstr(print_field_t *field, List qos_list,
 				      bitstr_t *value, int last);
 
-extern void sacctmgr_print_assoc_limits(slurmdb_association_rec_t *assoc);
+extern void sacctmgr_print_tres(print_field_t *field, char *tres_simple_str,
+				int last);
+extern void sacctmgr_print_assoc_limits(slurmdb_assoc_rec_t *assoc);
+extern void sacctmgr_print_cluster(slurmdb_cluster_rec_t *cluster);
+extern void sacctmgr_print_federation(slurmdb_federation_rec_t *fed);
 extern void sacctmgr_print_qos_limits(slurmdb_qos_rec_t *qos);
-extern int sacctmgr_remove_assoc_usage(slurmdb_association_cond_t *assoc_cond);
+extern int sacctmgr_remove_assoc_usage(slurmdb_assoc_cond_t *assoc_cond);
 extern int sacctmgr_remove_qos_usage(slurmdb_qos_cond_t *qos_cond);
 extern int sort_coord_list(void *, void *);
 extern List sacctmgr_process_format_list(List format_list);
 extern int sacctmgr_validate_cluster_list(List cluster_list);
 
 /* you need to free the objects returned from these functions */
-extern slurmdb_association_rec_t *sacctmgr_find_account_base_assoc(
+extern slurmdb_assoc_rec_t *sacctmgr_find_account_base_assoc(
 	char *account, char *cluster);
-extern slurmdb_association_rec_t *sacctmgr_find_root_assoc(char *cluster);
+extern slurmdb_assoc_rec_t *sacctmgr_find_root_assoc(char *cluster);
 extern slurmdb_user_rec_t *sacctmgr_find_user(char *name);
 extern slurmdb_account_rec_t *sacctmgr_find_account(char *name);
 extern slurmdb_cluster_rec_t *sacctmgr_find_cluster(char *name);
@@ -300,10 +318,10 @@ extern slurmdb_cluster_rec_t *sacctmgr_find_cluster(char *name);
  * they are pointing to an object in the list given
  */
 
-extern slurmdb_association_rec_t *sacctmgr_find_association_from_list(
+extern slurmdb_assoc_rec_t *sacctmgr_find_assoc_from_list(
 	List assoc_list, char *user, char *account,
 	char *cluster, char *partition);
-extern slurmdb_association_rec_t *sacctmgr_find_account_base_assoc_from_list(
+extern slurmdb_assoc_rec_t *sacctmgr_find_account_base_assoc_from_list(
 	List assoc_list, char *account, char *cluster);
 extern slurmdb_res_rec_t *sacctmgr_find_res_from_list(
 	List res_list, uint32_t id, char *name, char *server);
@@ -318,19 +336,28 @@ extern slurmdb_cluster_rec_t *sacctmgr_find_cluster_from_list(
 extern slurmdb_wckey_rec_t *sacctmgr_find_wckey_from_list(
 	List wckey_list, char *user, char *name, char *cluster);
 
+extern void sacctmgr_initialize_g_tres_list(void);
 
 /* file_functions.c */
 extern int print_file_add_limits_to_line(char **line,
-					 slurmdb_association_rec_t *assoc);
+					 slurmdb_assoc_rec_t *assoc);
 
 extern int print_file_slurmdb_hierarchical_rec_list(FILE *fd,
 					  List slurmdb_hierarchical_rec_list,
 					  List user_list,
 					  List acct_list);
 
-extern void load_sacctmgr_cfg_file (int argc, char *argv[]);
+extern void load_sacctmgr_cfg_file (int argc, char **argv);
 
 /* txn_functions.c */
-extern int sacctmgr_list_txn(int argc, char *argv[]);
+extern int sacctmgr_list_txn(int argc, char **argv);
+
+/* runaway_jobs_functions.c */
+extern int sacctmgr_list_runaway_jobs(int argc, char **argv);
+
+/* federation_functions.c */
+extern int verify_federations_exist(List name_list);
+extern int verify_fed_clusters(List cluster_list, const char *fed_name,
+			       bool *existing_fed);
 
 #endif

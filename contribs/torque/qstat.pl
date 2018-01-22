@@ -11,7 +11,7 @@
 #  CODE-OCEC-09-009. All rights reserved.
 #
 #  This file is part of SLURM, a resource management program.
-#  For details, see <http://slurm.schedmd.com/>.
+#  For details, see <https://slurm.schedmd.com/>.
 #  Please also read the included file: DISCLAIMER.
 #
 #  SLURM is free software; you can redistribute it and/or modify it under
@@ -198,7 +198,7 @@ if(defined($queueList)) {
 
 		$job->{'allocNodeList'} = $job->{'nodes'} || "--";
 		$job->{'stateCode'} = stateCode($job->{'job_state'});
-		$job->{'user_name'} = getpwuid($job->{'user_id'});
+		$job->{'user_name'} = getpwuid($job->{'user_id'}) || "nobody";
 		$job->{'name'} = "Allocation" if !$job->{'name'};
 
 		# Filter jobs according to options and arguments
@@ -229,6 +229,11 @@ if(defined($queueList)) {
 		}
 		$rc = 0;
 	}
+
+	# return 0 even if no records printed when using -u flag
+	if (@userIds) {
+		$rc = 0;
+	}
 }
 
 # Exit with status code
@@ -245,11 +250,13 @@ sub stateCode
 	if(!defined($state)) {
 		return 'U';
 	}
-
-	switch($state) {
+	switch($state & JOB_STATE_BASE) {
 		case [JOB_COMPLETE,
 		      JOB_CANCELLED,
 		      JOB_TIMEOUT,
+		      JOB_NODE_FAIL,
+		      JOB_PREEMPTED,
+		      JOB_BOOT_FAIL,
 		      JOB_FAILED]    { return 'C' }
 		case [JOB_RUNNING]   { return 'R' }
 		case [JOB_PENDING]   { return 'Q' }
@@ -436,7 +443,9 @@ sub print_job_brief
 
 	if(!$line_num) {
 		printf("%-19s %-16s %-15s %-8s %-1s %-15s\n",
-		       "Job ID", "Jobname", "Username", "Time",  "S", "Queue");
+		       "Job id", "Name", "Username", "Time Use",  "S", "Queue");
+		printf("%-19s %-16s %-15s %-8s %-1s %-15s\n",
+		       '-' x 19, '-' x 16, '-' x 15, '-' x 8, '-' x 1, '-' x 15);
 	}
 	printf("%-19.19s %-16.16s %-15.15s %-8.8s %-1.1s %-15.15s\n",
 	       $job->{'job_id'}, $job->{'name'}, $job->{'user_name'},
@@ -458,8 +467,8 @@ sub print_job_select
 		       "", "", "", "", "", "", "", "Req'd", "Req'd", "", "Elap");
 		printf(
 			"%-20s %-8s %-8s %-20s %-6s %-5s %-5s %-6s %-5s %-1s %-5s\n",
-			"Job ID", "Username", "Queue", "Jobname", "SessID", "NDS",
-			"TSK",    "Memory",   "Time",  "S",       "Time"
+			"Job id", "Username", "Queue", "Name", "SessID", "NDS",
+			"TSK",    "Memory",   "Time Use",  "S",       "Time"
 			);
 		printf(
 			"%-20s %-8s %-8s %-20s %-6s %-5s %-5s %-6s %-5s %-1s %-5s\n",

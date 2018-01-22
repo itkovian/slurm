@@ -9,7 +9,7 @@
  *  Written by Danny Auble <da@llnl.gov>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -69,10 +69,10 @@ extern List mysql_jobcomp_process_get_jobs(slurmdb_job_cond_t *job_cond)
 		set = 0;
 		xstrcat(extra, " where (");
 		itr = list_iterator_create(job_cond->step_list);
-		while((selected_step = list_next(itr))) {
+		while ((selected_step = list_next(itr))) {
 			if (set)
 				xstrcat(extra, " || ");
-			tmp = xstrdup_printf("jobid=%d",
+			tmp = xstrdup_printf("jobid=%u",
 					      selected_step->jobid);
 			xstrcat(extra, tmp);
 			set = 1;
@@ -90,10 +90,10 @@ extern List mysql_jobcomp_process_get_jobs(slurmdb_job_cond_t *job_cond)
 			xstrcat(extra, " where (");
 
 		itr = list_iterator_create(job_cond->partition_list);
-		while((selected_part = list_next(itr))) {
+		while ((selected_part = list_next(itr))) {
 			if (set)
 				xstrcat(extra, " || ");
-			tmp = xstrdup_printf("partition='%s'",
+			tmp = xstrdup_printf("`partition`='%s'",
 					      selected_part);
 			xstrcat(extra, tmp);
 			set = 1;
@@ -104,10 +104,10 @@ extern List mysql_jobcomp_process_get_jobs(slurmdb_job_cond_t *job_cond)
 	}
 
 	i = 0;
-	while(jobcomp_table_fields[i].name) {
+	while (jobcomp_table_fields[i].name) {
 		if (i)
 			xstrcat(tmp, ", ");
-		xstrcat(tmp, jobcomp_table_fields[i].name);
+		xstrfmtcat(tmp, "`%s`", jobcomp_table_fields[i].name);
 		i++;
 	}
 
@@ -123,12 +123,12 @@ extern List mysql_jobcomp_process_get_jobs(slurmdb_job_cond_t *job_cond)
 	if (!(result =
 	     mysql_db_query_ret(jobcomp_mysql_conn, query, 0))) {
 		xfree(query);
-		list_destroy(job_list);
+		FREE_NULL_LIST(job_list);
 		return NULL;
 	}
 	xfree(query);
 
-	while((row = mysql_fetch_row(result))) {
+	while ((row = mysql_fetch_row(result))) {
 		lc++;
 
 		job = xmalloc(sizeof(jobcomp_job_rec_t));

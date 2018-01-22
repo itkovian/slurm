@@ -1,14 +1,14 @@
-.TH SMAP "1" "August 2013" "smap 14.03" "Slurm components"
+.TH smap "1" "Slurm Commands" "November 2016" "Slurm Commands"
 
 .SH "NAME"
-smap \- graphically view information about SLURM jobs, partitions, and set
+smap \- graphically view information about Slurm jobs, partitions, and set
 configurations parameters.
 
 .SH "SYNOPSIS"
 \fBsmap\fR [\fIOPTIONS\fR...]
 .SH "DESCRIPTION"
 \fBsmap\fR is used to graphically view job, partition and node information
-for a system running SLURM.
+for a system running Slurm.
 Note that information about nodes and partitions to which you lack
 access will always be displayed to avoid obvious gaps in the output.
 This is equivalent to the \fB\-\-all\fR option of the \fBsinfo\fR and
@@ -79,6 +79,7 @@ name with the '\-n' option.
 .TP
 \fB\-M\fR, \fB\-\-clusters\fR=<\fIstring\fR>
 Clusters to issue commands to.
+Note that the SlurmDBD must be up for this option to work properly.
 
 .TP
 \fB\-n\fR, \fB\-\-nodes\fR
@@ -371,18 +372,29 @@ Clear all partitions created.
 .SH "NODE STATE CODES"
 .PP
 Node state codes are shortened as required for the field size.
-If the node state code is followed by "*", this indicates the
-node is presently not responding and will not be allocated
+These node states may be followed by a special character to identify
+state flags associated with the node.
+The following node sufficies and states are used:
+.TP 4
+\fB*\fR
+The node is presently not responding and will not be allocated
 any new work.  If the node remains non\-responsive, it will
 be placed in the \fBDOWN\fR state (except in the case of
 \fBCOMPLETING\fR, \fBDRAINED\fR, \fBDRAINING\fR,
 \fBFAIL\fR, \fBFAILING\fR nodes).
-
-If the node state code is followed by "~", this indicates
-the node is presently in a power saving mode (typically
+.TP
+\fB~\fR
+The node is presently in a power saving mode (typically
 running at reduced frequency).
-If the node state code is followed by "#", this indicates
-the node is presently being powered up or configured.
+.TP
+\fB#\fR
+The node is presently being powered up or configured.
+.TP
+\fB$\fR
+The node is currently in a reservation with a flag value of "maintenance".
+.TP
+\fB@\fR
+The node is pending reboot.
 .TP 12
 \fBALLOCATED\fR
 The node has been allocated to one or more jobs.
@@ -394,16 +406,16 @@ one or more jobs are in the process of COMPLETING.
 \fBCOMPLETING\fR
 All jobs associated with this node are in the process of
 COMPLETING.  This node state will be removed when
-all of the job's processes have terminated and the SLURM
+all of the job's processes have terminated and the Slurm
 epilog program (if any) has terminated. See the \fBEpilog\fR
 parameter description in the \fBslurm.conf\fR man page for
 more information.
 .TP
 \fBDOWN\fR
-The node is unavailable for use. SLURM can automatically
+The node is unavailable for use. Slurm can automatically
 place nodes in this state if some failure occurs. System
 administrators may also explicitly place nodes in this state. If
-a node resumes normal operation, SLURM can automatically
+a node resumes normal operation, Slurm can automatically
 return it to service. See the \fBReturnToService\fR
 and \fBSlurmdTimeout\fR parameter descriptions in the
 \fBslurm.conf\fR(5) man page for more information.
@@ -440,8 +452,11 @@ The node is not allocated to any jobs and is available for use.
 \fBMAINT\fR
 The node is currently in a reservation with a flag value of "maintainence".
 .TP
+\fBREBOOT\fR
+The node is currently scheduled to be rebooted.
+.TP
 \fBUNKNOWN\fR
-The SLURM controller has just started and the node's state
+The Slurm controller has just started and the node's state
 has not yet been determined.
 
 .SH "JOB STATE CODES"
@@ -460,7 +475,7 @@ Job was explicitly cancelled by the user or system administrator.
 The job may or may not have been initiated.
 .TP
 \fBCD  COMPLETED\fR
-Job has terminated all processes on all nodes.
+Job has terminated all processes on all nodes with an exit code of zero.
 .TP
 \fBCG  COMPLETING\fR
 Job is in the process of completing. Some processes on some nodes may still be active.
@@ -484,8 +499,18 @@ Job terminated due to preemption.
 \fBR   RUNNING\fR
 Job currently has an allocation.
 .TP
+\fBSE  SPECIAL_EXIT\fR
+The job was requeued in a special state. This state can be set by
+users, typically in EpilogSlurmctld, if the job has terminated with
+a particular exit value.
+.TP
+\fBST  STOPPED\fR
+Job has an allocation, but execution has been stopped with SIGSTOP signal.
+CPUS have been retained by this job.
+.TP
 \fBS   SUSPENDED\fR
-Job has an allocation, but execution has been suspended.
+Job has an allocation, but execution has been suspended and CPUs have been
+released for other jobs.
 .TP
 \fBTO  TIMEOUT\fR
 Job terminated upon reaching its time limit.
@@ -495,7 +520,7 @@ The following environment variables can be used to override settings
 compiled into smap.
 .TP 20
 \fBSLURM_CONF\fR
-The location of the SLURM configuration file.
+The location of the Slurm configuration file.
 
 .SH "COPYING"
 Copyright (C) 2004\-2007 The Regents of the University of California.
@@ -505,15 +530,15 @@ Copyright (C) 2008\-2009 Lawrence Livermore National Security.
 .br
 Copyright (C) 2010\-2013 SchedMD LLC.
 .LP
-This file is part of SLURM, a resource management program.
-For details, see <http://slurm.schedmd.com/>.
+This file is part of Slurm, a resource management program.
+For details, see <https://slurm.schedmd.com/>.
 .LP
-SLURM is free software; you can redistribute it and/or modify it under
+Slurm is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free
 Software Foundation; either version 2 of the License, or (at your option)
 any later version.
 .LP
-SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
 WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
 FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
 details.

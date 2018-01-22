@@ -1,14 +1,12 @@
 /*****************************************************************************\
  *  dist_tasks - Assign task count for each resources
- *
- *  $Id: dist_tasks.h,v 1.2 2006/10/31 19:31:31 palermo Exp $
  *****************************************************************************
  *  Copyright (C) 2006 Hewlett-Packard Development Company, L.P.
  *  Written by Susanne M. Balle, <susanne.balle@hp.com>
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -40,16 +38,18 @@
 #ifndef _CONS_RES_DIST_TASKS_H
 #define _CONS_RES_DIST_TASKS_H
 
-#if HAVE_CONFIG_H
-#  include "config.h"
-#endif
-
-#if HAVE_STRING_H
-#  include <string.h>
-#endif
+#include <string.h>
 
 #include "select_cons_res.h"
 
-int cr_dist(struct job_record *job_ptr,const uint16_t cr_type);
+/* Distribute tasks over CPUs
+ * IN job_ptr - job to be allocated resources
+ * IN cr_type - allocation type (sockets, cores, etc.)
+ * IN preempt_mode - true if testing with simulated preempted jobs
+ * IN avail_core_bitmap - system-wide bitmap of cores originally available to
+ *		the job, only used to identify specialized cores
+ */
+extern int cr_dist(struct job_record *job_ptr, const uint16_t cr_type,
+		   bool preempt_mode, bitstr_t *avail_core_bitmap);
 
 #endif /* !_CONS_RES_DIST_TASKS_H */

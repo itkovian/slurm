@@ -7,7 +7,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -36,15 +36,12 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#ifdef HAVE_CONFIG_H
-#  include "config.h"
-#endif
+#include "config.h"
 
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <strings.h>
 #include <time.h>
 
 #ifndef   __USE_ISOC99
@@ -54,8 +51,22 @@
 
 #include "slurm/slurm.h"
 #include "src/common/macros.h"
+#include "src/common/slurm_time.h"
+#include "src/common/strlcpy.h"
+#include "src/common/xstring.h"
+#include "src/common/parse_time.h"
 
-#define _RUN_STAND_ALONE 0
+/*
+** Define slurm-specific aliases for use by plugins, see slurm_xlator.h
+** for details.
+*/
+strong_alias(parse_time, slurm_parse_time);
+//slurm_make_time_str is already exported
+strong_alias(time_str2mins, slurm_time_str2mins);
+strong_alias(time_str2secs, slurm_time_str2secs);
+strong_alias(secs2time_str, slurm_secs2time_str);
+strong_alias(mins2time_str, slurm_mins2time_str);
+strong_alias(mon_abbr, slurm_mon_abbr);
 
 time_t     time_now;
 struct tm *time_now_tm;
@@ -132,17 +143,22 @@ _is_valid_timespec(const char *s)
 	int digit;
 	int dash;
 	int colon;
-
+	bool already_digit = false;
 	digit = dash = colon = 0;
 
 	while (*s) {
 		if (*s >= '0' && *s <= '9') {
-			++digit;
+			if (!already_digit) {
+				++digit;
+				already_digit = true;
+			}
 		} else if (*s == '-') {
+			already_digit = false;
 			++dash;
 			if (colon)
 				return false;
 		} else if (*s == ':') {
+			already_digit = false;
 			++colon;
 		} else {
 			return false;
@@ -158,9 +174,6 @@ _is_valid_timespec(const char *s)
 		return false;
 
 	if (dash) {
-		if (colon == 0
-		    && digit < 1)
-			return false;
 		if (colon == 1
 		    && digit < 3)
 			return false;
@@ -197,7 +210,7 @@ static int _get_delta(char *time_str, int *pos, long *delta)
 		if (isspace((int)time_str[offset]))
 			continue;
 		for (i=0; un[i].name; i++) {
-			if (!strncasecmp((time_str + offset),
+			if (!xstrncasecmp((time_str + offset),
 					 un[i].name, un[i].name_len)) {
 				offset += un[i].name_len;
 				cnt    *= un[i].multiplier;
@@ -285,7 +298,7 @@ _get_time(char *time_str, int *pos, int *hour, int *minute, int * second)
 	while (isspace((int)time_str[offset])) {
 		offset++;
 	}
-	if (strncasecmp(time_str+offset, "pm", 2)== 0) {
+	if (xstrncasecmp(time_str+offset, "pm", 2)== 0) {
 		hr += 12;
 		if (hr > 23) {
 			if (hr == 24)
@@ -294,7 +307,7 @@ _get_time(char *time_str, int *pos, int *hour, int *minute, int * second)
 				goto prob;
 		}
 		offset += 2;
-	} else if (strncasecmp(time_str+offset, "am", 2) == 0) {
+	} else if (xstrncasecmp(time_str+offset, "am", 2) == 0) {
 		if (hr > 11) {
 			if (hr == 12)
 				hr = 0;
@@ -378,7 +391,7 @@ static int _get_date(char *time_str, int *pos, int *month, int *mday, int *year)
 		*pos = offset - 1;
 		*month = mon - 1;	/* zero origin */
 		*mday  = day;
-		*year  = yr - 1900;     /* need to make it mktime
+		*year  = yr - 1900;     /* need to make it slurm_mktime
 					   happy 1900 == "00" */
 		return 0;
 	}
@@ -431,7 +444,7 @@ static int _get_date(char *time_str, int *pos, int *month, int *mday, int *year)
 /* Convert string to equivalent time value
  * input formats:
  *   today or tomorrow
- *   midnight, noon, teatime (4PM)
+ *   midnight, noon, fika (3 PM), teatime (4 PM)
  *   HH:MM[:SS] [AM|PM]
  *   MMDD[YY] or MM/DD[/YY] or MM.DD[.YY]
  *   MM/DD[/YY]-HH:MM[:SS]
@@ -452,7 +465,7 @@ extern time_t parse_time(char *time_str, int past)
 	struct tm res_tm;
 	time_t ret_time;
 
-	if (strncasecmp(time_str, "uts", 3) == 0) {
+	if (xstrncasecmp(time_str, "uts", 3) == 0) {
 		char *last = NULL;
 		long uts = strtol(time_str+3, &last, 10);
 		if ((uts < 1000000) || (uts == LONG_MAX) ||
@@ -462,51 +475,58 @@ extern time_t parse_time(char *time_str, int past)
 	}
 
 	time_now = time(NULL);
-	time_now_tm = localtime(&time_now);
+	time_now_tm = slurm_localtime(&time_now);
 
 	for (pos=0; ((time_str[pos] != '\0') && (time_str[pos] != '\n'));
 	     pos++) {
 		if (isblank((int)time_str[pos]) ||
 		    (time_str[pos] == '-') || (time_str[pos] == 'T'))
 			continue;
-		if (strncasecmp(time_str+pos, "today", 5) == 0) {
+		if (xstrncasecmp(time_str+pos, "today", 5) == 0) {
 			month = time_now_tm->tm_mon;
 			mday  = time_now_tm->tm_mday;
 			year  = time_now_tm->tm_year;
 			pos += 4;
 			continue;
 		}
-		if (strncasecmp(time_str+pos, "tomorrow", 8) == 0) {
+		if (xstrncasecmp(time_str+pos, "tomorrow", 8) == 0) {
 			time_t later = time_now + (24 * 60 * 60);
-			struct tm *later_tm = localtime(&later);
+			struct tm *later_tm = slurm_localtime(&later);
 			month = later_tm->tm_mon;
 			mday  = later_tm->tm_mday;
 			year  = later_tm->tm_year;
 			pos += 7;
 			continue;
 		}
-		if (strncasecmp(time_str+pos, "midnight", 8) == 0) {
+		if (xstrncasecmp(time_str+pos, "midnight", 8) == 0) {
 			hour   = 0;
 			minute = 0;
 			second = 0;
 			pos += 7;
 			continue;
 		}
-		if (strncasecmp(time_str+pos, "noon", 4) == 0) {
+		if (xstrncasecmp(time_str+pos, "noon", 4) == 0) {
 			hour   = 12;
 			minute = 0;
 			second = 0;
 			pos += 3;
 			continue;
 		}
-		if (strncasecmp(time_str+pos, "teatime", 7) == 0) {
+		if (xstrncasecmp(time_str+pos, "fika", 4) == 0) {
+			hour   = 15;
+			minute = 0;
+			second = 0;
+			pos += 3;
+			continue;
+		}
+		if (xstrncasecmp(time_str+pos, "teatime", 7) == 0) {
 			hour   = 16;
 			minute = 0;
 			second = 0;
 			pos += 6;
 			continue;
 		}
-		if (strncasecmp(time_str+pos, "now", 3) == 0) {
+		if (xstrncasecmp(time_str+pos, "now", 3) == 0) {
 			int i;
 			long delta = 0;
 			time_t later;
@@ -529,7 +549,7 @@ extern time_t parse_time(char *time_str, int past)
 				goto prob;
 			}
 			later    = time_now + delta;
-			later_tm = localtime(&later);
+			later_tm = slurm_localtime(&later);
 			month    = later_tm->tm_mon;
 			mday     = later_tm->tm_mday;
 			year     = later_tm->tm_year;
@@ -573,7 +593,7 @@ extern time_t parse_time(char *time_str, int past)
 			year  = time_now_tm->tm_year;
 		} else {/* tomorrow */
 			time_t later = time_now + (24 * 60 * 60);
-			struct tm *later_tm = localtime(&later);
+			struct tm *later_tm = slurm_localtime(&later);
 			month = later_tm->tm_mon;
 			mday  = later_tm->tm_mday;
 			year  = later_tm->tm_year;
@@ -617,30 +637,13 @@ extern time_t parse_time(char *time_str, int past)
 	res_tm.tm_isdst = -1;
 
 /* 	printf("%d/%d/%d %d:%d\n",month+1,mday,year,hour,minute); */
-	if ((ret_time = mktime(&res_tm)) != -1)
+	if ((ret_time = slurm_mktime(&res_tm)) != -1)
 		return ret_time;
 
  prob:	fprintf(stderr, "Invalid time specification (pos=%d): %s\n", pos, time_str);
 	errno = ESLURM_INVALID_TIME_VALUE;
 	return (time_t) 0;
 }
-
-#if _RUN_STAND_ALONE
-int main(int argc, char *argv[])
-{
-	char in_line[128];
-	time_t when;
-
-	while (1) {
-		printf("time> ");
-		if ((fgets(in_line, sizeof(in_line), stdin) == NULL)
-		||  (in_line[0] == '\n'))
-			break;
-		when = parse_time(in_line);
-		printf("%s", asctime(localtime(&when)));
-	}
-}
-#endif
 
 /*
  * Smart date for @epoch, relative to current date.
@@ -663,7 +666,7 @@ static char *_relative_date_fmt(const struct tm *when)
 		time_t now = time(NULL);
 		struct tm tm;
 
-		localtime_r(&now, &tm);
+		slurm_localtime_r(&now, &tm);
 		todays_date = 1000 * (tm.tm_year + 1900) + tm.tm_yday;
 	}
 
@@ -698,7 +701,7 @@ slurm_make_time_str (time_t *time, char *string, int size)
 {
 	struct tm time_tm;
 
-	localtime_r(time, &time_tm);
+	slurm_localtime_r(time, &time_tm);
 	if ((*time == (time_t) 0) || (*time == (time_t) INFINITE)) {
 		snprintf(string, size, "Unknown");
 	} else {
@@ -719,15 +722,15 @@ slurm_make_time_str (time_t *time, char *string, int size)
 			/* Format MM/DD-HH:MM:SS */
 			display_fmt = "%m/%d-%T";
 #endif
-			if ((!fmt) || (!*fmt) || (!strcmp(fmt, "standard"))) {
+			if ((!fmt) || (!*fmt) || (!xstrcmp(fmt, "standard"))) {
 				;
-			} else if (strcmp(fmt, "relative") == 0) {
+			} else if (xstrcmp(fmt, "relative") == 0) {
 				use_relative_format = true;
 			} else if ((strchr(fmt, '%')  == NULL) ||
 				   (strlen(fmt) >= sizeof(fmt_buf))) {
 				error("invalid SLURM_TIME_FORMAT = '%s'", fmt);
 			} else {
-				strncpy(fmt_buf, fmt, sizeof(fmt_buf));
+				strlcpy(fmt_buf, fmt, sizeof(fmt_buf));
 				display_fmt = fmt_buf;
 			}
 		}
@@ -771,9 +774,9 @@ extern int time_str2secs(const char *string)
 	if ((string == NULL) || (string[0] == '\0'))
 		return NO_VAL;	/* invalid input */
 
-	if ((!strcasecmp(string, "-1"))
-	    || (!strcasecmp(string, "INFINITE"))
-	    || (!strcasecmp(string, "UNLIMITED"))) {
+	if ((!xstrcasecmp(string, "-1"))
+	    || (!xstrcasecmp(string, "INFINITE"))
+	    || (!xstrcasecmp(string, "UNLIMITED"))) {
 		return INFINITE;
 	}
 

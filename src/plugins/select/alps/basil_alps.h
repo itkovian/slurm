@@ -7,24 +7,20 @@
 #ifndef __BASIL_ALPS_H__
 #define __BASIL_ALPS_H__
 
-#if HAVE_CONFIG_H
-# include "config.h"
-#endif
+#include "config.h"
 
-#include <stdio.h>
-#include <unistd.h>
-#include <stdlib.h>
-#include <stdint.h>
-#include <stdbool.h>
-
-#include <sys/types.h>
-#include <ctype.h>
-#include <string.h>
-
-#include <sys/wait.h>
-#include <signal.h>
-#include <fcntl.h>
 #include <assert.h>
+#include <ctype.h>
+#include <fcntl.h>
+#include <inttypes.h>
+#include <signal.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdbool.h>
+#include <string.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 #ifdef HAVE_ALPS_CRAY
 #  include <expat.h>
@@ -60,6 +56,7 @@ enum basil_version {
 	BV_5_0,		/* Basil 1.2 CLE 5.x unconfirmed simulator version  */
 	BV_5_1,		/* Basil 1.3 CLE 5.x unconfirmed simulator version  */
 	BV_5_2,		/* Basil 1.3 CLE 5.2 */
+	BV_5_2_3,	/* Basil 1.3 CLE 5.2.46+ */
 	BV_MAX
 };
 
@@ -291,7 +288,7 @@ struct basil_node_processor {
 
 struct basil_mem_alloc {
 	uint32_t		rsvn_id;
-	uint32_t		page_count;
+	uint64_t		page_count;
 
 	struct basil_mem_alloc	*next;
 };
@@ -299,7 +296,7 @@ struct basil_mem_alloc {
 struct basil_node_memory {
 	enum basil_memory_type	type;
 	uint32_t		page_size_kb;
-	uint32_t		page_count;
+	uint64_t		page_count;
 	struct basil_mem_alloc	*a_head;
 
 	struct basil_node_memory *next;
@@ -333,7 +330,7 @@ struct basil_node_accelerator {		/* Basil 1.2, Alps 4.x */
 	enum basil_acceltype	  type;		/* must be BA_GPU in Basil 1.2 */
 	enum basil_accelstate	  state;
 	char 			  family[BASIL_STRING_LONG];
-	uint32_t		  memory_mb;
+	uint64_t		  memory_mb;
 	uint32_t		  clock_mhz;
 	struct basil_accel_alloc *allocation;
 
@@ -342,7 +339,7 @@ struct basil_node_accelerator {		/* Basil 1.2, Alps 4.x */
 
 struct basil_node {
 	uint32_t cpu_count;
-	uint32_t mem_size;
+	uint64_t mem_size;
 	uint32_t node_id;
 	uint32_t router_id;				/* Basil 3.1 */
 	char	 name[BASIL_STRING_SHORT];
@@ -358,10 +355,10 @@ struct basil_node {
 extern bool node_is_allocated(const struct basil_node *node);
 
 struct basil_rsvn_app_cmd {
-	uint32_t		width,
-				depth,
-				nppn,
-				memory;
+	uint32_t		width,	/* Processing elements (PEs) */
+				depth,	/* PEs per task */
+				nppn;	/* PEs per node */
+	uint64_t		memory;
 	enum basil_node_arch	arch;
 
 	char			cmd[BASIL_STRING_MEDIUM];
@@ -431,7 +428,7 @@ struct basil_inventory {
  */
 struct basil_memory_param {
 	enum basil_memory_type	type;
-	uint32_t		size_mb;
+	uint64_t		size_mb;
 
 	struct basil_memory_param *next;
 };
@@ -439,7 +436,7 @@ struct basil_memory_param {
 struct basil_accel_param {
 	enum basil_acceltype	type;
 	char 			family[BASIL_STRING_LONG];
-	uint32_t		memory_mb;
+	uint64_t		memory_mb;
 
 	struct basil_accel_param *next;
 };
@@ -632,7 +629,7 @@ extern void   free_inv(struct basil_inventory *inv);
  */
 extern long basil_reserve(const char *user, const char *batch_id,
 			  uint32_t width, uint32_t depth, uint32_t nppn,
-			  uint32_t mem_mb, uint32_t nppcu,
+			  uint64_t mem_mb, uint32_t nppcu,
 			  struct nodespec *ns_head,
 			  struct basil_accel_param *accel_head);
 

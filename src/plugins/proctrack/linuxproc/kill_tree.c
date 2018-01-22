@@ -8,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -37,21 +37,16 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#if HAVE_CONFIG_H
-#  include "config.h"
-#endif
-
-#include <sys/types.h>
 #include <dirent.h>
-#include <sys/stat.h>
 #include <fcntl.h>
-#include <stdlib.h>
-#include <stdio.h>
-#include <signal.h>
-#include <strings.h>
-#include <unistd.h>
-#include <string.h>
 #include <limits.h>
+#include <signal.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include "slurm/slurm.h"
 #include "slurm/slurm_errno.h"
@@ -122,26 +117,32 @@ static void _push_to_hashtbl(pid_t ppid, pid_t pid,
 	hashtbl[idx] = newppid;
 }
 
-static int get_myname(char *s)
+static int _get_myname(char *s)
 {
-	char path[PATH_MAX], rbuf[1024];
+	char path[PATH_MAX], *rbuf;
+	ssize_t buf_used;
 	int fd;
 
-	sprintf(path, "/proc/%ld/stat", (long)getpid());
+	snprintf(path, PATH_MAX, "/proc/%ld/stat", (long)getpid());
 	if ((fd = open(path, O_RDONLY)) < 0) {
 		error("Cannot open /proc/getpid()/stat");
 		return -1;
 	}
-	if (read(fd, rbuf, 1024) <= 0) {
+	rbuf = xmalloc(4096);
+	buf_used = read(fd, rbuf, 4096);
+	if ((buf_used <= 0) || (buf_used >= 4096)) {
 		error("Cannot read /proc/getpid()/stat");
+		xfree(rbuf);
 		close(fd);
 		return -1;
 	}
 	close(fd);
 	if (sscanf(rbuf, "%*d %s ", s) != 1) {
 		error("Cannot get the command name from /proc/getpid()/stat");
+		xfree(rbuf);
 		return -1;
 	}
+	xfree(rbuf);
 	return 0;
 }
 
@@ -149,7 +150,8 @@ static xppid_t **_build_hashtbl(void)
 {
 	DIR *dir;
 	struct dirent *de;
-	char path[PATH_MAX], *endptr, *num, rbuf[1024];
+	char path[PATH_MAX], *endptr, *num, *rbuf;
+	ssize_t buf_used;
 	char myname[1024], cmd[1024];
 	char state;
 	int fd;
@@ -160,30 +162,32 @@ static xppid_t **_build_hashtbl(void)
 		error("opendir(/proc): %m");
 		return NULL;
 	}
-	if (get_myname(myname) < 0) return NULL;
+	if (_get_myname(myname) < 0)
+		return NULL;
 	debug3("Myname in build_hashtbl: %s", myname);
 
 	hashtbl = (xppid_t **)xmalloc(HASH_LEN * sizeof(xppid_t *));
 
 	slurm_seterrno(0);
+	rbuf = xmalloc(4096);
 	while ((de = readdir(dir)) != NULL) {
 		num = de->d_name;
 		if ((num[0] < '0') || (num[0] > '9'))
 			continue;
 		ret_l = strtol(num, &endptr, 10);
-		if ((ret_l == LONG_MIN) || (ret_l == LONG_MAX) ||
-		    (errno == ERANGE)) {
+		if ((ret_l == LONG_MIN) || (ret_l == LONG_MAX)) {
 			error("couldn't do a strtol on str %s(%ld): %m",
 			      num, ret_l);
 			continue;
 		}
 		if (endptr == NULL || *endptr != 0)
 			continue;
-		sprintf(path, "/proc/%s/stat", num);
+		snprintf(path, PATH_MAX, "/proc/%s/stat", num);
 		if ((fd = open(path, O_RDONLY)) < 0) {
 			continue;
 		}
-		if (read(fd, rbuf, 1024) <= 0) {
+		buf_used = read(fd, rbuf, 4096);
+		if ((buf_used <= 0) || (buf_used >= 4096)) {
 			close(fd);
 			continue;
 		}
@@ -200,8 +204,9 @@ static xppid_t **_build_hashtbl(void)
 
 		/* Record cmd for debugging purpose */
 		_push_to_hashtbl((pid_t)ppid, (pid_t)pid,
-				 strcmp(myname, cmd), cmd, hashtbl);
+				 xstrcmp(myname, cmd), cmd, hashtbl);
 	}
+	xfree(rbuf);
 	closedir(dir);
 	return hashtbl;
 }
@@ -317,39 +322,59 @@ extern int kill_proc_tree(pid_t top, int sig)
  */
 extern pid_t find_ancestor(pid_t process, char *process_name)
 {
-	char path[PATH_MAX], rbuf[1024];
-	int fd;
+	char path[PATH_MAX], *rbuf;
+	ssize_t buf_used;
+	int fd, len;
 	long pid, ppid;
 
+	len = strlen(process_name);
+	rbuf = xmalloc_nz(4097);
 	pid = ppid = (long)process;
-	do {
+	while (1) {
 		if (ppid <= 1) {
-			return 0;
+			pid = 0;
+			break;
 		}
 
-		sprintf(path, "/proc/%ld/stat", ppid);
+		snprintf(path, PATH_MAX, "/proc/%ld/stat", ppid);
 		if ((fd = open(path, O_RDONLY)) < 0) {
-			return 0;
+			pid = 0;
+			break;
 		}
-		if (read(fd, rbuf, 1024) <= 0) {
+		buf_used = read(fd, rbuf, 4096);
+		if (buf_used >= 0)
+			rbuf[buf_used] = '\0';
+		else
+			rbuf[0] = '\0';	
+		if ((buf_used <= 0) || (buf_used >= 4096)) {
 			close(fd);
-			return 0;
+			pid = 0;
+			break;
 		}
 		close(fd);
 		if (sscanf(rbuf, "%ld %*s %*s %ld", &pid, &ppid) != 2) {
-			return 0;
+			pid = 0;
+			break;
 		}
 
-		sprintf(path, "/proc/%ld/cmdline", pid);
+		snprintf(path, PATH_MAX, "/proc/%ld/cmdline", pid);
 		if ((fd = open(path, O_RDONLY)) < 0) {
 			continue;
 		}
-		if (read(fd, rbuf, 1024) <= 0) {
+		buf_used = read(fd, rbuf, 4096);
+		if (buf_used >= 0)
+			rbuf[buf_used] = '\0';
+		else
+			rbuf[0] = '\0';	
+		if ((buf_used <= 0) || (buf_used >= 4096)) {
 			close(fd);
 			continue;
 		}
 		close(fd);
-	} while (!strstr(rbuf, process_name));
+		if (strncmp(rbuf, process_name, len) == 0)
+			break;
+	}
+	xfree(rbuf);
 
 	return pid;
 }
@@ -360,8 +385,7 @@ extern int proctrack_linuxproc_get_pids(pid_t top, pid_t **pids, int *npids)
 	xppid_t **hashtbl;
 	xpid_t *list, *ptr;
 	pid_t *p;
-	int i;
-	int len = 32;
+	int i, len = 32, rc;
 
 	if ((hashtbl = _build_hashtbl()) == NULL)
 		return SLURM_ERROR;
@@ -377,9 +401,9 @@ extern int proctrack_linuxproc_get_pids(pid_t top, pid_t **pids, int *npids)
 	p = (pid_t *)xmalloc(sizeof(pid_t) * len);
 	ptr = list;
 	i = 0;
-	while(ptr != NULL) {
+	while (ptr != NULL) {
 		if (ptr->is_usercmd) { /* don't include the slurmstepd */
-			if (i >= len-1) {
+			if (i >= len - 1) {
 				len *= 2;
 				xrealloc(p, (sizeof(pid_t) * len));
 			}
@@ -393,14 +417,13 @@ extern int proctrack_linuxproc_get_pids(pid_t top, pid_t **pids, int *npids)
 		xfree(p);
 		*pids = NULL;
 		*npids = 0;
-		_destroy_hashtbl(hashtbl);
-		_destroy_list(list);
-		return SLURM_ERROR;
+		rc = SLURM_ERROR;
 	} else {
 		*pids = p;
 		*npids = i;
-		_destroy_hashtbl(hashtbl);
-		_destroy_list(list);
-		return SLURM_SUCCESS;
+		rc = SLURM_SUCCESS;
 	}
+	_destroy_hashtbl(hashtbl);
+	_destroy_list(list);
+	return rc;
 }

@@ -1,8 +1,10 @@
 SUBDIRS =		\
 	api		\
+	bcast		\
 	common		\
 	database	\
 	db_api		\
+	layouts		\
 	plugins		\
 	sacct		\
 	sacctmgr	\
@@ -22,12 +24,9 @@ SUBDIRS =		\
 	sprio		\
 	squeue		\
 	sreport		\
+	srun		\
 	srun_cr		\
 	sshare		\
 	sstat		\
 	strigger	\
 	sview
-
-if !REAL_BG_L_P_LOADED
-SUBDIRS += srun
-endif

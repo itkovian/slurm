@@ -1,4 +1,4 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Test of SLURM functionality
 #          Test sacct filtering of records by account and job name.
@@ -15,7 +15,7 @@
 # CODE-OCEC-09-009. All rights reserved.
 #
 # This file is part of SLURM, a resource management program.
-# For details, see <http://slurm.schedmd.com/>.
+# For details, see <https://slurm.schedmd.com/>.
 # Please also read the included file: DISCLAIMER.
 #
 # SLURM is free software; you can redistribute it and/or modify it under
@@ -50,8 +50,8 @@ print_header $test_id
 #
 # Checks if test is running on blue gene.
 #
-if {[test_bluegene]} {
-	send_user "\nWARNING: This test can't be run on a blue gene\n"
+if {[test_front_end]} {
+	send_user "\nWARNING: This test can't be run on a front end system\n"
 	exit $exit_code
 } elseif {[test_serial]} {
 	send_user "\nWARNING: This test is incompatible with serial systems\n"
@@ -74,7 +74,7 @@ if { [test_account_storage] == 0 } {
 
 if { [string compare [check_accounting_admin_level] "Administrator"] } {
 	send_user "\nWARNING: This test can't be run without being an Accounting administrator.\n"
-	send_user "Use sacctmgr mod user \$USER_NAME set admin=admin.\n"
+	send_user "Use: sacctmgr mod user \$USER set admin=admin.\n"
 	exit $exit_code
 }
 
@@ -94,17 +94,7 @@ if { $node_count < 3 } {
 # Identify the user and his current default account
 #
 set acct_name ""
-set user_name ""
-spawn $bin_id -u -n
-expect {
-	 -re "($alpha_numeric_under)" {
-		set user_name $expect_out(1,string)
-		exp_continue
-	}
-	eof {
-		wait
-	}
-}
+set user_name [get_my_user_name]
 set s_pid [spawn $sacctmgr show user $user_name]
 expect {
 	-re "$user_name *($alpha_numeric_under)" {
@@ -146,7 +136,7 @@ expect {
 	}
 }
 if {$aamatches != 1} {
-	send_user "\nFAILURE:  sacctmgr had a problem adding account.\n"
+	send_user "\nFAILURE:  sacctmgr had a problem adding account ($aamatches != 1)\n"
 	exit 1
 }
 
@@ -170,6 +160,8 @@ expect {
 #
 set job_id_1 0
 set job_1_node_inx 0
+set job_1_node(0) "TBD"
+set job_1_node(1) "TBD"
 set timeout $max_job_delay
 set srun_pid [spawn $srun -N2 -t1 -A $test_acct -J $job_name_1 -v $bin_id]
 expect {
@@ -190,7 +182,7 @@ expect {
 }
 if {$job_1_node_inx != 2} {
 	send_user "\nFAILURE: srun host count bad ($job_1_node_inx != 2)\n"
-	exit 1
+	set exit_code 1
 }
 
 #
@@ -198,6 +190,8 @@ if {$job_1_node_inx != 2} {
 #
 set job_id_2 0
 set job_2_node_inx 0
+set job_2_node(0) "TBD"
+set job_2_node(1) "TBD"
 set srun_pid [spawn $srun -N2 -x $job_1_node(0) -t1 -A $test_acct -J $job_name_2 -v $bin_id]
 expect {
 
@@ -218,7 +212,7 @@ expect {
 }
 if {$job_2_node_inx != 2} {
 	send_user "\nFAILURE: srun host count bad ($job_2_node_inx != 2)\n"
-	exit 1
+	set exit_code 1
 }
 
 #
@@ -226,6 +220,8 @@ if {$job_2_node_inx != 2} {
 #
 set job_id_3 0
 set job_3_node_inx 0
+set job_3_node(0) "TBD"
+set job_3_node(1) "TBD"
 set srun_pid [spawn $srun -w$job_1_node(0),$job_2_node(1) -t1 -A $test_acct -J $job_name_3 -v $bin_id]
 expect {
 
@@ -246,13 +242,13 @@ expect {
 }
 if {$job_3_node_inx != 2} {
 	send_user "\nFAILURE: srun host count bad ($job_3_node_inx != 2)\n"
-	exit 1
+	set exit_code 1
 }
 
 #
 # Wait for accounting data to be propagated to slurmdbd
 #
-sleep 5
+sleep 10
 
 #
 # Execute sub-tests based upon these jobs
@@ -287,5 +283,7 @@ if {$damatches != 1} {
 
 if {$exit_code == 0} {
 	print_success $test_id
+} else {
+	print_failure $test_id
 }
 exit $exit_code

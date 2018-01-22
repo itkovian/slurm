@@ -1,6 +1,5 @@
 /*****************************************************************************\
  *  checkpoint_blcr.c - BLCR slurm checkpoint plugin.
- *  $Id: checkpoint_blcr.c 0001 2008-12-29 16:50:11Z hjcao $
  *****************************************************************************
  *  Derived from checkpoint_aix.c
  *  Copyright (C) 2007-2009 National University of Defense Technology, China.
@@ -36,34 +35,24 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#ifdef HAVE_CONFIG_H
-#  include "config.h"
-#endif
-
-#if HAVE_STDINT_H
-#  include <stdint.h>
-#endif
-#if HAVE_INTTYPES_H
-#  include <inttypes.h>
-#endif
-#ifdef WITH_PTHREADS
-#  include <pthread.h>
-#endif
-
+#include <inttypes.h>
+#include <libgen.h>
+#include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/types.h>
+#include <sys/param.h>
+#include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
-#include <libgen.h>
-#include <sys/types.h>
-#include <sys/stat.h>
 
 #include "slurm/slurm.h"
 #include "slurm/slurm_errno.h"
 
 #include "src/common/list.h"
 #include "src/common/log.h"
+#include "src/common/macros.h"
 #include "src/common/pack.h"
 #include "src/common/xassert.h"
 #include "src/common/xstring.h"
@@ -84,8 +73,6 @@ void acct_policy_add_job_submit(struct job_record *job_ptr)
 #else
 void acct_policy_add_job_submit(struct job_record *job_ptr);
 #endif
-
-#define MAX_PATH_LEN 1024
 
 struct check_job_info {
 	uint16_t disabled;	/* counter, checkpointable only if zero */
@@ -109,8 +96,6 @@ struct ckpt_req {
 
 static void _send_sig(uint32_t job_id, uint32_t step_id, uint16_t signal,
 		      char *nodelist);
-static void _send_sig(uint32_t job_id, uint32_t step_id,
-		      uint16_t signal, char *nodelist);
 static void *_ckpt_agent_thr(void *arg);
 static void _ckpt_req_free(void *ptr);
 static int _on_ckpt_complete(uint32_t group_id, uint32_t user_id,
@@ -150,15 +135,12 @@ static pthread_cond_t ckpt_agent_cond = PTHREAD_COND_INITIALIZER;
  * only load checkpoint plugins if the plugin_type string has a
  * prefix of "checkpoint/".
  *
- * plugin_version - an unsigned 32-bit integer giving the version number
- * of the plugin.  If major and minor revisions are desired, the major
- * version number may be multiplied by a suitable magnitude constant such
- * as 100 or 1000.  Various SLURM versions will likely require a certain
- * minimum version for their plugins as the checkpoint API matures.
+ * plugin_version - an unsigned 32-bit integer containing the Slurm version
+ * (major.minor.micro combined into a single number).
  */
 const char plugin_name[]       	= "BLCR checkpoint plugin";
 const char plugin_type[]       	= "checkpoint/blcr";
-const uint32_t plugin_version	= 100;
+const uint32_t plugin_version	= SLURM_VERSION_NUMBER;
 
 /*
  * init() is called when the plugin is loaded, before any other functions
@@ -190,8 +172,6 @@ extern int slurm_ckpt_op (uint32_t job_id, uint32_t step_id,
 	uint16_t done_sig = 0;
 	struct job_record *job_ptr;
 	struct node_record *node_ptr;
-	pthread_attr_t attr;
-	pthread_t ckpt_agent_tid = 0;
 	char *nodelist;
 	struct ckpt_req *req_ptr;
 
@@ -251,10 +231,6 @@ extern int slurm_ckpt_op (uint32_t job_id, uint32_t step_id,
 		xfree(check_ptr->error_msg);
 
 		req_ptr = xmalloc(sizeof(struct ckpt_req));
-		if (!req_ptr) {
-			rc = ENOMEM;
-			break;
-		}
 		req_ptr->gid = job_ptr->group_id;
 		req_ptr->uid = job_ptr->user_id;
 		req_ptr->job_id = job_id;
@@ -266,21 +242,7 @@ extern int slurm_ckpt_op (uint32_t job_id, uint32_t step_id,
 		req_ptr->sig_done = done_sig;
 		req_ptr->op = op;
 
-		slurm_attr_init(&attr);
-		if (pthread_attr_setdetachstate(&attr,
-						PTHREAD_CREATE_DETACHED)) {
-			error("pthread_attr_setdetachstate: %m");
-			rc = errno;
-			break;
-		}
-
-		if (pthread_create(&ckpt_agent_tid, &attr, _ckpt_agent_thr,
-				   req_ptr)) {
-			error("pthread_create: %m");
-			rc = errno;
-			break;
-		}
-		slurm_attr_destroy(&attr);
+		slurm_thread_create_detached(NULL, _ckpt_agent_thr, req_ptr);
 
 		break;
 
@@ -348,7 +310,7 @@ extern int slurm_ckpt_pack_job(check_jobinfo_t jobinfo, Buf buffer,
 	struct check_job_info *check_ptr =
 		(struct check_job_info *)jobinfo;
 
-	if (protocol_version >= SLURM_14_03_PROTOCOL_VERSION) {
+	if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
 		uint32_t x;
 		uint32_t y;
 		uint32_t z;
@@ -369,11 +331,6 @@ extern int slurm_ckpt_pack_job(check_jobinfo_t jobinfo, Buf buffer,
 		set_buf_offset(buffer, x);
 		pack32(z - y, buffer);
 		set_buf_offset(buffer, z);
-	} else if (protocol_version >= SLURM_2_5_PROTOCOL_VERSION) {
-		pack16(check_ptr->disabled, buffer);
-		pack_time(check_ptr->time_stamp, buffer);
-		pack32(check_ptr->error_code, buffer);
-		packstr(check_ptr->error_msg, buffer);
 	}
 
 	return SLURM_SUCCESS;
@@ -386,7 +343,7 @@ extern int slurm_ckpt_unpack_job(check_jobinfo_t jobinfo, Buf buffer,
 	struct check_job_info *check_ptr =
 		(struct check_job_info *)jobinfo;
 
-	if (protocol_version >= SLURM_14_03_PROTOCOL_VERSION) {
+	if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
 		uint16_t id;
 		uint32_t size;
 
@@ -404,13 +361,8 @@ extern int slurm_ckpt_unpack_job(check_jobinfo_t jobinfo, Buf buffer,
 					       &uint32_tmp, buffer);
 		}
 
-	} else if (protocol_version >= SLURM_2_5_PROTOCOL_VERSION) {
-		safe_unpack16(&check_ptr->disabled, buffer);
-		safe_unpack_time(&check_ptr->time_stamp, buffer);
-		safe_unpack32(&check_ptr->error_code, buffer);
-		safe_unpackstr_xmalloc(&check_ptr->error_msg,
-				       &uint32_tmp, buffer);
 	}
+
 	return SLURM_SUCCESS;
 
     unpack_error:
@@ -439,37 +391,36 @@ extern int slurm_ckpt_stepd_prefork(stepd_step_rec_t *job)
 	 */
 
 	/* set LD_PRELOAD for batch script shell */
-	//if (job->batch) {
-		old_env = getenvp(job->env, "LD_PRELOAD");
-		if (old_env) {
-			/* search and replace all libcr_run and libcr_omit
-			 * the old env value is messed up --
-			 * it will be replaced */
-			while ((ptr = strtok_r(old_env, " :", &save_ptr))) {
-				old_env = NULL;
-				if (!ptr)
-					break;
-				if (!strncmp(ptr, "libcr_run.so", 12) ||
-				    !strncmp(ptr, "libcr_omit.so", 13))
-					continue;
-				xstrcat(new_env, ptr);
-				xstrcat(new_env, ":");
-			}
+	old_env = getenvp(job->env, "LD_PRELOAD");
+	if (old_env) {
+		/*
+		 * search and replace all libcr_run and libcr_omit
+		 * the old env value is messed up --
+		 * it will be replaced
+		 */
+		while ((ptr = strtok_r(old_env, " :", &save_ptr))) {
+			old_env = NULL;
+			if (!xstrncmp(ptr, "libcr_run.so", 12) ||
+			    !xstrncmp(ptr, "libcr_omit.so", 13))
+				continue;
+			xstrcat(new_env, ptr);
+			xstrcat(new_env, ":");
 		}
-		ptr = xstrdup("libcr_run.so");
-		if (new_env)
-			xstrfmtcat(ptr, ":%s", new_env);
-		setenvf(&job->env, "LD_PRELOAD", ptr);
-		xfree(new_env);
-		xfree(ptr);
-		//}
+	}
+	ptr = xstrdup("libcr_run.so");
+	if (new_env)
+		xstrfmtcat(ptr, ":%s", new_env);
+	setenvf(&job->env, "LD_PRELOAD", ptr);
+	xfree(new_env);
+	xfree(ptr);
+
 	return SLURM_SUCCESS;
 }
 
 extern int slurm_ckpt_signal_tasks(stepd_step_rec_t *job, char *image_dir)
 {
 	char *argv[4];
-	char context_file[MAX_PATH_LEN];
+	char context_file[MAXPATHLEN];
 	char pid[16];
 	int status;
 	pid_t *children = NULL;
@@ -579,7 +530,7 @@ extern int slurm_ckpt_restart_task(stepd_step_rec_t *job,
 				   char *image_dir, int gtid)
 {
 	char *argv[3];
-	char context_file[MAX_PATH_LEN];
+	char context_file[MAXPATHLEN];
 
 	/* jobid and stepid must NOT be spelled here,
 	 * since it is a new job/step */
@@ -605,19 +556,32 @@ static void _send_sig(uint32_t job_id, uint32_t step_id, uint16_t signal,
 		      char *nodelist)
 {
 	agent_arg_t *agent_args;
-	kill_tasks_msg_t *kill_tasks_msg;
+	signal_tasks_msg_t *signal_tasks_msg;
+	hostlist_iterator_t hi;
+	char *host;
+	struct node_record *node_ptr;
 
-	kill_tasks_msg = xmalloc(sizeof(kill_tasks_msg_t));
-	kill_tasks_msg->job_id		= job_id;
-	kill_tasks_msg->job_step_id	= step_id;
-	kill_tasks_msg->signal		= signal;
+	signal_tasks_msg = xmalloc(sizeof(signal_tasks_msg_t));
+	signal_tasks_msg->job_id		= job_id;
+	signal_tasks_msg->job_step_id	= step_id;
+	signal_tasks_msg->signal		= signal;
 
 	agent_args = xmalloc(sizeof(agent_arg_t));
 	agent_args->msg_type		= REQUEST_SIGNAL_TASKS;
 	agent_args->retry		= 1;
-	agent_args->msg_args		= kill_tasks_msg;
+	agent_args->msg_args		= signal_tasks_msg;
 	agent_args->hostlist		= hostlist_create(nodelist);
 	agent_args->node_count		= hostlist_count(agent_args->hostlist);
+	agent_args->protocol_version = SLURM_PROTOCOL_VERSION;
+	hi = hostlist_iterator_create(agent_args->hostlist);
+	while ((host = hostlist_next(hi))) {
+		if ((node_ptr = find_node_record(host)) &&
+		    (agent_args->protocol_version > node_ptr->protocol_version))
+			agent_args->protocol_version =
+				node_ptr->protocol_version;
+		free(host);
+	}
+	hostlist_iterator_destroy(hi);
 
 	agent_queue_request(agent_args);
 }
@@ -626,18 +590,24 @@ static void _requeue_when_finished(uint32_t job_id)
 {
 	/* Locks: read job */
 	slurmctld_lock_t job_write_lock = {
-		NO_LOCK, WRITE_LOCK, NO_LOCK, NO_LOCK };
+		NO_LOCK, WRITE_LOCK, NO_LOCK, NO_LOCK, NO_LOCK };
 	struct job_record *job_ptr;
 
 	while (1) {
 		lock_slurmctld(job_write_lock);
 		job_ptr = find_job_record(job_id);
-		if (IS_JOB_FINISHED(job_ptr)) {
+		if (!job_ptr) {
+			error("%s: Job %u not found", __func__, job_id);
+			unlock_slurmctld(job_write_lock);
+			break;
+		} else if (IS_JOB_FINISHED(job_ptr)) {
 			job_ptr->job_state = JOB_PENDING;
 			job_ptr->details->submit_time = time(NULL);
 			job_ptr->restart_cnt++;
-			/* Since the job completion logger
-			 * removes the submit we need to add it again. */
+			/*
+			 * Since the job completion logger
+			 * removes the submit we need to add it again.
+			 */
 			acct_policy_add_job_submit(job_ptr);
 			unlock_slurmctld(job_write_lock);
 			break;
@@ -656,7 +626,7 @@ static void *_ckpt_agent_thr(void *arg)
 	int rc;
 	/* Locks: write job */
 	slurmctld_lock_t job_write_lock = {
-		NO_LOCK, WRITE_LOCK, NO_LOCK, NO_LOCK };
+		NO_LOCK, WRITE_LOCK, READ_LOCK, NO_LOCK, NO_LOCK };
 	struct job_record *job_ptr;
 	struct step_record *step_ptr;
 	struct check_job_info *check_ptr;
@@ -664,7 +634,7 @@ static void *_ckpt_agent_thr(void *arg)
 	/* only perform ckpt operation of ONE JOB */
 	slurm_mutex_lock(&ckpt_agent_mutex);
 	while (ckpt_agent_jobid && ckpt_agent_jobid != req->job_id) {
-		pthread_cond_wait(&ckpt_agent_cond, &ckpt_agent_mutex);
+		slurm_cond_wait(&ckpt_agent_cond, &ckpt_agent_mutex);
 	}
 	ckpt_agent_jobid = req->job_id;
 	ckpt_agent_count ++;
@@ -705,12 +675,12 @@ static void *_ckpt_agent_thr(void *arg)
 		check_ptr->error_msg = xstrdup(slurm_strerror(rc));
 
  out:
-	unlock_slurmctld(job_write_lock);
 
 	if (req->sig_done) {
 		_send_sig(req->job_id, req->step_id, req->sig_done,
 			  req->nodelist);
 	}
+	unlock_slurmctld(job_write_lock);
 
 	_on_ckpt_complete(req->gid, req->uid, req->job_id, req->step_id,
 			  req->image_dir, rc);
@@ -719,7 +689,7 @@ static void *_ckpt_agent_thr(void *arg)
 	ckpt_agent_count --;
 	if (ckpt_agent_count == 0) {
 		ckpt_agent_jobid = 0;
-		pthread_cond_broadcast(&ckpt_agent_cond);
+		slurm_cond_broadcast(&ckpt_agent_cond);
 	}
 	slurm_mutex_unlock(&ckpt_agent_mutex);
 	_ckpt_req_free(req);

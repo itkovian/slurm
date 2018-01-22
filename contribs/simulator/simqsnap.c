@@ -138,7 +138,7 @@ recordRecord(slurm_job_info_t* j) {
 	fprintf(fp, "assoc_id          %u\n",  j->assoc_id);
 	fprintf(fp, "batch_flag        %u\n",  j->batch_flag);
 	fprintf(fp, "batch_host        %s\n",  j->batch_host);
-	fprintf(fp, "batch_script      %s\n",  j->batch_script);
+	/*fprintf(fp, "batch_script      %s\n",  j->batch_script);*/
 	fprintf(fp, "command           %s\n",  j->command);
 	fprintf(fp, "comment           %s\n",  j->comment);
 	fprintf(fp, "contiguous        %u\n",  j->contiguous);

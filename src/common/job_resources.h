@@ -7,7 +7,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -33,22 +33,13 @@
  *
  *  You should have received a copy of the GNU General Public License along
  *  with SLURM; if not, write to the Free Software Foundation, Inc.,
- *  59 Temple Place, Suite 330, Boston, MA  02111-1307  USA.
+ *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
 #ifndef _JOB_RESOURCES_H
 #define _JOB_RESOURCES_H
 
-#if HAVE_CONFIG_H
-#  include "config.h"
-#  if HAVE_INTTYPES_H
-#    include <inttypes.h>
-#  else
-#    if HAVE_STDINT_H
-#      include <stdint.h>
-#    endif
-#  endif			/* HAVE_INTTYPES_H */
-#endif
+#include <inttypes.h>
 
 #include "src/common/bitstring.h"
 #include "src/common/pack.h"
@@ -60,7 +51,7 @@
  * core_bitmap		- Bitmap of allocated cores for all nodes and sockets
  * core_bitmap_used	- Bitmap of cores allocated to job steps
  * cores_per_socket	- Count of cores per socket on this node, build by
- *			  build_job_resources() and insures consistent
+ *			  build_job_resources() and ensures consistent
  *			  interpretation of core_bitmap
  * cpus			- Count of desired/allocated CPUs per node for job/step
  * cpus_used		- For a job, count of CPUs per node used by job steps
@@ -83,10 +74,10 @@
  * ncpus		- Number of processors in the allocation
  * sock_core_rep_count	- How many consecutive nodes that sockets_per_node
  *			  and cores_per_socket apply to, build by
- *			  build_job_resources() and insures consistent
+ *			  build_job_resources() and ensures consistent
  *			  interpretation of core_bitmap
  * sockets_per_node	- Count of sockets on this node, build by
- *			  build_job_resources() and insures consistent
+ *			  build_job_resources() and ensures consistent
  *			  interpretation of core_bitmap
  * whole_node		- Job allocated full node (used only by select/cons_res)
  *
@@ -108,24 +99,24 @@
  * updated (e.g. cpus and mem_used on that node cleared).
  */
 struct job_resources {
-	bitstr_t *	core_bitmap;
-	bitstr_t *	core_bitmap_used;
-	uint32_t	cpu_array_cnt;
-	uint16_t *	cpu_array_value;
-	uint32_t *	cpu_array_reps;
-	uint16_t *	cpus;
-	uint16_t *	cpus_used;
-	uint16_t *	cores_per_socket;
-	uint32_t *	memory_allocated;
-	uint32_t *	memory_used;
-	uint32_t	nhosts;
-	bitstr_t *	node_bitmap;
-	uint32_t	node_req;
-	char *		nodes;
-	uint32_t	ncpus;
-	uint32_t *	sock_core_rep_count;
-	uint16_t *	sockets_per_node;
-	uint8_t		whole_node;
+	bitstr_t *core_bitmap;
+	bitstr_t *core_bitmap_used;
+	uint32_t  cpu_array_cnt;
+	uint16_t *cpu_array_value;
+	uint32_t *cpu_array_reps;
+	uint16_t *cpus;
+	uint16_t *cpus_used;
+	uint16_t *cores_per_socket;
+	uint64_t *memory_allocated;
+	uint64_t *memory_used;
+	uint32_t  nhosts;
+	bitstr_t *node_bitmap;
+	uint32_t  node_req;
+	char	 *nodes;
+	uint32_t  ncpus;
+	uint32_t *sock_core_rep_count;
+	uint16_t *sockets_per_node;
+	uint8_t   whole_node;
 };
 
 /*
@@ -238,7 +229,7 @@ extern int job_resources_bits_copy(job_resources_t *new_job_resrcs_ptr,
 /* Get/clear/set bit value at specified location for whole node allocations
  *	get is for any socket/core on the specified node
  *	set is for all sockets/cores on the specified node
- *	fully comptabable with set/get_job_resources_bit()
+ *	fully compatible with set/get_job_resources_bit()
  *	node_id is all zero origin */
 extern int get_job_resources_node(job_resources_t *job_resrcs_ptr,
 				  uint32_t node_id);
@@ -246,6 +237,10 @@ extern int clear_job_resources_node(job_resources_t *job_resrcs_ptr,
 				    uint32_t node_id);
 extern int set_job_resources_node(job_resources_t *job_resrcs_ptr,
 				  uint32_t node_id);
+
+/* Completely remove specified node from job resources structure */
+extern int extract_job_resources_node(job_resources_t *job_resrcs_ptr,
+				      uint32_t node_id);
 
 /* Return the count of core bitmaps set for the specific node */
 extern int count_job_resources_node(job_resources_t *job_resrcs_ptr,
@@ -297,5 +292,13 @@ extern void remove_job_from_cores(job_resources_t *job_resrcs_ptr,
  * node in the job_resrcs_ptr->cpus. Return -1 if invalid */
 extern int job_resources_node_inx_to_cpu_inx(job_resources_t *job_resrcs_ptr, 
 					     int node_inx);
+/*
+ * adapt the power_cpufreq layout and set the CurrentCoreWatts value of the cores
+ * based on the selection of the resources and the choice of CPU Frequency 
+ * CurrentCoreWatts are set to IdleWatts when one or more jobs occupy other 
+ * resources of the node and set to 0 when the node is liberated
+ */
+extern int adapt_layouts(job_resources_t *job_resrcs_ptr, uint32_t cpu_freq_max,
+                         uint32_t node_id, char* node_name, bool new_value);
 
 #endif /* !_JOB_RESOURCES_H */

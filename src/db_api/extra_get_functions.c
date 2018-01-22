@@ -9,7 +9,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -38,15 +38,19 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#ifdef HAVE_CONFIG_H
-#  include "config.h"
-#endif
-
 #include "slurm/slurm.h"
 #include "slurm/slurm_errno.h"
 #include "slurm/slurmdb.h"
 
 #include "src/common/slurm_accounting_storage.h"
+
+/*
+ * reconfigure the slurmdbd
+ */
+extern int slurmdb_reconfig(void *db_conn)
+{
+	return acct_storage_g_reconfig(db_conn, 1);
+}
 
 /*
  * get info from the storage
@@ -67,29 +71,25 @@ extern List slurmdb_config_get(void *db_conn)
 extern List slurmdb_events_get(void *db_conn,
 			       slurmdb_event_cond_t *event_cond)
 {
-	return acct_storage_g_get_events(db_conn, getuid(), event_cond);
+	if (db_api_uid == -1)
+		db_api_uid = getuid();
+
+	return acct_storage_g_get_events(db_conn, db_api_uid, event_cond);
 }
 
 /*
  * get info from the storage
- * returns List of slurmdb_job_rec_t *
- * note List needs to be freed when called
- */
-extern List slurmdb_jobs_get(void *db_conn, slurmdb_job_cond_t *job_cond)
-{
-	return jobacct_storage_g_get_jobs_cond(db_conn, getuid(), job_cond);
-}
-
-/*
- * get info from the storage
- * IN:  slurmdb_association_cond_t *
- * RET: List of slurmdb_association_rec_t *
+ * IN:  slurmdb_assoc_cond_t *
+ * RET: List of slurmdb_assoc_rec_t *
  * note List needs to be freed when called
  */
 extern List slurmdb_problems_get(void *db_conn,
-				 slurmdb_association_cond_t *assoc_cond)
+				 slurmdb_assoc_cond_t *assoc_cond)
 {
-	return acct_storage_g_get_problems(db_conn, getuid(), assoc_cond);
+	if (db_api_uid == -1)
+		db_api_uid = getuid();
+
+	return acct_storage_g_get_problems(db_conn, db_api_uid, assoc_cond);
 }
 
 /*
@@ -101,7 +101,10 @@ extern List slurmdb_problems_get(void *db_conn,
 extern List slurmdb_reservations_get(void *db_conn,
 				     slurmdb_reservation_cond_t *resv_cond)
 {
-	return acct_storage_g_get_reservations(db_conn, getuid(), resv_cond);
+	if (db_api_uid == -1)
+		db_api_uid = getuid();
+
+	return acct_storage_g_get_reservations(db_conn, db_api_uid, resv_cond);
 }
 
 /*
@@ -112,7 +115,33 @@ extern List slurmdb_reservations_get(void *db_conn,
  */
 extern List slurmdb_txn_get(void *db_conn, slurmdb_txn_cond_t *txn_cond)
 {
-	return acct_storage_g_get_txn(db_conn, getuid(), txn_cond);
+	if (db_api_uid == -1)
+		db_api_uid = getuid();
+
+	return acct_storage_g_get_txn(db_conn, db_api_uid, txn_cond);
 }
 
+/*
+ * shutdown the slurmdbd
+ */
+extern int slurmdb_shutdown(void *db_conn)
+{
+	return acct_storage_g_shutdown(db_conn);
+}
 
+/*
+ * clear the slurmdbd statistics
+ */
+extern int slurmdb_clear_stats(void *db_conn)
+{
+	return acct_storage_g_clear_stats(db_conn);
+}
+
+/*
+ * get the slurmdbd statistics
+ * Call slurmdb_destroy_stats_rec() to free stats_pptr
+ */
+extern int slurmdb_get_stats(void *db_conn, slurmdb_stats_rec_t **stats_pptr)
+{
+	return acct_storage_g_get_stats(db_conn, stats_pptr);
+}

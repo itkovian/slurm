@@ -10,7 +10,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -25,7 +25,7 @@
  *
  *  You should have received a copy of the GNU General Public License along
  *  with SLURM; if not, write to the Free Software Foundation, Inc.,
- *  59 Temple Place, Suite 330, Boston, MA  02111-1307  USA.
+ *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
 #include "src/sview/sview.h"
@@ -68,15 +68,9 @@ enum {
 	SORTID_CONN,
 	SORTID_JOB,
 	SORTID_IMAGEBLRTS,
-#ifdef HAVE_BGL
-	SORTID_IMAGELINUX,
-	SORTID_IMAGEMLOADER,
-	SORTID_IMAGERAMDISK,
-#else
 	SORTID_IMAGELINUX,
 	SORTID_IMAGERAMDISK,
 	SORTID_IMAGEMLOADER,
-#endif
 	SORTID_NODELIST,
 	SORTID_NODE_CNT,
 	SORTID_PARTITION,
@@ -96,96 +90,71 @@ static char *_initial_page_opts = "Block_ID,State,JobID,User,Node_Count,"
 	"Node_Use,MidplaneList,Partition";
 
 static display_data_t display_data_block[] = {
-	{G_TYPE_INT, SORTID_POS, NULL, FALSE, EDIT_NONE, refresh_block,
+	{G_TYPE_INT, SORTID_POS, NULL, false, EDIT_NONE, refresh_block,
 	 create_model_block, admin_edit_block},
 	{G_TYPE_STRING, SORTID_BLOCK, "Block ID",
-	 FALSE, EDIT_NONE, refresh_block,
+	 false, EDIT_NONE, refresh_block,
 	 create_model_block, admin_edit_block},
-	{G_TYPE_STRING, SORTID_COLOR, NULL, TRUE, EDIT_COLOR,
+	{G_TYPE_STRING, SORTID_COLOR, NULL, true, EDIT_COLOR,
 	 refresh_block, create_model_block, admin_edit_block},
-	{G_TYPE_STRING, SORTID_STATE, "State", FALSE, EDIT_MODEL, refresh_block,
+	{G_TYPE_STRING, SORTID_STATE, "State", false, EDIT_MODEL, refresh_block,
 	 create_model_block, admin_edit_block},
-	{G_TYPE_STRING, SORTID_JOB, "JobID", FALSE, EDIT_NONE, refresh_block,
+	{G_TYPE_STRING, SORTID_JOB, "JobID", false, EDIT_NONE, refresh_block,
 	 create_model_block, admin_edit_block},
-#ifdef HAVE_BG_L_P
-	{G_TYPE_STRING, SORTID_USER, "User", FALSE, EDIT_NONE, refresh_block,
+	{G_TYPE_STRING, SORTID_USER, NULL, false, EDIT_NONE, refresh_block,
 	 create_model_block, admin_edit_block},
-#else
-	{G_TYPE_STRING, SORTID_USER, NULL, FALSE, EDIT_NONE, refresh_block,
-	 create_model_block, admin_edit_block},
-#endif
 	{G_TYPE_STRING, SORTID_NODE_CNT, "Node Count",
-	 FALSE, EDIT_NONE, refresh_block, create_model_block, admin_edit_block},
+	 false, EDIT_NONE, refresh_block, create_model_block, admin_edit_block},
 	{G_TYPE_STRING, SORTID_CONN, "Connection Type",
-	 FALSE, EDIT_NONE, refresh_block,
+	 false, EDIT_NONE, refresh_block,
 	 create_model_block, admin_edit_block},
-	{G_TYPE_STRING, SORTID_NODELIST, "MidplaneList", FALSE,
+	{G_TYPE_STRING, SORTID_NODELIST, "MidplaneList", false,
 	 EDIT_NONE, refresh_block, create_model_block, admin_edit_block},
 	{G_TYPE_STRING, SORTID_PARTITION, "Partition",
-	 FALSE, EDIT_NONE, refresh_block,
+	 false, EDIT_NONE, refresh_block,
 	 create_model_block, admin_edit_block},
-#ifdef HAVE_BGL
-	{G_TYPE_STRING, SORTID_USE, "Node Use", FALSE, EDIT_NONE, refresh_block,
-	 create_model_block, admin_edit_block},
-	{G_TYPE_STRING, SORTID_IMAGEBLRTS, "Image Blrts",
-	 FALSE, EDIT_NONE, refresh_block, create_model_block, admin_edit_block},
-	{G_TYPE_STRING, SORTID_IMAGELINUX, "Image Linux",
-	 FALSE, EDIT_NONE, refresh_block, create_model_block, admin_edit_block},
-	{G_TYPE_STRING, SORTID_IMAGERAMDISK, "Image Ramdisk",
-	 FALSE, EDIT_NONE, refresh_block, create_model_block, admin_edit_block},
-#elif defined HAVE_BGP
-	{G_TYPE_STRING, SORTID_USE, NULL, FALSE, EDIT_NONE, refresh_block,
+	{G_TYPE_STRING, SORTID_USE, NULL, false, EDIT_NONE, refresh_block,
 	 create_model_block, admin_edit_block},
 	{G_TYPE_STRING, SORTID_IMAGEBLRTS, NULL,
-	 FALSE, EDIT_NONE, refresh_block, create_model_block, admin_edit_block},
-	{G_TYPE_STRING, SORTID_IMAGELINUX, "Image Cnload",
-	 FALSE, EDIT_NONE, refresh_block, create_model_block, admin_edit_block},
-	{G_TYPE_STRING, SORTID_IMAGERAMDISK, "Image Ioload",
-	 FALSE, EDIT_NONE, refresh_block, create_model_block, admin_edit_block},
-#elif defined HAVE_BGQ
-	{G_TYPE_STRING, SORTID_USE, NULL, FALSE, EDIT_NONE, refresh_block,
-	 create_model_block, admin_edit_block},
-	{G_TYPE_STRING, SORTID_IMAGEBLRTS, NULL,
-	 FALSE, EDIT_NONE, refresh_block, create_model_block, admin_edit_block},
+	 false, EDIT_NONE, refresh_block, create_model_block, admin_edit_block},
 	{G_TYPE_STRING, SORTID_IMAGELINUX, NULL,
-	 FALSE, EDIT_NONE, refresh_block, create_model_block, admin_edit_block},
+	 false, EDIT_NONE, refresh_block, create_model_block, admin_edit_block},
 	{G_TYPE_STRING, SORTID_IMAGERAMDISK, NULL,
-	 FALSE, EDIT_NONE, refresh_block, create_model_block, admin_edit_block},
-#endif
+	 false, EDIT_NONE, refresh_block, create_model_block, admin_edit_block},
 	{G_TYPE_STRING, SORTID_IMAGEMLOADER, "Image Mloader",
-	 FALSE, EDIT_NONE, refresh_block, create_model_block, admin_edit_block},
+	 false, EDIT_NONE, refresh_block, create_model_block, admin_edit_block},
 	{G_TYPE_STRING, SORTID_REASON, "Reason",
-	 FALSE, EDIT_NONE, refresh_block, create_model_block, admin_edit_block},
-	{G_TYPE_POINTER, SORTID_NODE_INX, NULL, FALSE, EDIT_NONE,
+	 false, EDIT_NONE, refresh_block, create_model_block, admin_edit_block},
+	{G_TYPE_POINTER, SORTID_NODE_INX, NULL, false, EDIT_NONE,
 	 refresh_block, create_model_resv, admin_edit_resv},
-	{G_TYPE_INT, SORTID_COLOR_INX, NULL, FALSE, EDIT_NONE,
+	{G_TYPE_INT, SORTID_COLOR_INX, NULL, false, EDIT_NONE,
 	 refresh_block, create_model_resv, admin_edit_resv},
-	{G_TYPE_INT, SORTID_SMALL_BLOCK, NULL, FALSE, EDIT_NONE, refresh_block,
+	{G_TYPE_INT, SORTID_SMALL_BLOCK, NULL, false, EDIT_NONE, refresh_block,
 	 create_model_block, admin_edit_block},
-	{G_TYPE_INT, SORTID_UPDATED, NULL, FALSE, EDIT_NONE, refresh_block,
+	{G_TYPE_INT, SORTID_UPDATED, NULL, false, EDIT_NONE, refresh_block,
 	 create_model_block, admin_edit_block},
-	{G_TYPE_NONE, -1, NULL, FALSE, EDIT_NONE}
+	{G_TYPE_NONE, -1, NULL, false, EDIT_NONE}
 };
 
 static display_data_t options_data_block[] = {
-	{G_TYPE_INT, SORTID_POS, NULL, FALSE, EDIT_NONE},
-	{G_TYPE_STRING, INFO_PAGE, "Full Info", TRUE, BLOCK_PAGE},
+	{G_TYPE_INT, SORTID_POS, NULL, false, EDIT_NONE},
+	{G_TYPE_STRING, INFO_PAGE, "Full Info", true, BLOCK_PAGE},
 	{G_TYPE_STRING, BLOCK_PAGE, "Put block in error state",
-	 TRUE, ADMIN_PAGE},
+	 true, ADMIN_PAGE},
 	{G_TYPE_STRING, BLOCK_PAGE, "Put block in free state",
-	 TRUE, ADMIN_PAGE},
+	 true, ADMIN_PAGE},
 	{G_TYPE_STRING, BLOCK_PAGE, "Recreate block",
-	 TRUE, ADMIN_PAGE},
+	 true, ADMIN_PAGE},
 	{G_TYPE_STRING, BLOCK_PAGE, "Remove block",
-	 TRUE, ADMIN_PAGE},
+	 true, ADMIN_PAGE},
 	{G_TYPE_STRING, BLOCK_PAGE, "Resume block",
-	 TRUE, ADMIN_PAGE},
-	{G_TYPE_STRING, JOB_PAGE, "Jobs", TRUE, BLOCK_PAGE},
-	{G_TYPE_STRING, PART_PAGE, "Partitions", TRUE, BLOCK_PAGE},
-	{G_TYPE_STRING, NODE_PAGE, "Midplanes", TRUE, BLOCK_PAGE},
-	//{G_TYPE_STRING, SUBMIT_PAGE, "Job Submit", FALSE, BLOCK_PAGE},
-	{G_TYPE_STRING, RESV_PAGE, "Reservations", TRUE, BLOCK_PAGE},
-	{G_TYPE_NONE, -1, NULL, FALSE, EDIT_NONE}
+	 true, ADMIN_PAGE},
+	{G_TYPE_STRING, JOB_PAGE, "Jobs", true, BLOCK_PAGE},
+	{G_TYPE_STRING, PART_PAGE, "Partitions", true, BLOCK_PAGE},
+	{G_TYPE_STRING, NODE_PAGE, "Midplanes", true, BLOCK_PAGE},
+	//{G_TYPE_STRING, SUBMIT_PAGE, "Job Submit", false, BLOCK_PAGE},
+	{G_TYPE_STRING, RESV_PAGE, "Reservations", true, BLOCK_PAGE},
+	{G_TYPE_NONE, -1, NULL, false, EDIT_NONE}
 };
 
 static display_data_t *local_display_data = NULL;
@@ -236,10 +205,7 @@ static void _block_info_free(sview_block_info_t *block_ptr)
 		xfree(block_ptr->imagemloader);
 		xfree(block_ptr->imageramdisk);
 
-		if (block_ptr->job_list) {
-			list_destroy(block_ptr->job_list);
-			block_ptr->job_list = NULL;
-		}
+		FREE_NULL_LIST(block_ptr->job_list);
 
 		/* don't xfree(block_ptr->mp_inx);
 		   it isn't copied like the chars and is freed in the api
@@ -307,36 +273,6 @@ static void _layout_block_record(GtkTreeView *treeview,
 					   find_col_name(display_data_block,
 							 SORTID_IMAGEMLOADER),
 					   block_ptr->imagemloader);
-	} else if (cluster_flags & CLUSTER_FLAG_BGP) {
-		add_display_treestore_line(update, treestore, &iter,
-					   find_col_name(display_data_block,
-							 SORTID_IMAGELINUX),
-					   block_ptr->imagelinux);
-		add_display_treestore_line(update, treestore, &iter,
-					   find_col_name(display_data_block,
-							 SORTID_IMAGERAMDISK),
-					   block_ptr->imageramdisk);
-		add_display_treestore_line(update, treestore, &iter,
-					   find_col_name(display_data_block,
-							 SORTID_IMAGEMLOADER),
-					   block_ptr->imagemloader);
-	} else if (cluster_flags & CLUSTER_FLAG_BGL) {
-		add_display_treestore_line(update, treestore, &iter,
-					   find_col_name(display_data_block,
-							 SORTID_IMAGEBLRTS),
-					   block_ptr->imageblrts);
-		add_display_treestore_line(update, treestore, &iter,
-					   find_col_name(display_data_block,
-							 SORTID_IMAGELINUX),
-					   block_ptr->imagelinux);
-		add_display_treestore_line(update, treestore, &iter,
-					   find_col_name(display_data_block,
-							 SORTID_IMAGEMLOADER),
-					   block_ptr->imagemloader);
-		add_display_treestore_line(update, treestore, &iter,
-					   find_col_name(display_data_block,
-							 SORTID_IMAGERAMDISK),
-					   block_ptr->imageramdisk);
 	}
 
 	tmp_char = _set_running_job_str(block_ptr->job_list, 0);
@@ -346,18 +282,13 @@ static void _layout_block_record(GtkTreeView *treeview,
 						 SORTID_JOB),
 				   tmp_char);
 	xfree(tmp_char);
-	if (cluster_flags & CLUSTER_FLAG_BGL) {
-		add_display_treestore_line(update, treestore, &iter,
-					   find_col_name(display_data_block,
-							 SORTID_USE),
-					   node_use_string(
-						   block_ptr->bg_node_use));
-	}
-	convert_num_unit((float)block_ptr->cnode_cnt, tmp_cnt, sizeof(tmp_cnt),
-			 UNIT_NONE);
+	convert_num_unit((float)block_ptr->cnode_cnt, tmp_cnt,
+			   sizeof(tmp_cnt), UNIT_NONE, NO_VAL,
+			   working_sview_config.convert_flags);
 	if (cluster_flags & CLUSTER_FLAG_BGQ) {
 		convert_num_unit((float)block_ptr->cnode_err_cnt, tmp_cnt2,
-				 sizeof(tmp_cnt2), UNIT_NONE);
+				 sizeof(tmp_cnt2), UNIT_NONE, NO_VAL,
+				 working_sview_config.convert_flags);
 		tmp_char = xstrdup_printf("%s/%s", tmp_cnt, tmp_cnt2);
 	} else
 		tmp_char = tmp_cnt;
@@ -388,10 +319,12 @@ static void _update_block_record(sview_block_info_t *block_ptr,
 	char *tmp_char = NULL, *tmp_char2 = NULL, *tmp_char3 = NULL;
 
 	convert_num_unit((float)block_ptr->cnode_cnt, cnode_cnt,
-			 sizeof(cnode_cnt), UNIT_NONE);
+			 sizeof(cnode_cnt), UNIT_NONE, NO_VAL,
+			 working_sview_config.convert_flags);
 	if (cluster_flags & CLUSTER_FLAG_BGQ) {
 		convert_num_unit((float)block_ptr->cnode_err_cnt, cnode_cnt2,
-				 sizeof(cnode_cnt), UNIT_NONE);
+				 sizeof(cnode_cnt), UNIT_NONE, NO_VAL,
+				 working_sview_config.convert_flags);
 		tmp_char3 = xstrdup_printf("%s/%s", cnode_cnt, cnode_cnt2);
 	} else
 		tmp_char3 = cnode_cnt;
@@ -421,21 +354,6 @@ static void _update_block_record(sview_block_info_t *block_ptr,
 	xfree(tmp_char2);
 	if (cluster_flags & CLUSTER_FLAG_BGQ)
 		xfree(tmp_char3);
-
-	if (cluster_flags & CLUSTER_FLAG_BGP) {
-		gtk_tree_store_set(treestore, &block_ptr->iter_ptr,
-				   SORTID_IMAGERAMDISK, block_ptr->imageramdisk,
-				   SORTID_IMAGELINUX,   block_ptr->imagelinux,
-				   -1);
-	} else if (cluster_flags & CLUSTER_FLAG_BGL) {
-		gtk_tree_store_set(treestore, &block_ptr->iter_ptr,
-				   SORTID_IMAGERAMDISK, block_ptr->imageramdisk,
-				   SORTID_IMAGELINUX,   block_ptr->imagelinux,
-				   SORTID_IMAGEBLRTS,   block_ptr->imageblrts,
-				   SORTID_USE,
-					node_use_string(block_ptr->bg_node_use),
-				   -1);
-	}
 
 	return;
 }
@@ -481,7 +399,7 @@ static void _update_info_block(List block_list,
 		if (block_ptr->iter_set) {
 			gtk_tree_model_get(model, &block_ptr->iter_ptr,
 					   SORTID_BLOCK, &name, -1);
-			if (strcmp(name, block_ptr->bg_block_name)) {
+			if (xstrcmp(name, block_ptr->bg_block_name)) {
 				/* Bad pointer */
 				block_ptr->iter_set = false;
 			}
@@ -531,7 +449,7 @@ static int _sview_block_sort_aval_dec(void *s1, void *s2)
 		return 1;
 
 	if (rec_a->mp_str && rec_b->mp_str) {
-		size_a = strcmp(rec_a->mp_str, rec_b->mp_str);
+		size_a = xstrcmp(rec_a->mp_str, rec_b->mp_str);
 		if (size_a < 0)
 			return -1;
 		else if (size_a > 0)
@@ -590,10 +508,6 @@ static List _create_block_list(partition_info_msg_t *part_info_ptr,
 	}
 
 	block_list = list_create(_block_list_del);
-	if (!block_list) {
-		g_print("malloc error\n");
-		return NULL;
-	}
 
 	last_block_info_ptr = block_info_ptr;
 
@@ -609,9 +523,9 @@ static List _create_block_list(partition_info_msg_t *part_info_ptr,
 
 		if (last_list_itr) {
 			while ((block_ptr = list_next(last_list_itr))) {
-				if (!strcmp(block_ptr->bg_block_name,
-					    block_info_ptr->
-					    block_array[i].bg_block_id)) {
+				if (!xstrcmp(block_ptr->bg_block_name,
+					     block_info_ptr->
+					     block_array[i].bg_block_id)) {
 					list_remove(last_list_itr);
 					_block_info_free(block_ptr);
 					break;
@@ -654,20 +568,6 @@ static List _create_block_list(partition_info_msg_t *part_info_ptr,
 		block_ptr->reason
 			= xstrdup(block_info_ptr->block_array[i].reason);
 
-		if (cluster_flags & CLUSTER_FLAG_BGP) {
-			block_ptr->imagelinux = xstrdup(
-				block_info_ptr->block_array[i].linuximage);
-			block_ptr->imageramdisk = xstrdup(
-				block_info_ptr->block_array[i].ramdiskimage);
-		} else if (cluster_flags & CLUSTER_FLAG_BGL) {
-			block_ptr->imageblrts = xstrdup(
-				block_info_ptr->block_array[i].blrtsimage);
-			block_ptr->imagelinux = xstrdup(
-				block_info_ptr->block_array[i].linuximage);
-			block_ptr->imageramdisk = xstrdup(
-				block_info_ptr->block_array[i].ramdiskimage);
-		}
-
 		block_ptr->imagemloader = xstrdup(
 			block_info_ptr->block_array[i].mloaderimage);
 
@@ -676,10 +576,6 @@ static List _create_block_list(partition_info_msg_t *part_info_ptr,
 		memcpy(block_ptr->bg_conn_type,
 		       block_info_ptr->block_array[i].conn_type,
 		       sizeof(block_ptr->bg_conn_type));
-
-		if (cluster_flags & CLUSTER_FLAG_BGL)
-			block_ptr->bg_node_use
-				= block_info_ptr->block_array[i].node_use;
 
 		block_ptr->cnode_cnt
 			= block_info_ptr->block_array[i].cnode_cnt;
@@ -705,7 +601,7 @@ static List _create_block_list(partition_info_msg_t *part_info_ptr,
 
 	if (last_list) {
 		list_iterator_destroy(last_list_itr);
-		list_destroy(last_list);
+		FREE_NULL_LIST(last_list);
 	}
 
 	return block_list;
@@ -738,8 +634,8 @@ need_refresh:
 
 	itr = list_iterator_create(block_list);
 	while ((block_ptr = (sview_block_info_t*) list_next(itr))) {
-		if (!strcmp(block_ptr->bg_block_name, name)
-		    || !strcmp(block_ptr->mp_str, name)) {
+		if (!xstrcmp(block_ptr->bg_block_name, name)
+		    || !xstrcmp(block_ptr->mp_str, name)) {
 			/* we want to over ride any subgrp in error
 			   state */
 			enum node_states state = NODE_STATE_UNKNOWN;
@@ -884,30 +780,32 @@ extern int update_state_block(GtkDialog *dialog,
 	slurm_init_update_block_msg(&block_msg);
 	block_msg.bg_block_id = (char *)blockid;
 
+	gtk_window_set_type_hint(GTK_WINDOW(dialog),
+				 GDK_WINDOW_TYPE_HINT_NORMAL);
 	label = gtk_dialog_add_button(dialog,
 				      GTK_STOCK_YES, GTK_RESPONSE_OK);
 	gtk_window_set_default(GTK_WINDOW(dialog), label);
 	gtk_dialog_add_button(dialog,
 			      GTK_STOCK_CANCEL, GTK_RESPONSE_CANCEL);
 
-	if (!strcasecmp("Error", type) ||
-	    !strcasecmp("Put block in error state", type)) {
+	if (!xstrcasecmp("Error", type) ||
+	    !xstrcasecmp("Put block in error state", type)) {
 		snprintf(tmp_char, sizeof(tmp_char),
 			 "Are you sure you want to put block %s "
 			 "in an error state?",
 			 blockid);
 		block_msg.state = BG_BLOCK_ERROR_FLAG;
-	} else if (!strcasecmp("Recreate block", type)) {
+	} else if (!xstrcasecmp("Recreate block", type)) {
 		snprintf(tmp_char, sizeof(tmp_char),
 			 "Are you sure you want to recreate block %s?",
 			 blockid);
 		block_msg.state = BG_BLOCK_BOOTING;
-	} else if (!strcasecmp("Remove block", type)) {
+	} else if (!xstrcasecmp("Remove block", type)) {
 		snprintf(tmp_char, sizeof(tmp_char),
 			 "Are you sure you want to remove block %s?",
 			 blockid);
 		block_msg.state = BG_BLOCK_NAV;
-	} else if (!strcasecmp("Resume block", type)) {
+	} else if (!xstrcasecmp("Resume block", type)) {
 		snprintf(tmp_char, sizeof(tmp_char),
 			 "Are you sure you want to resume block %s?",
 			 blockid);
@@ -922,7 +820,7 @@ extern int update_state_block(GtkDialog *dialog,
 
 	label = gtk_label_new(tmp_char);
 
-	gtk_box_pack_start(GTK_BOX(dialog->vbox), label, FALSE, FALSE, 0);
+	gtk_box_pack_start(GTK_BOX(dialog->vbox), label, false, false, 0);
 
 	gtk_widget_show_all(GTK_WIDGET(dialog));
 	i = gtk_dialog_run(dialog);
@@ -978,17 +876,26 @@ extern void admin_edit_block(GtkCellRendererText *cell,
 			     const char *new_text,
 			     gpointer data)
 {
-	GtkTreeStore *treestore = GTK_TREE_STORE(data);
-	GtkTreePath *path = gtk_tree_path_new_from_string(path_string);
+	GtkTreeStore *treestore = NULL;
+	GtkTreePath *path = NULL;
 	GtkTreeIter iter;
-	int column = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(cell),
-						       "column"));
+	int column;
 
 	char *blockid = NULL;
 	char *old_text = NULL;
-	if (!new_text || !strcmp(new_text, ""))
+
+	if (cluster_flags & CLUSTER_FLAG_FED) {
+		display_fed_disabled_popup(new_text);
+		goto no_input;
+	}
+
+	if (!new_text || !xstrcmp(new_text, ""))
 		goto no_input;
 
+	column = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(cell), "column"));
+
+	treestore = GTK_TREE_STORE(data);
+	path = gtk_tree_path_new_from_string(path_string);
 	gtk_tree_model_get_iter(GTK_TREE_MODEL(treestore), &iter, path);
 	gtk_tree_model_get(GTK_TREE_MODEL(treestore), &iter,
 			   SORTID_BLOCK, &blockid,
@@ -1004,8 +911,8 @@ extern void admin_edit_block(GtkCellRendererText *cell,
 
 	g_free(blockid);
 	g_free(old_text);
-no_input:
 	gtk_tree_path_free(path);
+no_input:
 	g_mutex_unlock(sview_mutex);
 }
 
@@ -1025,12 +932,12 @@ extern void get_info_block(GtkTable *table, display_data_t *display_data)
 	ListIterator itr = NULL;
 	sview_block_info_t *sview_block_info_ptr = NULL;
 	GtkTreePath *path = NULL;
-	static bool set_opts = FALSE;
+	static bool set_opts = false;
 
 	if (!set_opts)
 		set_page_opts(BLOCK_PAGE, display_data_block,
 			      SORTID_CNT, _initial_page_opts);
-	set_opts = TRUE;
+	set_opts = true;
 
 	/* reset */
 	if (!table && !display_data) {
@@ -1047,6 +954,17 @@ extern void get_info_block(GtkTable *table, display_data_t *display_data)
 	if (!table) {
 		display_data_block->set_menu = local_display_data->set_menu;
 		goto reset_curs;
+	}
+
+	if (cluster_flags & CLUSTER_FLAG_FED) {
+		view = ERROR_VIEW;
+		if (display_widget)
+			gtk_widget_destroy(display_widget);
+		label = gtk_label_new("Not available in a federated view");
+		gtk_table_attach_defaults(GTK_TABLE(table), label, 0, 1, 0, 1);
+		gtk_widget_show(label);
+		display_widget = gtk_widget_ref(label);
+		goto end_it;
 	}
 
 	if (display_widget && toggled) {
@@ -1176,8 +1094,8 @@ display_it:
 	view = INFO_VIEW;
 	_update_info_block(block_list, GTK_TREE_VIEW(display_widget));
 end_it:
-	toggled = FALSE;
-	force_refresh = FALSE;
+	toggled = false;
+	force_refresh = false;
 
 reset_curs:
 	if (main_window && main_window->window)
@@ -1308,8 +1226,8 @@ display_it:
 		i++;
 		switch(spec_info->type) {
 		case PART_PAGE:
-			if (strcmp(block_ptr->slurm_part_name,
-				   search_info->gchar_data))
+			if (xstrcmp(block_ptr->slurm_part_name,
+				    search_info->gchar_data))
 				continue;
 			break;
 		case RESV_PAGE:
@@ -1344,8 +1262,8 @@ display_it:
 				if (!search_info->gchar_data)
 					continue;
 
-				if (strcmp(block_ptr->bg_block_name,
-					   search_info->gchar_data))
+				if (xstrcmp(block_ptr->bg_block_name,
+					    search_info->gchar_data))
 					continue;
 				break;
 			case SEARCH_BLOCK_SIZE:
@@ -1368,8 +1286,8 @@ display_it:
 			}
 			break;
 		case JOB_PAGE:
-			if (strcmp(block_ptr->bg_block_name,
-				   search_info->gchar_data))
+			if (xstrcmp(block_ptr->bg_block_name,
+				    search_info->gchar_data))
 				continue;
 			break;
 		default:
@@ -1400,7 +1318,7 @@ display_it:
 
 	_update_info_block(send_block_list,
 			   GTK_TREE_VIEW(spec_info->display_widget));
-	list_destroy(send_block_list);
+	FREE_NULL_LIST(send_block_list);
 end_it:
 	popup_win->toggled = 0;
 	popup_win->force_refresh = 0;
@@ -1451,7 +1369,7 @@ extern void set_menus_block(void *arg, void *arg2, GtkTreePath *path, int type)
 extern void popup_all_block(GtkTreeModel *model, GtkTreeIter *iter, int id)
 {
 	char *name = NULL;
-	char title[100];
+	char title[100] = {0};
 	ListIterator itr = NULL;
 	popup_info_t *popup_win = NULL;
 	GError *error = NULL;
@@ -1486,7 +1404,7 @@ extern void popup_all_block(GtkTreeModel *model, GtkTreeIter *iter, int id)
 	itr = list_iterator_create(popup_list);
 	while ((popup_win = list_next(itr))) {
 		if (popup_win->spec_info)
-			if (!strcmp(popup_win->spec_info->title, title)) {
+			if (!xstrcmp(popup_win->spec_info->title, title)) {
 				break;
 			}
 	}
@@ -1545,7 +1463,7 @@ extern void popup_all_block(GtkTreeModel *model, GtkTreeIter *iter, int id)
 	}
 
 
-	if (!sview_thread_new((gpointer)popup_thr, popup_win, FALSE, &error)) {
+	if (!sview_thread_new((gpointer)popup_thr, popup_win, false, &error)) {
 		g_printerr ("Failed to create part popup thread: %s\n",
 			    error->message);
 		return;
@@ -1569,27 +1487,27 @@ extern void select_admin_block(GtkTreeModel *model, GtkTreeIter *iter,
 			       display_data_t *display_data,
 			       GtkTreeView *treeview)
 {
-	if (treeview) {
-		if (display_data->extra & EXTRA_NODES) {
-			select_admin_nodes(model, iter, display_data,
-					   SORTID_NODELIST, treeview);
-			return;
-		}
-		global_multi_error = FALSE;
-		gtk_tree_selection_selected_foreach(
-			gtk_tree_view_get_selection(treeview),
-			_process_each_block, display_data->name);
-	}
+	select_admin_common(model, iter, display_data, treeview,
+			    SORTID_NODELIST, _process_each_block);
 }
 
 static void _admin_block(GtkTreeModel *model, GtkTreeIter *iter, char *type)
 {
 	char *blockid = NULL;
-	GtkWidget *popup = gtk_dialog_new_with_buttons(
+	GtkWidget *popup = NULL;
+
+	if (cluster_flags & CLUSTER_FLAG_FED) {
+		display_fed_disabled_popup(type);
+		return;
+	}
+
+	popup = gtk_dialog_new_with_buttons(
 		type,
 		GTK_WINDOW(main_window),
 		GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
 		NULL);
+	gtk_window_set_type_hint(GTK_WINDOW(popup),
+				 GDK_WINDOW_TYPE_HINT_NORMAL);
 	gtk_window_set_transient_for(GTK_WINDOW(popup), NULL);
 
 	gtk_tree_model_get(model, iter, SORTID_BLOCK, &blockid, -1);
@@ -1616,44 +1534,6 @@ extern void cluster_change_block(void)
 			case SORTID_IMAGELINUX:
 			case SORTID_IMAGERAMDISK:
 				display_data->name = NULL;
-				break;
-			default:
-				break;
-			}
-		} else if (cluster_flags & CLUSTER_FLAG_BGP) {
-			switch(display_data->id) {
-			case SORTID_USE:
-			case SORTID_IMAGEBLRTS:
-				display_data->name = NULL;
-				break;
-			case SORTID_IMAGELINUX:
-				display_data->name = "Image Cnload";
-				break;
-			case SORTID_IMAGERAMDISK:
-				display_data->name = "Image Ioload";
-				break;
-			case SORTID_USER:
-				display_data->name = "User";
-				break;
-			default:
-				break;
-			}
-		} else if (cluster_flags & CLUSTER_FLAG_BGL) {
-			switch(display_data->id) {
-			case SORTID_USE:
-				display_data->name = "Node Use";
-				break;
-			case SORTID_IMAGEBLRTS:
-				display_data->name = "Image Blrt";
-				break;
-			case SORTID_IMAGELINUX:
-				display_data->name = "Image Linux";
-				break;
-			case SORTID_IMAGERAMDISK:
-				display_data->name = "Image Ramdisk";
-				break;
-			case SORTID_USER:
-				display_data->name = "User";
 				break;
 			default:
 				break;

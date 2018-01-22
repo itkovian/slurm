@@ -1,7 +1,5 @@
 /*****************************************************************************\
  *  sstat.h - header file for sstat
- *
- *  $Id: sstat.h 7541 2006-03-18 01:44:58Z da $
  *****************************************************************************
  *  Copyright (C) 2002-2007 The Regents of the University of California.
  *  Copyright (C) 2008 Lawrence Livermore National Security.
@@ -10,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -43,6 +41,7 @@
 
 #include <ctype.h>
 #include <errno.h>
+#include <getopt.h>
 #include <grp.h>
 #include <pwd.h>
 #include <stdio.h>
@@ -54,7 +53,6 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "src/common/getopt.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
 #include "src/common/list.h"
@@ -66,17 +64,18 @@
 
 #define ERROR 2
 
-#define STAT_FIELDS "jobid,maxvmsize,maxvmsizenode,maxvmsizetask,avevmsize,maxrss,maxrssnode,maxrsstask,averss,maxpages,maxpagesnode,maxpagestask,avepages,mincpu,mincpunode,mincputask,avecpu,ntasks,avecpufreq,reqcpufreq,consumedenergy,maxdiskread,maxdiskreadnode,maxdiskreadtask,avediskread,maxdiskwrite,maxdiskwritenode,maxdiskwritetask,avediskwrite"
+#define STAT_FIELDS "jobid,maxvmsize,maxvmsizenode,maxvmsizetask,avevmsize,maxrss,maxrssnode,maxrsstask,averss,maxpages,maxpagesnode,maxpagestask,avepages,mincpu,mincpunode,mincputask,avecpu,ntasks,avecpufreq,reqcpufreqmin,reqcpufreqmax,reqcpufreqgov,consumedenergy,maxdiskread,maxdiskreadnode,maxdiskreadtask,avediskread,maxdiskwrite,maxdiskwritenode,maxdiskwritetask,avediskwrite"
 
 #define STAT_FIELDS_PID "jobid,nodelist,pids"
-
-#define STATE_COUNT 10
 
 #define MAX_PRINTFIELDS 100
 
 #define SECONDS_IN_MINUTE 60
 #define SECONDS_IN_HOUR (60*SECONDS_IN_MINUTE)
 #define SECONDS_IN_DAY (24*SECONDS_IN_HOUR)
+
+#define SSTAT_BATCH_STEP  0xfffffffd
+#define SSTAT_EXTERN_STEP 0xfffffffc
 
 /* On output, use fields 12-37 from JOB_STEP */
 
@@ -112,7 +111,9 @@ typedef enum {
 		PRINT_NODELIST,
 		PRINT_NTASKS,
 		PRINT_PIDS,
-		PRINT_REQ_CPUFREQ,
+		PRINT_REQ_CPUFREQ_MIN,
+		PRINT_REQ_CPUFREQ_MAX,
+		PRINT_REQ_CPUFREQ_GOV,
 } sstat_print_types_t;
 
 
@@ -124,6 +125,7 @@ typedef struct {
 	int opt_noheader;	/* can only be cleared */
 	int opt_verbose;	/* --verbose */
 	bool pid_format;
+	uint32_t convert_flags;
 } sstat_parameters_t;
 
 extern List print_fields_list;

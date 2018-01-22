@@ -1,4 +1,4 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Test of SLURM functionality
 #          Test that the core spec option in sbatch allocates the correct
@@ -14,7 +14,7 @@
 # Written by Nathan Yee <nyee32@schedmd.com>
 #
 # This file is part of SLURM, a resource management program.
-# For details, see <http://slurm.schedmd.com/>.
+# For details, see <https://slurm.schedmd.com/>.
 # Please also read the included file: DISCLAIMER.
 #
 # SLURM is free software; you can redistribute it and/or modify it under
@@ -46,7 +46,7 @@ set exit_code  0
 #
 # exp_node = 0: job must only use the specified node
 # exp_node = 1: job must use more then specified node
-# exp_node = -1: job must fail because the job execeeds the number or cores
+# exp_node = -1: job must fail because the job exceeds the number of cores
 #
 #############################################################################
 proc core_spec_job {task node core_spec exp_nodes} {
@@ -57,9 +57,19 @@ proc core_spec_job {task node core_spec exp_nodes} {
 
 	# Determine the number of tasks that can be run
 	set cpu_used_by_spec [expr $thread_cnt * $core_spec]
-	set task_limit [expr $cpu_tot - $cpu_used_by_spec]
+	if {$cpu_tot > $cpu_used_by_spec} {
+		set task_limit [expr $cpu_tot - $cpu_used_by_spec]
+	} else {
+		set task_limit 1
+	}
+
+	set ntasks [expr abs($task_limit + $task)]
+	if {$ntasks == 0} {
+		set ntasks 1
+	}
+
 	set error_chk 0
-	spawn $sbatch -t1 -w$node -S$core_spec -n[expr abs($task_limit + $task)] -o$file_out $spec_in
+	spawn $sbatch -t1 -w$node -S$core_spec -n$ntasks -o$file_out $spec_in
 	expect {
 		-re "Submitted batch job ($number)" {
 			set job_id $expect_out(1,string)
@@ -153,9 +163,38 @@ proc core_spec_job {task node core_spec exp_nodes} {
 print_header $test_id
 
 set select_type [test_select_type]
-if {![string compare $select_type "linear"]} {
+if {![string compare $select_type "linear"] || ![string compare $select_type "serial"]} {
 	send_user "\nWARNING: This test is incompatible with select/$select_type\n"
 	exit 0
+} elseif {![string compare $select_type "cray"] && ![test_select_type_params "other_cons_res"]} {
+	send_user "\nWARNING: This test is incompatible with select/linear\n"
+	exit 0
+}
+if {[test_select_type_params "CR_SOCKET"]} {
+	send_user "\nWARNING: This test is incompatible with CR_SOCKET allocations\n"
+	exit 0
+}
+
+log_user 0
+set allow_spec 0
+spawn $scontrol show config
+expect {
+	-re "AllowSpecResourcesUsage = ($number)" {
+		set allow_spec $expect_out(1,string)
+		exp_continue
+	}
+	timeout {
+		send_user "\nFAILURE: scontrol is not responding\n"
+		set exit_code 1
+	}
+	eof {
+		wait
+	}
+}
+log_user 1
+if {$allow_spec == 0} {
+	send_user "WARNING: AllowSpecResourcesUsage not configured to permit core specialization\n"
+	exit $exit_code
 }
 
 # Remove any vestigial files
@@ -172,7 +211,7 @@ make_bash_script $spec_in "sleep 5"
 set job_id 0
 spawn $sbatch --exclusive -t1 -N2 -o$file_out $file_in
 expect {
-	-re "Node count specification invalid" {
+	-re "Batch job submission failed" {
 		send_user "\nWARNING: can't test srun task distribution\n"
 		exit $exit_code
 	}
@@ -253,7 +292,7 @@ core_spec_job -2 $first_node [expr $core_cnt - 2] 0
 
 #
 # Using core spec with more tasks then the node can handle. This should
-# cause the tasks to spread accross mutliple nodes as needed
+# cause the tasks to spread across multiple nodes as needed
 #
 send_user "\n\nSpread job across multiple nodes\n"
 core_spec_job 1 $first_node [expr $core_cnt - 2] 1

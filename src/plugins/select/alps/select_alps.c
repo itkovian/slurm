@@ -2,14 +2,14 @@
  *  select_alps.c - node selection plugin for alps/cray systems.
  *****************************************************************************
  *  Copyright (C) 2010 Lawrence Livermore National Security.
- *  Portions Copyright (C) 2010 SchedMD <http://www.schedmd.com>.
+ *  Portions Copyright (C) 2010 SchedMD <https://www.schedmd.com>.
  *  Supported by the Oak Ridge National Laboratory Extreme Scale Systems Center
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Danny Auble <da@llnl.gov>
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -38,22 +38,17 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#ifdef HAVE_CONFIG_H
-#  include "config.h"
-#  if HAVE_STDINT_H
-#    include <stdint.h>
-#  endif
-#  if HAVE_INTTYPES_H
-#    include <inttypes.h>
-#  endif
-#endif
+#include "slurm/slurm.h"
 
+#include <inttypes.h>
 #include <stdio.h>
-#include <sys/types.h>
+#include <stdlib.h>
 #include <sys/stat.h>
+#include <sys/types.h>
 #include <unistd.h>
 
 #include "src/common/slurm_xlator.h"	/* Must be first */
+#include "src/common/xstring.h"
 #include "other_select.h"
 #include "basil_interface.h"
 #include "cray_config.h"
@@ -69,6 +64,7 @@ List part_list __attribute__((weak_import));
 List job_list __attribute__((weak_import));
 int node_record_count __attribute__((weak_import));
 time_t last_node_update __attribute__((weak_import));
+int slurmctld_primary __attribute__((weak_import));
 struct switch_record *switch_record_table __attribute__((weak_import));
 int switch_record_cnt __attribute__((weak_import));
 slurmdb_cluster_rec_t *working_cluster_rec  __attribute__((weak_import)) = NULL;
@@ -82,6 +78,7 @@ List part_list;
 List job_list;
 int node_record_count;
 time_t last_node_update;
+int slurmctld_primary;
 struct switch_record *switch_record_table;
 int switch_record_cnt;
 slurmdb_cluster_rec_t *working_cluster_rec = NULL;
@@ -115,6 +112,8 @@ char *uid_to_string (uid_t uid) { return NULL; }
 #  define SIGRTMIN SIGUSR2+1
 #endif
 
+int inv_interval = 0;
+
 /* All current (2011) XT/XE installations have a maximum dimension of 3,
  * smaller systems deploy a 2D Torus which has no connectivity in
  * X-dimension.  We know the highest system dimensions possible here
@@ -144,16 +143,13 @@ static int select_cray_dim_size[3] = {-1};
  * only load select plugins if the plugin_type string has a
  * prefix of "select/".
  *
- * plugin_version - an unsigned 32-bit integer giving the version number
- * of the plugin.  If major and minor revisions are desired, the major
- * version number may be multiplied by a suitable magnitude constant such
- * as 100 or 1000.  Various SLURM versions will likely require a certain
- * minimum version for their plugins as the node selection API matures.
+ * plugin_version - an unsigned 32-bit integer containing the Slurm version
+ * (major.minor.micro combined into a single number).
  */
 const char plugin_name[]	= "Cray node selection plugin";
-const char plugin_type[]	= "select/cray";
-uint32_t plugin_id		= 104;
-const uint32_t plugin_version	= 110;
+const char plugin_type[]	= "select/alps";
+uint32_t plugin_id		= SELECT_PLUGIN_ALPS;
+const uint32_t plugin_version	= SLURM_VERSION_NUMBER;
 
 static bool _zero_size_job ( struct job_record *job_ptr )
 {
@@ -163,6 +159,27 @@ static bool _zero_size_job ( struct job_record *job_ptr )
 	    (job_ptr->details->max_nodes == 0))
 		return true;
 	return false;
+}
+
+static void _set_inv_interval(void)
+{
+	char *tmp_ptr, *sched_params = slurm_get_sched_params();
+	int i;
+
+	if (sched_params) {
+		if (sched_params &&
+		    (tmp_ptr = xstrcasestr(sched_params,
+						"inventory_interval="))) {
+		/*                                   0123456789012345 */
+			i = atoi(tmp_ptr + 19);
+			if (i < 0)
+				error("ignoring SchedulerParameters: "
+				      "inventory_interval of %d", i);
+			else
+				inv_interval = i;
+		}
+		xfree(sched_params);
+	}
 }
 
 /*
@@ -184,9 +201,11 @@ extern int init ( void )
 	 *	plugin_id = 105;
 	 */
 	if (bg_recover != NOT_FROM_CONTROLLER) {
-		if (slurmctld_conf.select_type_param & CR_OTHER_CONS_RES)
+		if (slurmctld_conf.select_type_param & CR_OTHER_CONS_RES) {
 			fatal("SelectTypeParams=other_cons_res is not valid "
 			      "for select/alps");
+		}
+		_set_inv_interval();
 	}
 
 	create_config();
@@ -224,6 +243,8 @@ extern int select_p_job_init(List job_list)
  */
 extern bool select_p_node_ranking(struct node_record *node_ptr, int node_cnt)
 {
+	if (slurmctld_primary == 0)
+		return false;
 	if (basil_node_ranking(node_ptr, node_cnt) < 0)
 		fatal("can not resolve node coordinates: ALPS problem?");
 	return true;
@@ -231,7 +252,7 @@ extern bool select_p_node_ranking(struct node_record *node_ptr, int node_cnt)
 
 extern int select_p_node_init(struct node_record *node_ptr, int node_cnt)
 {
-	if (basil_geometry(node_ptr, node_cnt)) {
+	if (slurmctld_primary && basil_geometry(node_ptr, node_cnt)) {
 		error("can not get initial ALPS node state");
 		return SLURM_ERROR;
 	}
@@ -291,10 +312,10 @@ extern int select_p_job_test(struct job_record *job_ptr, bitstr_t *bitmap,
 		job_ptr->details->min_cpus = 0;
 	}
 
-	if (job_ptr->details->core_spec) {
+	if (job_ptr->details->core_spec != NO_VAL16) {
 		verbose("select/alps: job %u core_spec(%u) not supported",
 			job_ptr->job_id, job_ptr->details->core_spec);
-		job_ptr->details->core_spec = 0;
+		job_ptr->details->core_spec = NO_VAL16;
 	}
 
 	return other_job_test(job_ptr, bitmap, min_nodes, max_nodes,
@@ -306,7 +327,7 @@ extern int select_p_job_begin(struct job_record *job_ptr)
 {
 	xassert(job_ptr);
 
-	if ((!_zero_size_job(job_ptr)) &&
+	if (slurmctld_primary && !_zero_size_job(job_ptr) &&
 	    (do_basil_reserve(job_ptr) != SLURM_SUCCESS)) {
 		job_ptr->state_reason = WAIT_RESOURCES;
 		xfree(job_ptr->state_desc);
@@ -329,9 +350,10 @@ extern int select_p_job_ready(struct job_record *job_ptr)
 	 *		means that we need to confirm only if batch_flag is 0,
 	 *		and execute the other_job_ready() only in slurmctld.
 	 */
-	if (!job_ptr->batch_flag && !_zero_size_job(job_ptr))
+	if ((slurmctld_primary || (job_ptr->job_state == NO_VAL))
+	    && !job_ptr->batch_flag && !_zero_size_job(job_ptr))
 		rc = do_basil_confirm(job_ptr);
-	if (rc != SLURM_SUCCESS || (job_ptr->job_state == (uint16_t)NO_VAL))
+	if ((rc != SLURM_SUCCESS) || (job_ptr->job_state == NO_VAL))
 		return rc;
 	return other_job_ready(job_ptr);
 }
@@ -367,22 +389,30 @@ extern int select_p_job_signal(struct job_record *job_ptr, int signal)
 	 * after the job. Releasing the reservation will stop any new aprun
 	 * lines from being executed.
 	 */
-	switch (signal) {
-		case SIGCHLD:
-		case SIGCONT:
-		case SIGSTOP:
-		case SIGTSTP:
-		case SIGTTIN:
-		case SIGTTOU:
-		case SIGURG:
-		case SIGWINCH:
-			break;
-		default:
-			if (signal < SIGRTMIN)
-				do_basil_release(job_ptr);
+	if (slurmctld_primary) {
+		switch (signal) {
+			case SIGCHLD:
+			case SIGCONT:
+			case SIGSTOP:
+			case SIGTSTP:
+			case SIGTTIN:
+			case SIGTTOU:
+			case SIGURG:
+			case SIGWINCH:
+				break;
+		        case SIGTERM:
+		        case SIGKILL:
+				if (cray_conf->no_apid_signal_on_kill &&
+				    job_ptr->batch_flag)
+					return other_job_signal(
+						job_ptr, signal);
+			default:
+				if (signal < SIGRTMIN)
+					do_basil_release(job_ptr);
+		}
 	}
 
-	if (!_zero_size_job(job_ptr)) {
+	if (slurmctld_primary && !_zero_size_job(job_ptr)) {
 		if (signal != SIGKILL) {
 			if (do_basil_signal(job_ptr, signal) != SLURM_SUCCESS)
 				return SLURM_ERROR;
@@ -398,11 +428,22 @@ extern int select_p_job_signal(struct job_record *job_ptr, int signal)
 	return other_job_signal(job_ptr, signal);
 }
 
+extern int select_p_job_mem_confirm(struct job_record *job_ptr)
+{
+	return SLURM_SUCCESS;
+}
+
 extern int select_p_job_fini(struct job_record *job_ptr)
 {
 	if (job_ptr == NULL)
 		return SLURM_SUCCESS;
-	if ((!_zero_size_job(job_ptr)) &&
+
+	/* Don't run the release in the controller for batch jobs.  It is
+	 * handled on the stepd end.
+	 */
+	if (((slurmctld_primary && !job_ptr->batch_flag) ||
+	     (job_ptr->job_state == NO_VAL))
+	    && !_zero_size_job(job_ptr) &&
 	    (do_basil_release(job_ptr) != SLURM_SUCCESS))
 		return SLURM_ERROR;
 	/*
@@ -410,7 +451,7 @@ extern int select_p_job_fini(struct job_record *job_ptr)
 	 *             stepdmgr, where job_state == NO_VAL is used to
 	 *             distinguish the context from that of slurmctld.
 	 */
-	if (job_ptr->job_state == (uint16_t)NO_VAL)
+	if (job_ptr->job_state == NO_VAL)
 		return SLURM_SUCCESS;
 	return other_job_fini(job_ptr);
 }
@@ -420,7 +461,7 @@ extern int select_p_job_suspend(struct job_record *job_ptr, bool indf_susp)
 	if (job_ptr == NULL)
 		return SLURM_SUCCESS;
 
-	if ((!_zero_size_job(job_ptr)) &&
+	if (slurmctld_primary && !_zero_size_job(job_ptr) &&
 	    (do_basil_switch(job_ptr, 1) != SLURM_SUCCESS))
 		return SLURM_ERROR;
 
@@ -432,7 +473,7 @@ extern int select_p_job_resume(struct job_record *job_ptr, bool indf_susp)
 	if (job_ptr == NULL)
 		return SLURM_SUCCESS;
 
-	if ((!_zero_size_job(job_ptr)) &&
+	if (slurmctld_primary && !_zero_size_job(job_ptr) &&
 	    (do_basil_switch(job_ptr, 0) != SLURM_SUCCESS))
 		return SLURM_ERROR;
 
@@ -452,9 +493,9 @@ extern int select_p_step_start(struct step_record *step_ptr)
 	return other_step_start(step_ptr);
 }
 
-extern int select_p_step_finish(struct step_record *step_ptr)
+extern int select_p_step_finish(struct step_record *step_ptr, bool killing_step)
 {
-	return other_step_finish(step_ptr);
+	return other_step_finish(step_ptr, killing_step);
 }
 
 extern int select_p_pack_select_info(time_t last_query_time,
@@ -488,7 +529,7 @@ extern int select_p_select_nodeinfo_pack(select_nodeinfo_t *nodeinfo,
 					 Buf buffer, uint16_t protocol_version)
 {
 	int rc = SLURM_ERROR;
-	if (protocol_version >= SLURM_2_5_PROTOCOL_VERSION) {
+	if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
 		rc = other_select_nodeinfo_pack(nodeinfo->other_nodeinfo,
 						buffer, protocol_version);
 	}
@@ -505,7 +546,7 @@ extern int select_p_select_nodeinfo_unpack(select_nodeinfo_t **nodeinfo_pptr,
 	*nodeinfo_pptr = nodeinfo;
 
 	nodeinfo->magic = NODEINFO_MAGIC;
-	if (protocol_version >= SLURM_2_5_PROTOCOL_VERSION) {
+	if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
 		rc = other_select_nodeinfo_unpack(&nodeinfo->other_nodeinfo,
 						  buffer, protocol_version);
 	}
@@ -678,7 +719,7 @@ extern int select_p_select_jobinfo_pack(select_jobinfo_t *jobinfo, Buf buffer,
 {
 	int rc = SLURM_ERROR;
 
-	if (protocol_version >= SLURM_2_5_PROTOCOL_VERSION) {
+	if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
 		if (!jobinfo) {
 			pack8(0, buffer);
 			pack32(0, buffer);
@@ -706,7 +747,7 @@ extern int select_p_select_jobinfo_unpack(select_jobinfo_t **jobinfo_pptr,
 	*jobinfo_pptr = jobinfo;
 
 	jobinfo->magic = JOBINFO_MAGIC;
-	if (protocol_version >= SLURM_2_5_PROTOCOL_VERSION) {
+	if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
 		safe_unpack8(&jobinfo->confirmed, buffer);
 		safe_unpack32(&jobinfo->reservation_id, buffer);
 		safe_unpack64(&jobinfo->confirm_cookie, buffer);
@@ -834,6 +875,9 @@ extern char *select_p_select_jobinfo_xstrdup(select_jobinfo_t *jobinfo,
 
 extern int select_p_update_block(update_block_msg_t *block_desc_ptr)
 {
+	if (slurmctld_primary && basil_inventory())
+		return SLURM_ERROR;
+
 	return other_update_block(block_desc_ptr);
 }
 
@@ -847,11 +891,11 @@ extern int select_p_fail_cnode(struct step_record *step_ptr)
 	return other_fail_cnode(step_ptr);
 }
 
-extern int select_p_get_info_from_plugin(enum select_jobdata_type info,
+extern int select_p_get_info_from_plugin(enum select_plugindata_info dinfo,
 					 struct job_record *job_ptr,
 					 void *data)
 {
-	return other_get_info_from_plugin(info, job_ptr, data);
+	return other_get_info_from_plugin(dinfo, job_ptr, data);
 }
 
 extern int select_p_update_node_config(int index)
@@ -871,17 +915,18 @@ extern int select_p_alter_node_cnt(enum select_node_cnt type, void *data)
 
 extern int select_p_reconfigure(void)
 {
-	if (basil_inventory())
-		return SLURM_ERROR;
+	_set_inv_interval();
+
 	return other_reconfigure();
 }
 
-extern bitstr_t * select_p_resv_test(bitstr_t *avail_bitmap, uint32_t node_cnt,
-				     uint32_t *core_cnt, bitstr_t **core_bitmap,
-				     uint32_t flags)
+extern bitstr_t * select_p_resv_test(resv_desc_msg_t *resv_desc_ptr,
+				     uint32_t node_cnt,
+				     bitstr_t *avail_bitmap,
+				     bitstr_t **core_bitmap)
 {
-	return other_resv_test(avail_bitmap, node_cnt, core_cnt, core_bitmap,
-			       flags);
+	return other_resv_test(resv_desc_ptr, node_cnt,
+			       avail_bitmap, core_bitmap);
 }
 
 extern void select_p_ba_init(node_info_msg_t *node_info_ptr, bool sanity_check)
@@ -895,7 +940,7 @@ extern void select_p_ba_init(node_info_msg_t *node_info_ptr, bool sanity_check)
 		/* init the rest of the dim sizes. All current (2011)
 		 * XT/XE installations have a maximum dimension of 3,
 		 * smaller systems deploy a 2D Torus which has no
-		 * connectivity in X-dimension.  Just incase they
+		 * connectivity in X-dimension.  Just in case they
 		 * decide to change it where we only get 2 instead of
 		 * 3 we will initialize it later. */
 		for (i = 1; i < dims; i++)
@@ -943,4 +988,9 @@ extern int *select_p_ba_get_dims(void)
 extern void select_p_ba_fini(void)
 {
 	other_ba_fini();
+}
+
+extern bitstr_t *select_p_ba_cnodelist2bitmap(char *cnodelist)
+{
+	return other_ba_cnodelist2bitmap(cnodelist);
 }

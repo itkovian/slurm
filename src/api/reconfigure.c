@@ -1,7 +1,6 @@
 /*****************************************************************************\
  *  reconfigure.c - request that slurmctld shutdown or re-read the
  *	            configuration files
- *  $Id$
  *****************************************************************************
  *  Copyright (C) 2002-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
@@ -10,7 +9,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -38,10 +37,6 @@
  *  with SLURM; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
-
-#ifdef HAVE_CONFIG_H
-#  include "config.h"
-#endif
 
 #include <errno.h>
 #include <stdio.h>
@@ -72,7 +67,8 @@ slurm_reconfigure (void)
 
 	req.msg_type = REQUEST_RECONFIGURE;
 
-	if (slurm_send_recv_controller_rc_msg(&req, &rc) < 0)
+	if (slurm_send_recv_controller_rc_msg(&req, &rc,
+					      working_cluster_rec) < 0)
 		return SLURM_ERROR;
 
 	if (rc)
@@ -131,7 +127,8 @@ slurm_shutdown (uint16_t options)
 	 * Explicity send the message to both primary
 	 *   and backup controllers
 	 */
-	(void) _send_message_controller(SECONDARY_CONTROLLER, &req_msg);
+	if (!working_cluster_rec)
+		(void) _send_message_controller(SECONDARY_CONTROLLER, &req_msg);
 	return _send_message_controller(PRIMARY_CONTROLLER,   &req_msg);
 }
 
@@ -156,33 +153,34 @@ int
 _send_message_controller (enum controller_id dest, slurm_msg_t *req)
 {
 	int rc = SLURM_PROTOCOL_SUCCESS;
-	slurm_fd_t fd = -1;
-	slurm_msg_t *resp_msg = NULL;
+	int fd = -1;
+	slurm_msg_t resp_msg;
 
 	/* always going to one node (primary or backup per value of "dest") */
-	if ((fd = slurm_open_controller_conn_spec(dest)) < 0)
+	if ((fd = slurm_open_controller_conn_spec(dest,working_cluster_rec)) <0)
 		slurm_seterrno_ret(SLURMCTLD_COMMUNICATIONS_CONNECTION_ERROR);
 
 	if (slurm_send_node_msg(fd, req) < 0) {
 		slurm_shutdown_msg_conn(fd);
 		slurm_seterrno_ret(SLURMCTLD_COMMUNICATIONS_SEND_ERROR);
 	}
-	resp_msg = xmalloc(sizeof(slurm_msg_t));
-	slurm_msg_t_init(resp_msg);
+	slurm_msg_t_init(&resp_msg);
 
-	if ((rc = slurm_receive_msg(fd, resp_msg, 0)) != 0) {
+	if ((rc = slurm_receive_msg(fd, &resp_msg, 0)) != 0) {
+		slurm_free_msg_members(&resp_msg);
 		slurm_shutdown_msg_conn(fd);
 		return SLURMCTLD_COMMUNICATIONS_RECEIVE_ERROR;
 	}
 
 	if (slurm_shutdown_msg_conn(fd) != SLURM_SUCCESS)
 		rc = SLURMCTLD_COMMUNICATIONS_SHUTDOWN_ERROR;
-	else if (resp_msg->msg_type != RESPONSE_SLURM_RC)
+	else if (resp_msg.msg_type != RESPONSE_SLURM_RC)
 		rc = SLURM_UNEXPECTED_MSG_ERROR;
 	else
-		rc = slurm_get_return_code(resp_msg->msg_type,
-					   resp_msg->data);
-	slurm_free_msg(resp_msg);
+		rc = slurm_get_return_code(resp_msg.msg_type,
+					   resp_msg.data);
+
+	slurm_free_msg_members(&resp_msg);
 
 	if (rc)
 		slurm_seterrno_ret(rc);
@@ -197,7 +195,7 @@ _send_message_controller (enum controller_id dest, slurm_msg_t *req)
  * RET 0 on success, otherwise return -1 and set errno to indicate the error
  */
 extern int
-slurm_set_debugflags (uint32_t debug_flags_plus, uint32_t debug_flags_minus)
+slurm_set_debugflags (uint64_t debug_flags_plus, uint64_t debug_flags_minus)
 {
 	int rc;
 	slurm_msg_t req_msg;
@@ -212,7 +210,8 @@ slurm_set_debugflags (uint32_t debug_flags_plus, uint32_t debug_flags_minus)
 	req_msg.msg_type = REQUEST_SET_DEBUG_FLAGS;
 	req_msg.data     = &req;
 
-	if (slurm_send_recv_controller_msg(&req_msg, &resp_msg) < 0)
+	if (slurm_send_recv_controller_msg(&req_msg, &resp_msg,
+					   working_cluster_rec) < 0)
 		return SLURM_ERROR;
 
 	switch (resp_msg.msg_type) {
@@ -249,7 +248,8 @@ slurm_set_debug_level (uint32_t debug_level)
 	req_msg.msg_type = REQUEST_SET_DEBUG_LEVEL;
 	req_msg.data     = &req;
 
-	if (slurm_send_recv_controller_msg(&req_msg, &resp_msg) < 0)
+	if (slurm_send_recv_controller_msg(&req_msg, &resp_msg,
+					   working_cluster_rec) < 0)
 		return SLURM_ERROR;
 
 	switch (resp_msg.msg_type) {
@@ -286,7 +286,45 @@ slurm_set_schedlog_level (uint32_t schedlog_level)
 	req_msg.msg_type = REQUEST_SET_SCHEDLOG_LEVEL;
 	req_msg.data     = &req;
 
-	if (slurm_send_recv_controller_msg(&req_msg, &resp_msg) < 0)
+	if (slurm_send_recv_controller_msg(&req_msg, &resp_msg,
+					   working_cluster_rec) < 0)
+		return SLURM_ERROR;
+
+	switch (resp_msg.msg_type) {
+	case RESPONSE_SLURM_RC:
+		rc = ((return_code_msg_t *) resp_msg.data)->return_code;
+		slurm_free_return_code_msg(resp_msg.data);
+		if (rc)
+			slurm_seterrno_ret(rc);
+		break;
+	default:
+		slurm_seterrno_ret(SLURM_UNEXPECTED_MSG_ERROR);
+		break;
+	}
+        return SLURM_PROTOCOL_SUCCESS;
+}
+
+/*
+ * slurm_set_fs_dampeningfactor - issue RPC to set fs dampening factor
+ * IN factor  - requested fs dampening factor
+ * RET 0 on success, otherwise return -1 and set errno to indicate the error
+ */
+extern int slurm_set_fs_dampeningfactor (uint16_t factor)
+{
+	int rc;
+	slurm_msg_t req_msg;
+	slurm_msg_t resp_msg;
+	set_fs_dampening_factor_msg_t req;
+
+	slurm_msg_t_init(&req_msg);
+	slurm_msg_t_init(&resp_msg);
+
+	req.dampening_factor  = factor;
+	req_msg.msg_type = REQUEST_SET_FS_DAMPENING_FACTOR;
+	req_msg.data     = &req;
+
+	if (slurm_send_recv_controller_msg(&req_msg, &resp_msg,
+					   working_cluster_rec) < 0)
 		return SLURM_ERROR;
 
 	switch (resp_msg.msg_type) {

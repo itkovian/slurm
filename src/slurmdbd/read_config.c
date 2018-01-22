@@ -8,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -37,6 +37,8 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
+#include "config.h"
+
 #include <pwd.h>
 #include <stdlib.h>
 #include <string.h>
@@ -59,7 +61,6 @@
 #include "src/common/xstring.h"
 #include "src/common/slurmdb_defs.h"
 #include "src/slurmdbd/read_config.h"
-#include "src/common/slurm_strcasestr.h"
 
 /* Global variables */
 pthread_mutex_t conf_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -89,13 +90,16 @@ static void _clear_slurmdbd_conf(void)
 		xfree(slurmdbd_conf->archive_script);
 		xfree(slurmdbd_conf->auth_info);
 		xfree(slurmdbd_conf->auth_type);
+		slurmdbd_conf->commit_delay = 0;
 		xfree(slurmdbd_conf->dbd_addr);
 		xfree(slurmdbd_conf->dbd_backup);
 		xfree(slurmdbd_conf->dbd_host);
 		slurmdbd_conf->dbd_port = 0;
-		slurmdbd_conf->debug_level = 0;
+		slurmdbd_conf->debug_flags = 0;
+		slurmdbd_conf->debug_level = LOG_LEVEL_QUIET;
 		xfree(slurmdbd_conf->default_qos);
 		xfree(slurmdbd_conf->log_file);
+		slurmdbd_conf->syslog_debug = LOG_LEVEL_QUIET;
 		xfree(slurmdbd_conf->pid_file);
 		xfree(slurmdbd_conf->plugindir);
 		slurmdbd_conf->private_data = 0;
@@ -104,6 +108,8 @@ static void _clear_slurmdbd_conf(void)
 		slurmdbd_conf->purge_resv = 0;
 		slurmdbd_conf->purge_step = 0;
 		slurmdbd_conf->purge_suspend = 0;
+		slurmdbd_conf->purge_txn = 0;
+		slurmdbd_conf->purge_usage = 0;
 		slurmdbd_conf->slurm_user_id = NO_VAL;
 		xfree(slurmdbd_conf->slurm_user_name);
 		xfree(slurmdbd_conf->storage_backup_host);
@@ -134,17 +140,23 @@ extern int read_slurmdbd_conf(void)
 		{"ArchiveScript", S_P_STRING},
 		{"ArchiveSteps", S_P_BOOLEAN},
 		{"ArchiveSuspend", S_P_BOOLEAN},
+		{"ArchiveTXN", S_P_BOOLEAN},
+		{"ArchiveUsage", S_P_BOOLEAN},
 		{"AuthInfo", S_P_STRING},
 		{"AuthType", S_P_STRING},
+		{"CommitDelay", S_P_UINT16},
 		{"DbdAddr", S_P_STRING},
 		{"DbdBackupHost", S_P_STRING},
 		{"DbdHost", S_P_STRING},
 		{"DbdPort", S_P_UINT16},
+		{"DebugFlags", S_P_STRING},
 		{"DebugLevel", S_P_STRING},
+		{"DebugLevelSyslog", S_P_STRING},
 		{"DefaultQOS", S_P_STRING},
 		{"JobPurge", S_P_UINT32},
 		{"LogFile", S_P_STRING},
 		{"LogTimeFormat", S_P_STRING},
+		{"MaxQueryTimeRange", S_P_STRING},
 		{"MessageTimeout", S_P_UINT16},
 		{"PidFile", S_P_STRING},
 		{"PluginDir", S_P_STRING},
@@ -154,10 +166,14 @@ extern int read_slurmdbd_conf(void)
 		{"PurgeResvAfter", S_P_STRING},
 		{"PurgeStepAfter", S_P_STRING},
 		{"PurgeSuspendAfter", S_P_STRING},
+		{"PurgeTXNAfter", S_P_STRING},
+		{"PurgeUsageAfter", S_P_STRING},
 		{"PurgeEventMonths", S_P_UINT32},
 		{"PurgeJobMonths", S_P_UINT32},
 		{"PurgeStepMonths", S_P_UINT32},
 		{"PurgeSuspendMonths", S_P_UINT32},
+		{"PurgeTXNMonths", S_P_UINT32},
+		{"PurgeUsageMonths", S_P_UINT32},
 		{"SlurmUser", S_P_STRING},
 		{"StepPurge", S_P_UINT32},
 		{"StorageBackupHost", S_P_STRING},
@@ -167,6 +183,7 @@ extern int read_slurmdbd_conf(void)
 		{"StoragePort", S_P_UINT16},
 		{"StorageType", S_P_STRING},
 		{"StorageUser", S_P_STRING},
+		{"TCPTimeout", S_P_UINT16},
 		{"TrackWCKey", S_P_BOOLEAN},
 		{"TrackSlurmctldDown", S_P_BOOLEAN},
 		{NULL} };
@@ -189,8 +206,9 @@ extern int read_slurmdbd_conf(void)
 	if ((conf_path == NULL) || (stat(conf_path, &buf) == -1)) {
 		info("No slurmdbd.conf file (%s)", conf_path);
 	} else {
-		bool a_events = 0, a_jobs = 0, a_resv = 0,
-			a_steps = 0, a_suspend = 0;
+		bool a_events = false, a_jobs = false, a_resv = false;
+		bool a_steps = false, a_suspend = false, a_txn = false;
+		bool a_usage = false;
 		debug("Reading slurmdbd.conf file %s", conf_path);
 
 		tbl = s_p_hashtbl_create(options);
@@ -211,17 +229,30 @@ extern int read_slurmdbd_conf(void)
 			       tbl);
 		s_p_get_boolean(&a_steps, "ArchiveSteps", tbl);
 		s_p_get_boolean(&a_suspend, "ArchiveSuspend", tbl);
+		s_p_get_boolean(&a_txn, "ArchiveTXN", tbl);
+		s_p_get_boolean(&a_usage, "ArchiveUsage", tbl);
 		s_p_get_string(&slurmdbd_conf->auth_info, "AuthInfo", tbl);
 		s_p_get_string(&slurmdbd_conf->auth_type, "AuthType", tbl);
+		s_p_get_uint16(&slurmdbd_conf->commit_delay,
+			       "CommitDelay", tbl);
 		s_p_get_string(&slurmdbd_conf->dbd_backup,
 			       "DbdBackupHost", tbl);
 		s_p_get_string(&slurmdbd_conf->dbd_host, "DbdHost", tbl);
 		s_p_get_string(&slurmdbd_conf->dbd_addr, "DbdAddr", tbl);
 		s_p_get_uint16(&slurmdbd_conf->dbd_port, "DbdPort", tbl);
 
+		if (s_p_get_string(&temp_str, "DebugFlags", tbl)) {
+			if (debug_str2flags(temp_str,
+					    &slurmdbd_conf->debug_flags)
+			    != SLURM_SUCCESS)
+				fatal("DebugFlags invalid: %s", temp_str);
+			xfree(temp_str);
+		} else	/* Default: no DebugFlags */
+			slurmdbd_conf->debug_flags = 0;
+
 		if (s_p_get_string(&temp_str, "DebugLevel", tbl)) {
 			slurmdbd_conf->debug_level = log_string2num(temp_str);
-			if (slurmdbd_conf->debug_level == (uint16_t) NO_VAL)
+			if (slurmdbd_conf->debug_level == NO_VAL16)
 				fatal("Invalid DebugLevel %s", temp_str);
 			xfree(temp_str);
 		}
@@ -238,24 +269,38 @@ extern int read_slurmdbd_conf(void)
 
 		s_p_get_string(&slurmdbd_conf->log_file, "LogFile", tbl);
 
+		if (s_p_get_string(&temp_str, "DebugLevelSyslog", tbl)) {
+			slurmdbd_conf->syslog_debug = log_string2num(temp_str);
+			if (slurmdbd_conf->syslog_debug == NO_VAL16)
+				fatal("Invalid DebugLevelSyslog %s", temp_str);
+			xfree(temp_str);
+		}
+
 		if (s_p_get_string(&temp_str, "LogTimeFormat", tbl)) {
-			if (slurm_strcasestr(temp_str, "iso8601_ms"))
+			if (xstrcasestr(temp_str, "iso8601_ms"))
 				slurmdbd_conf->log_fmt = LOG_FMT_ISO8601_MS;
-			else if (slurm_strcasestr(temp_str, "iso8601"))
+			else if (xstrcasestr(temp_str, "iso8601"))
 				slurmdbd_conf->log_fmt = LOG_FMT_ISO8601;
-			else if (slurm_strcasestr(temp_str, "rfc5424_ms"))
+			else if (xstrcasestr(temp_str, "rfc5424_ms"))
 				slurmdbd_conf->log_fmt = LOG_FMT_RFC5424_MS;
-			else if (slurm_strcasestr(temp_str, "rfc5424"))
+			else if (xstrcasestr(temp_str, "rfc5424"))
 				slurmdbd_conf->log_fmt = LOG_FMT_RFC5424;
-			else if (slurm_strcasestr(temp_str, "clock"))
+			else if (xstrcasestr(temp_str, "clock"))
 				slurmdbd_conf->log_fmt = LOG_FMT_CLOCK;
-			else if (slurm_strcasestr(temp_str, "short"))
+			else if (xstrcasestr(temp_str, "short"))
 				slurmdbd_conf->log_fmt = LOG_FMT_SHORT;
-			else if (slurm_strcasestr(temp_str, "thread_id"))
+			else if (xstrcasestr(temp_str, "thread_id"))
 				slurmdbd_conf->log_fmt = LOG_FMT_THREAD_ID;
 			xfree(temp_str);
 		} else
 			slurmdbd_conf->log_fmt = LOG_FMT_ISO8601_MS;
+
+		if (s_p_get_string(&temp_str, "MaxQueryTimeRange", tbl)) {
+			slurmdbd_conf->max_time_range = time_str2mins(temp_str);
+			xfree(temp_str);
+		} else {
+			slurmdbd_conf->max_time_range = INFINITE;
+		}
 
 		if (!s_p_get_uint16(&slurmdbd_conf->msg_timeout,
 				    "MessageTimeout", tbl))
@@ -269,28 +314,31 @@ extern int read_slurmdbd_conf(void)
 
 		slurmdbd_conf->private_data = 0; /* default visible to all */
 		if (s_p_get_string(&temp_str, "PrivateData", tbl)) {
-			if (slurm_strcasestr(temp_str, "account"))
+			if (xstrcasestr(temp_str, "account"))
 				slurmdbd_conf->private_data
 					|= PRIVATE_DATA_ACCOUNTS;
-			if (slurm_strcasestr(temp_str, "job"))
+			if (xstrcasestr(temp_str, "job"))
 				slurmdbd_conf->private_data
 					|= PRIVATE_DATA_JOBS;
-			if (slurm_strcasestr(temp_str, "node"))
+			if (xstrcasestr(temp_str, "event"))
+				slurmdbd_conf->private_data
+					|= PRIVATE_DATA_EVENTS;
+			if (xstrcasestr(temp_str, "node"))
 				slurmdbd_conf->private_data
 					|= PRIVATE_DATA_NODES;
-			if (slurm_strcasestr(temp_str, "partition"))
+			if (xstrcasestr(temp_str, "partition"))
 				slurmdbd_conf->private_data
 					|= PRIVATE_DATA_PARTITIONS;
-			if (slurm_strcasestr(temp_str, "reservation"))
+			if (xstrcasestr(temp_str, "reservation"))
 				slurmdbd_conf->private_data
 					|= PRIVATE_DATA_RESERVATIONS;
-			if (slurm_strcasestr(temp_str, "usage"))
+			if (xstrcasestr(temp_str, "usage"))
 				slurmdbd_conf->private_data
 					|= PRIVATE_DATA_USAGE;
-			if (slurm_strcasestr(temp_str, "user"))
+			if (xstrcasestr(temp_str, "user"))
 				slurmdbd_conf->private_data
 					|= PRIVATE_DATA_USERS;
-			if (slurm_strcasestr(temp_str, "all"))
+			if (xstrcasestr(temp_str, "all"))
 				slurmdbd_conf->private_data = 0xffff;
 			xfree(temp_str);
 		}
@@ -339,6 +387,24 @@ extern int read_slurmdbd_conf(void)
 			}
 			xfree(temp_str);
 		}
+		if (s_p_get_string(&temp_str, "PurgeTXNAfter", tbl)) {
+			/* slurmdb_parse_purge will set SLURMDB_PURGE_FLAGS */
+ 			if ((slurmdbd_conf->purge_txn =
+			     slurmdb_parse_purge(temp_str)) == NO_VAL) {
+				fatal("Bad value \"%s\" for PurgeTXNAfter",
+				      temp_str);
+			}
+			xfree(temp_str);
+		}
+		if (s_p_get_string(&temp_str, "PurgeUsageAfter", tbl)) {
+			/* slurmdb_parse_purge will set SLURMDB_PURGE_FLAGS */
+			if ((slurmdbd_conf->purge_usage =
+			     slurmdb_parse_purge(temp_str)) == NO_VAL) {
+				fatal("Bad value \"%s\" for PurgeUsageAfter",
+				      temp_str);
+			}
+			xfree(temp_str);
+		}
 		if (s_p_get_uint32(&slurmdbd_conf->purge_event,
 				   "PurgeEventMonths", tbl)) {
 			if (!slurmdbd_conf->purge_event)
@@ -375,6 +441,24 @@ extern int read_slurmdbd_conf(void)
 					|= SLURMDB_PURGE_MONTHS;
 		}
 
+		if (s_p_get_uint32(&slurmdbd_conf->purge_txn,
+				   "PurgeTXNMonths", tbl)) {
+			if (!slurmdbd_conf->purge_txn)
+				slurmdbd_conf->purge_txn = NO_VAL;
+			else
+				slurmdbd_conf->purge_txn
+					|= SLURMDB_PURGE_MONTHS;
+		}
+
+		if (s_p_get_uint32(&slurmdbd_conf->purge_usage,
+				   "PurgeUsageMonths", tbl)) {
+			if (!slurmdbd_conf->purge_usage)
+				slurmdbd_conf->purge_usage = NO_VAL;
+			else
+				slurmdbd_conf->purge_usage
+					|= SLURMDB_PURGE_MONTHS;
+		}
+
 		s_p_get_string(&slurmdbd_conf->slurm_user_name,
 			       "SlurmUser", tbl);
 
@@ -402,6 +486,10 @@ extern int read_slurmdbd_conf(void)
 		s_p_get_string(&slurmdbd_conf->storage_user,
 			       "StorageUser", tbl);
 
+		if (!s_p_get_uint16(&slurmdbd_conf->tcp_timeout,
+				    "TCPTimeout", tbl))
+			slurmdbd_conf->tcp_timeout = DEFAULT_TCP_TIMEOUT;
+
 		if (!s_p_get_boolean((bool *)&slurmdbd_conf->track_wckey,
 				     "TrackWCKey", tbl))
 			slurmdbd_conf->track_wckey = false;
@@ -410,16 +498,20 @@ extern int read_slurmdbd_conf(void)
 				     "TrackSlurmctldDown", tbl))
 			slurmdbd_conf->track_ctld = false;
 
-		if (a_events)
+		if (a_events && slurmdbd_conf->purge_event)
 			slurmdbd_conf->purge_event |= SLURMDB_PURGE_ARCHIVE;
-		if (a_jobs)
+		if (a_jobs && slurmdbd_conf->purge_job)
 			slurmdbd_conf->purge_job |= SLURMDB_PURGE_ARCHIVE;
-		if (a_resv)
+		if (a_resv && slurmdbd_conf->purge_resv)
 			slurmdbd_conf->purge_resv |= SLURMDB_PURGE_ARCHIVE;
-		if (a_steps)
+		if (a_steps && slurmdbd_conf->purge_step)
 			slurmdbd_conf->purge_step |= SLURMDB_PURGE_ARCHIVE;
-		if (a_suspend)
+		if (a_suspend && slurmdbd_conf->purge_suspend)
 			slurmdbd_conf->purge_suspend |= SLURMDB_PURGE_ARCHIVE;
+		if (a_txn && slurmdbd_conf->purge_txn)
+			slurmdbd_conf->purge_txn |= SLURMDB_PURGE_ARCHIVE;
+		if (a_usage && slurmdbd_conf->purge_usage)
+			slurmdbd_conf->purge_usage |= SLURMDB_PURGE_ARCHIVE;
 
 		s_p_hashtbl_destroy(tbl);
 	}
@@ -455,8 +547,8 @@ extern int read_slurmdbd_conf(void)
 
 	if (slurmdbd_conf->storage_type == NULL)
 		fatal("StorageType must be specified");
-	if (!strcmp(slurmdbd_conf->storage_type,
-		    "accounting_storage/slurmdbd")) {
+	if (!xstrcmp(slurmdbd_conf->storage_type,
+		     "accounting_storage/slurmdbd")) {
 		fatal("StorageType=%s is invalid in slurmdbd.conf",
 		      slurmdbd_conf->storage_type);
 	}
@@ -467,8 +559,8 @@ extern int read_slurmdbd_conf(void)
 	if (!slurmdbd_conf->storage_user)
 		slurmdbd_conf->storage_user = xstrdup(getlogin());
 
-	if (!strcmp(slurmdbd_conf->storage_type,
-		    "accounting_storage/mysql")) {
+	if (!xstrcmp(slurmdbd_conf->storage_type,
+		     "accounting_storage/mysql")) {
 		if (!slurmdbd_conf->storage_port)
 			slurmdbd_conf->storage_port = DEFAULT_MYSQL_PORT;
 		if (!slurmdbd_conf->storage_loc)
@@ -513,10 +605,16 @@ extern int read_slurmdbd_conf(void)
 		slurmdbd_conf->purge_event = NO_VAL;
 	if (!slurmdbd_conf->purge_job)
 		slurmdbd_conf->purge_job = NO_VAL;
+	if (!slurmdbd_conf->purge_resv)
+		slurmdbd_conf->purge_resv = NO_VAL;
 	if (!slurmdbd_conf->purge_step)
 		slurmdbd_conf->purge_step = NO_VAL;
 	if (!slurmdbd_conf->purge_suspend)
 		slurmdbd_conf->purge_suspend = NO_VAL;
+	if (!slurmdbd_conf->purge_txn)
+		slurmdbd_conf->purge_txn = NO_VAL;
+	if (!slurmdbd_conf->purge_usage)
+		slurmdbd_conf->purge_usage = NO_VAL;
 
 	slurm_mutex_unlock(&conf_mutex);
 	return SLURM_SUCCESS;
@@ -526,16 +624,22 @@ extern int read_slurmdbd_conf(void)
 extern void log_config(void)
 {
 	char tmp_str[128];
+	char *tmp_ptr = NULL;
 
 	debug2("ArchiveDir        = %s", slurmdbd_conf->archive_dir);
 	debug2("ArchiveScript     = %s", slurmdbd_conf->archive_script);
 	debug2("AuthInfo          = %s", slurmdbd_conf->auth_info);
 	debug2("AuthType          = %s", slurmdbd_conf->auth_type);
+	debug2("CommitDelay       = %u", slurmdbd_conf->commit_delay);
 	debug2("DbdAddr           = %s", slurmdbd_conf->dbd_addr);
 	debug2("DbdBackupHost     = %s", slurmdbd_conf->dbd_backup);
 	debug2("DbdHost           = %s", slurmdbd_conf->dbd_host);
 	debug2("DbdPort           = %u", slurmdbd_conf->dbd_port);
+	tmp_ptr = debug_flags2str(slurmdbd_conf->debug_flags);
+	debug2("DebugFlags        = %s", tmp_ptr);
+	xfree(tmp_ptr);
 	debug2("DebugLevel        = %u", slurmdbd_conf->debug_level);
+	debug2("DebugLevelSyslog  = %u", slurmdbd_conf->syslog_debug);
 	debug2("DefaultQOS        = %s", slurmdbd_conf->default_qos);
 
 	debug2("LogFile           = %s", slurmdbd_conf->log_file);
@@ -545,43 +649,35 @@ extern void log_config(void)
 
 	private_data_string(slurmdbd_conf->private_data,
 			    tmp_str, sizeof(tmp_str));
-
 	debug2("PrivateData       = %s", tmp_str);
 
-	if (slurmdbd_conf->purge_event != NO_VAL)
-		slurmdb_purge_string(slurmdbd_conf->purge_event,
-				     tmp_str, sizeof(tmp_str), 1);
-	else
-		sprintf(tmp_str, "NONE");
+	slurmdb_purge_string(slurmdbd_conf->purge_event,
+			     tmp_str, sizeof(tmp_str), 1);
 	debug2("PurgeEventAfter   = %s", tmp_str);
 
-	if (slurmdbd_conf->purge_job != NO_VAL)
-		slurmdb_purge_string(slurmdbd_conf->purge_job,
-				     tmp_str, sizeof(tmp_str), 1);
-	else
-		sprintf(tmp_str, "NONE");
+	slurmdb_purge_string(slurmdbd_conf->purge_job,
+			     tmp_str, sizeof(tmp_str), 1);
 	debug2("PurgeJobAfter     = %s", tmp_str);
 
-	if (slurmdbd_conf->purge_resv != NO_VAL)
-		slurmdb_purge_string(slurmdbd_conf->purge_resv,
-				     tmp_str, sizeof(tmp_str), 1);
-	else
-		sprintf(tmp_str, "NONE");
+	slurmdb_purge_string(slurmdbd_conf->purge_resv,
+			     tmp_str, sizeof(tmp_str), 1);
 	debug2("PurgeResvAfter    = %s", tmp_str);
 
-	if (slurmdbd_conf->purge_step != NO_VAL)
-		slurmdb_purge_string(slurmdbd_conf->purge_step,
-				     tmp_str, sizeof(tmp_str), 1);
-	else
-		sprintf(tmp_str, "NONE");
+	slurmdb_purge_string(slurmdbd_conf->purge_step,
+			     tmp_str, sizeof(tmp_str), 1);
 	debug2("PurgeStepAfter    = %s", tmp_str);
 
-	if (slurmdbd_conf->purge_suspend != NO_VAL)
-		slurmdb_purge_string(slurmdbd_conf->purge_suspend,
-				     tmp_str, sizeof(tmp_str), 1);
-	else
-		sprintf(tmp_str, "NONE");
+	slurmdb_purge_string(slurmdbd_conf->purge_suspend,
+			     tmp_str, sizeof(tmp_str), 1);
 	debug2("PurgeSuspendAfter = %s", tmp_str);
+
+	slurmdb_purge_string(slurmdbd_conf->purge_txn,
+			     tmp_str, sizeof(tmp_str), 1);
+	debug2("PurgeTXNAfter = %s", tmp_str);
+
+	slurmdb_purge_string(slurmdbd_conf->purge_usage,
+			     tmp_str, sizeof(tmp_str), 1);
+	debug2("PurgeUsageAfter = %s", tmp_str);
 
 	debug2("SlurmUser         = %s(%u)",
 	       slurmdbd_conf->slurm_user_name, slurmdbd_conf->slurm_user_id);
@@ -589,10 +685,12 @@ extern void log_config(void)
 	debug2("StorageBackupHost = %s", slurmdbd_conf->storage_backup_host);
 	debug2("StorageHost       = %s", slurmdbd_conf->storage_host);
 	debug2("StorageLoc        = %s", slurmdbd_conf->storage_loc);
-	debug2("StoragePass       = %s", slurmdbd_conf->storage_pass);
+	/* debug2("StoragePass       = %s", slurmdbd_conf->storage_pass); */
 	debug2("StoragePort       = %u", slurmdbd_conf->storage_port);
 	debug2("StorageType       = %s", slurmdbd_conf->storage_type);
 	debug2("StorageUser       = %s", slurmdbd_conf->storage_user);
+
+	debug2("TCPTimeout        = %u", slurmdbd_conf->tcp_timeout);
 
 	debug2("TrackWCKey        = %u", slurmdbd_conf->track_wckey);
 	debug2("TrackSlurmctldDown= %u", slurmdbd_conf->track_ctld);
@@ -634,16 +732,23 @@ extern List dump_config(void)
 
 	key_pair = xmalloc(sizeof(config_key_pair_t));
 	key_pair->name = xstrdup("ArchiveEvents");
-	key_pair->value = xstrdup_printf(
-		"%u",
-		SLURMDB_PURGE_ARCHIVE_SET(slurmdbd_conf->purge_event) ? 1 : 0);
+	key_pair->value = xstrdup(
+		SLURMDB_PURGE_ARCHIVE_SET(
+			slurmdbd_conf->purge_event) ? "Yes" : "No");
 	list_append(my_list, key_pair);
 
 	key_pair = xmalloc(sizeof(config_key_pair_t));
 	key_pair->name = xstrdup("ArchiveJobs");
-	key_pair->value = xstrdup_printf(
-		"%u",
-		SLURMDB_PURGE_ARCHIVE_SET(slurmdbd_conf->purge_job) ? 1 : 0);
+	key_pair->value = xstrdup(
+		SLURMDB_PURGE_ARCHIVE_SET(
+			slurmdbd_conf->purge_job) ? "Yes" : "No");
+	list_append(my_list, key_pair);
+
+	key_pair = xmalloc(sizeof(config_key_pair_t));
+	key_pair->name = xstrdup("ArchiveResvs");
+	key_pair->value = xstrdup(
+		SLURMDB_PURGE_ARCHIVE_SET(
+			slurmdbd_conf->purge_resv) ? "Yes" : "No");
 	list_append(my_list, key_pair);
 
 	key_pair = xmalloc(sizeof(config_key_pair_t));
@@ -653,16 +758,30 @@ extern List dump_config(void)
 
 	key_pair = xmalloc(sizeof(config_key_pair_t));
 	key_pair->name = xstrdup("ArchiveSteps");
-	key_pair->value = xstrdup_printf(
-		"%u",
-		SLURMDB_PURGE_ARCHIVE_SET(slurmdbd_conf->purge_step) ? 1 : 0);
+	key_pair->value = xstrdup(
+		SLURMDB_PURGE_ARCHIVE_SET(
+			slurmdbd_conf->purge_step) ? "Yes" : "No");
 	list_append(my_list, key_pair);
 
 	key_pair = xmalloc(sizeof(config_key_pair_t));
-	key_pair->name = xstrdup("ArchiveSupend");
-	key_pair->value = xstrdup_printf(
-		"%u", SLURMDB_PURGE_ARCHIVE_SET(
-			slurmdbd_conf->purge_suspend) ? 1 : 0);
+	key_pair->name = xstrdup("ArchiveSuspend");
+	key_pair->value = xstrdup(
+		SLURMDB_PURGE_ARCHIVE_SET(
+			slurmdbd_conf->purge_suspend) ? "Yes" : "No");
+	list_append(my_list, key_pair);
+
+	key_pair = xmalloc(sizeof(config_key_pair_t));
+	key_pair->name = xstrdup("ArchiveTXN");
+	key_pair->value = xstrdup(
+		SLURMDB_PURGE_ARCHIVE_SET(
+			slurmdbd_conf->purge_txn) ? "Yes" : "No");
+	list_append(my_list, key_pair);
+
+	key_pair = xmalloc(sizeof(config_key_pair_t));
+	key_pair->name = xstrdup("ArchiveUsage");
+	key_pair->value = xstrdup(
+		SLURMDB_PURGE_ARCHIVE_SET(
+			slurmdbd_conf->purge_usage) ? "Yes" : "No");
 	list_append(my_list, key_pair);
 
 	key_pair = xmalloc(sizeof(config_key_pair_t));
@@ -679,6 +798,11 @@ extern List dump_config(void)
 	key_pair->name = xstrdup("BOOT_TIME");
 	key_pair->value = xmalloc(128);
 	slurm_make_time_str ((time_t *)&boot_time, key_pair->value, 128);
+	list_append(my_list, key_pair);
+
+	key_pair = xmalloc(sizeof(config_key_pair_t));
+	key_pair->name = xstrdup("CommitDelay");
+	key_pair->value = xstrdup(slurmdbd_conf->commit_delay ? "Yes" : "No");
 	list_append(my_list, key_pair);
 
 	key_pair = xmalloc(sizeof(config_key_pair_t));
@@ -702,9 +826,18 @@ extern List dump_config(void)
 	list_append(my_list, key_pair);
 
 	key_pair = xmalloc(sizeof(config_key_pair_t));
+	key_pair->name = xstrdup("DebugFlags");
+	key_pair->value = debug_flags2str(slurmdbd_conf->debug_flags);
+	list_append(my_list, key_pair);
+
+	key_pair = xmalloc(sizeof(config_key_pair_t));
 	key_pair->name = xstrdup("DebugLevel");
-	key_pair->value = xstrdup_printf("%s",
-		 log_num2string(slurmdbd_conf->debug_level));
+	key_pair->value = xstrdup(log_num2string(slurmdbd_conf->debug_level));
+	list_append(my_list, key_pair);
+
+	key_pair = xmalloc(sizeof(config_key_pair_t));
+	key_pair->name = xstrdup("DebugLevelSyslog");
+	key_pair->value = xstrdup(log_num2string(slurmdbd_conf->syslog_debug));
 	list_append(my_list, key_pair);
 
 	key_pair = xmalloc(sizeof(config_key_pair_t));
@@ -790,6 +923,26 @@ extern List dump_config(void)
 	list_append(my_list, key_pair);
 
 	key_pair = xmalloc(sizeof(config_key_pair_t));
+	key_pair->name = xstrdup("PurgeTXNAfter");
+	if (slurmdbd_conf->purge_txn != NO_VAL) {
+		key_pair->value = xmalloc(32);
+		slurmdb_purge_string(slurmdbd_conf->purge_txn,
+				     key_pair->value, 32, 1);
+	} else
+		key_pair->value = xstrdup("NONE");
+	list_append(my_list, key_pair);
+
+	key_pair = xmalloc(sizeof(config_key_pair_t));
+	key_pair->name = xstrdup("PurgeUsageAfter");
+	if (slurmdbd_conf->purge_usage != NO_VAL) {
+		key_pair->value = xmalloc(32);
+		slurmdb_purge_string(slurmdbd_conf->purge_usage,
+				     key_pair->value, 32, 1);
+	} else
+		key_pair->value = xstrdup("NONE");
+	list_append(my_list, key_pair);
+
+	key_pair = xmalloc(sizeof(config_key_pair_t));
 	key_pair->name = xstrdup("SLURMDBD_CONF");
 	key_pair->value = get_extra_conf_path("slurmdbd.conf");
 	list_append(my_list, key_pair);
@@ -839,13 +992,18 @@ extern List dump_config(void)
 	list_append(my_list, key_pair);
 
 	key_pair = xmalloc(sizeof(config_key_pair_t));
+	key_pair->name = xstrdup("TCPTimeout");
+	key_pair->value = xstrdup_printf("%u secs", slurmdbd_conf->tcp_timeout);
+	list_append(my_list, key_pair);
+
+	key_pair = xmalloc(sizeof(config_key_pair_t));
 	key_pair->name = xstrdup("TrackWCKey");
 	key_pair->value = xstrdup(slurmdbd_conf->track_wckey ? "Yes" : "No");
 	list_append(my_list, key_pair);
 
 	key_pair = xmalloc(sizeof(config_key_pair_t));
 	key_pair->name = xstrdup("TrackSlurmctldDown");
-	key_pair->value = xstrdup_printf("%u", slurmdbd_conf->track_ctld);
+	key_pair->value = xstrdup(slurmdbd_conf->track_ctld ? "Yes" : "No");
 	list_append(my_list, key_pair);
 
 	return my_list;

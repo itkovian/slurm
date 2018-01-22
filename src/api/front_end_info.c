@@ -8,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -36,14 +36,6 @@
  *  with SLURM; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
-
-#ifdef HAVE_CONFIG_H
-#  include "config.h"
-#endif
-
-#ifdef HAVE_SYS_SYSLOG_H
-#  include <sys/syslog.h>
-#endif
 
 #include <arpa/inet.h>
 #include <errno.h>
@@ -120,7 +112,7 @@ char *
 slurm_sprint_front_end_table (front_end_info_t * front_end_ptr,
 			      int one_liner)
 {
-	uint16_t my_state = front_end_ptr->node_state;
+	uint32_t my_state = front_end_ptr->node_state;
 	char *drain_str = "";
 	char tmp_line[512], time_str[32];
 	char *out = NULL;
@@ -228,7 +220,8 @@ slurm_load_front_end (time_t update_time, front_end_info_msg_t **resp)
 	req_msg.msg_type = REQUEST_FRONT_END_INFO;
 	req_msg.data     = &req;
 
-	if (slurm_send_recv_controller_msg(&req_msg, &resp_msg) < 0)
+	if (slurm_send_recv_controller_msg(&req_msg, &resp_msg,
+					   working_cluster_rec) < 0)
 		return SLURM_ERROR;
 
 	switch (resp_msg.msg_type) {

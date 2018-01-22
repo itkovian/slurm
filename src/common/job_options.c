@@ -1,6 +1,5 @@
 /*****************************************************************************\
  *  src/common/job_options.c  - Extra job options
- *  $Id$
  *****************************************************************************
  *  Copyright (C) 2002 The Regents of the University of California.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -8,7 +7,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -37,9 +36,7 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#ifdef HAVE_CONFIG_H
-#  include "config.h"
-#endif
+#include "config.h"
 
 #include "slurm/slurm.h"
 #include "src/common/xassert.h"
@@ -132,8 +129,7 @@ void job_options_destroy (job_options_t opts)
 	xassert (opts != NULL);
 	xassert (opts->magic == JOB_OPTIONS_MAGIC);
 
-	if (opts->options)
-		list_destroy (opts->options);
+	FREE_NULL_LIST (opts->options);
 
 	xassert (opts->magic = ~JOB_OPTIONS_MAGIC);
 	xfree (opts);
@@ -199,7 +195,7 @@ int job_options_unpack (job_options_t opts, Buf buf)
 
 	safe_unpackstr_xmalloc (&tag, &len, buf);
 
-	if (strncmp (tag, JOB_OPTIONS_PACK_TAG, len) != 0) {
+	if (xstrncmp (tag, JOB_OPTIONS_PACK_TAG, len) != 0) {
 		xfree(tag);
 		return (-1);
 	}

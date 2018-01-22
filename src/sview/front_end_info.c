@@ -9,7 +9,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -24,7 +24,7 @@
  *
  *  You should have received a copy of the GNU General Public License along
  *  with SLURM; if not, write to the Free Software Foundation, Inc.,
- *  59 Temple Place, Suite 330, Boston, MA  02111-1307  USA.
+ *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
 #include "src/common/uid.h"
@@ -88,48 +88,48 @@ enum {
 static char *_initial_page_opts = "Name,State";
 
 static display_data_t display_data_front_end[] = {
-	{G_TYPE_INT, SORTID_POS, NULL, FALSE, EDIT_NONE,
+	{G_TYPE_INT, SORTID_POS, NULL, false, EDIT_NONE,
 	 refresh_front_end, create_model_front_end, admin_edit_front_end},
-	{G_TYPE_STRING, SORTID_NAME, "Name", FALSE, EDIT_NONE,
+	{G_TYPE_STRING, SORTID_NAME, "Name", false, EDIT_NONE,
 	 refresh_front_end, create_model_front_end, admin_edit_front_end},
-	{G_TYPE_STRING, SORTID_COLOR,  NULL, TRUE, EDIT_COLOR,
+	{G_TYPE_STRING, SORTID_COLOR,  NULL, true, EDIT_COLOR,
 	 refresh_front_end, create_model_front_end, admin_edit_front_end},
-	{G_TYPE_STRING, SORTID_STATE, "State", FALSE, EDIT_MODEL,
+	{G_TYPE_STRING, SORTID_STATE, "State", false, EDIT_MODEL,
 	 refresh_front_end, create_model_front_end, admin_edit_front_end},
-	{G_TYPE_STRING, SORTID_BOOT_TIME, "BootTime", FALSE, EDIT_NONE,
+	{G_TYPE_STRING, SORTID_BOOT_TIME, "BootTime", false, EDIT_NONE,
 	 refresh_front_end, create_model_front_end, admin_edit_front_end},
 	{G_TYPE_STRING, SORTID_SLURMD_START_TIME, "SlurmdStartTime",
-	 FALSE, EDIT_NONE,
+	 false, EDIT_NONE,
 	 refresh_front_end, create_model_front_end, admin_edit_front_end},
-	{G_TYPE_STRING, SORTID_REASON, "Reason", FALSE, EDIT_NONE,
+	{G_TYPE_STRING, SORTID_REASON, "Reason", false, EDIT_NONE,
 	 refresh_front_end, create_model_front_end, admin_edit_front_end},
-	{G_TYPE_STRING, SORTID_ALLOW_GROUPS, "Allow Groups", FALSE, EDIT_NONE,
+	{G_TYPE_STRING, SORTID_ALLOW_GROUPS, "Allow Groups", false, EDIT_NONE,
 	 refresh_front_end, create_model_front_end, admin_edit_front_end},
-	{G_TYPE_STRING, SORTID_ALLOW_USERS, "Allow Users", FALSE, EDIT_NONE,
+	{G_TYPE_STRING, SORTID_ALLOW_USERS, "Allow Users", false, EDIT_NONE,
 	 refresh_front_end, create_model_front_end, admin_edit_front_end},
-	{G_TYPE_STRING, SORTID_DENY_GROUPS, "Deny Groups", FALSE, EDIT_NONE,
+	{G_TYPE_STRING, SORTID_DENY_GROUPS, "Deny Groups", false, EDIT_NONE,
 	 refresh_front_end, create_model_front_end, admin_edit_front_end},
-	{G_TYPE_STRING, SORTID_DENY_USERS, "Deny Users", FALSE, EDIT_NONE,
+	{G_TYPE_STRING, SORTID_DENY_USERS, "Deny Users", false, EDIT_NONE,
 	 refresh_front_end, create_model_front_end, admin_edit_front_end},
-	{G_TYPE_STRING, SORTID_VERSION, "Version", FALSE, EDIT_NONE,
+	{G_TYPE_STRING, SORTID_VERSION, "Version", false, EDIT_NONE,
 	 refresh_front_end, create_model_front_end, admin_edit_front_end},
-	{G_TYPE_INT, SORTID_COLOR_INX,  NULL, FALSE, EDIT_NONE,
+	{G_TYPE_INT, SORTID_COLOR_INX,  NULL, false, EDIT_NONE,
 	 refresh_front_end, create_model_front_end, admin_edit_front_end},
-	{G_TYPE_POINTER, SORTID_NODE_INX,  NULL, FALSE, EDIT_NONE,
+	{G_TYPE_POINTER, SORTID_NODE_INX,  NULL, false, EDIT_NONE,
 	 refresh_front_end, create_model_front_end, admin_edit_front_end},
-	{G_TYPE_INT,    SORTID_UPDATED,    NULL, FALSE, EDIT_NONE,
+	{G_TYPE_INT,    SORTID_UPDATED,    NULL, false, EDIT_NONE,
 	 refresh_resv, create_model_resv, admin_edit_resv},
-	{G_TYPE_NONE, -1, NULL, FALSE, EDIT_NONE}
+	{G_TYPE_NONE, -1, NULL, false, EDIT_NONE}
 };
 
 static display_data_t options_data_front_end[] = {
-	{G_TYPE_INT, SORTID_POS, NULL, FALSE, EDIT_NONE},
-	{G_TYPE_STRING, INFO_PAGE, "Full Info", TRUE, FRONT_END_PAGE},
-	{G_TYPE_STRING, FRONT_END_PAGE, "Drain Front End Node", TRUE,
+	{G_TYPE_INT, SORTID_POS, NULL, false, EDIT_NONE},
+	{G_TYPE_STRING, INFO_PAGE, "Full Info", true, FRONT_END_PAGE},
+	{G_TYPE_STRING, FRONT_END_PAGE, "Drain Front End Node", true,
 	 ADMIN_PAGE},
-	{G_TYPE_STRING, FRONT_END_PAGE, "Resume Front End Node", TRUE,
+	{G_TYPE_STRING, FRONT_END_PAGE, "Resume Front End Node", true,
 	 ADMIN_PAGE},
-	{G_TYPE_NONE, -1, NULL, FALSE, EDIT_NONE}
+	{G_TYPE_NONE, -1, NULL, false, EDIT_NONE}
 };
 
 
@@ -294,8 +294,8 @@ static void _update_info_front_end(List info_list, GtkTreeView *tree_view)
 			gtk_tree_model_get(model,
 					   &sview_front_end_info->iter_ptr,
 					   SORTID_NAME, &name, -1);
-			if (strcmp(name,
-				   sview_front_end_info->front_end_name)) {
+			if (xstrcmp(name,
+				    sview_front_end_info->front_end_name)) {
 				/* Bad pointer */
 				sview_front_end_info->iter_set = false;
 				//g_print("bad front_end iter pointer\n");
@@ -337,10 +337,6 @@ static List _create_front_end_info_list(
 		last_list = info_list;
 
 	info_list = list_create(_front_end_info_list_del);
-	if (!info_list) {
-		g_print("malloc error\n");
-		return NULL;
-	}
 
 	if (last_list)
 		last_list_itr = list_iterator_create(last_list);
@@ -352,9 +348,9 @@ static List _create_front_end_info_list(
 		if (last_list_itr) {
 			while ((sview_front_end_info_ptr =
 				list_next(last_list_itr))) {
-				if (!strcmp(sview_front_end_info_ptr->
-					    front_end_name,
-					    front_end_ptr->name)) {
+				if (!xstrcmp(sview_front_end_info_ptr->
+					     front_end_name,
+					     front_end_ptr->name)) {
 					list_remove(last_list_itr);
 					_front_end_info_free(
 						sview_front_end_info_ptr);
@@ -417,7 +413,7 @@ static List _create_front_end_info_list(
 
 	if (last_list) {
 		list_iterator_destroy(last_list_itr);
-		list_destroy(last_list);
+		FREE_NULL_LIST(last_list);
 	}
 
 update_color:
@@ -454,7 +450,7 @@ need_refresh:
 	itr = list_iterator_create(info_list);
 	while ((sview_fe_info = (sview_front_end_info_t*) list_next(itr))) {
 		front_end_ptr = sview_fe_info->front_end_ptr;
-		if (strcmp(front_end_ptr->name, name) == 0) {
+		if (xstrcmp(front_end_ptr->name, name) == 0) {
 			j = 0;
 			while (sview_fe_info->node_inx[j] >= 0) {
 				change_grid_color(popup_win->grid_button_list,
@@ -596,7 +592,7 @@ extern void admin_edit_front_end(GtkCellRendererText *cell,
 	char *node_list = NULL;
 	int column = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(cell),
 						       "column"));
-	if (!new_text || !strcmp(new_text, ""))
+	if (!new_text || !xstrcmp(new_text, ""))
 		goto no_input;
 
 	gtk_tree_model_get_iter(GTK_TREE_MODEL(treestore), &iter, path);
@@ -629,12 +625,12 @@ extern void get_info_front_end(GtkTable *table, display_data_t *display_data)
 	int changed = 1, j;
 	ListIterator itr = NULL;
 	GtkTreePath *path = NULL;
-	static bool set_opts = FALSE;
+	static bool set_opts = false;
 
 	if (!set_opts)
 		set_page_opts(FRONT_END_PAGE, display_data_front_end,
 			      SORTID_CNT, _initial_page_opts);
-	set_opts = TRUE;
+	set_opts = true;
 
 	/* reset */
 	if (!table && !display_data) {
@@ -651,6 +647,17 @@ extern void get_info_front_end(GtkTable *table, display_data_t *display_data)
 		display_data_front_end->set_menu = local_display_data->set_menu;
 		goto reset_curs;
 	}
+	if (cluster_flags & CLUSTER_FLAG_FED) {
+		view = ERROR_VIEW;
+		if (display_widget)
+			gtk_widget_destroy(display_widget);
+		label = gtk_label_new("Not available in a federated view");
+		gtk_table_attach_defaults(GTK_TABLE(table), label, 0, 1, 0, 1);
+		gtk_widget_show(label);
+		display_widget = gtk_widget_ref(label);
+		goto end_it;
+	}
+
 	if (display_widget && toggled) {
 		gtk_widget_destroy(display_widget);
 		display_widget = NULL;
@@ -737,8 +744,8 @@ display_it:
 	view = INFO_VIEW;
 	_update_info_front_end(info_list, GTK_TREE_VIEW(display_widget));
 end_it:
-	toggled = FALSE;
-	force_refresh = FALSE;
+	toggled = false;
+	force_refresh = false;
 reset_curs:
 	if (main_window && main_window->window)
 		gdk_window_set_cursor(main_window->window, NULL);
@@ -846,8 +853,8 @@ display_it:
 		case NODE_PAGE:
 			break;
 		case JOB_PAGE:
-			if (strcmp(front_end_ptr->name,
-				   search_info->gchar_data))
+			if (xstrcmp(front_end_ptr->name,
+				    search_info->gchar_data))
 				continue;
 			break;
 		case RESV_PAGE:
@@ -856,8 +863,8 @@ display_it:
 				if (!search_info->gchar_data)
 					continue;
 
-				if (strcmp(front_end_ptr->name,
-					   search_info->gchar_data))
+				if (xstrcmp(front_end_ptr->name,
+					    search_info->gchar_data))
 					continue;
 				break;
 			default:
@@ -875,7 +882,7 @@ display_it:
 
 	_update_info_front_end(send_resv_list,
 			  GTK_TREE_VIEW(spec_info->display_widget));
-	list_destroy(send_resv_list);
+	FREE_NULL_LIST(send_resv_list);
 end_it:
 	popup_win->toggled = 0;
 	popup_win->force_refresh = 0;
@@ -929,7 +936,7 @@ extern void set_menus_front_end(void *arg, void *arg2, GtkTreePath *path,
 extern void popup_all_front_end(GtkTreeModel *model, GtkTreeIter *iter, int id)
 {
 	char *name = NULL;
-	char title[100];
+	char title[100] = {0};
 	ListIterator itr = NULL;
 	popup_info_t *popup_win = NULL;
 	GError *error = NULL;
@@ -947,7 +954,7 @@ extern void popup_all_front_end(GtkTreeModel *model, GtkTreeIter *iter, int id)
 	itr = list_iterator_create(popup_list);
 	while ((popup_win = list_next(itr))) {
 		if (popup_win->spec_info)
-			if (!strcmp(popup_win->spec_info->title, title)) {
+			if (!xstrcmp(popup_win->spec_info->title, title)) {
 				break;
 			}
 	}
@@ -981,7 +988,7 @@ extern void popup_all_front_end(GtkTreeModel *model, GtkTreeIter *iter, int id)
 	default:
 		g_print("resv got unknown type %d\n", id);
 	}
-	if (!sview_thread_new((gpointer)popup_thr, popup_win, FALSE, &error)) {
+	if (!sview_thread_new((gpointer)popup_thr, popup_win, false, &error)) {
 		g_printerr ("Failed to create resv popup thread: %s\n",
 			    error->message);
 		return;
@@ -1031,7 +1038,7 @@ extern void select_admin_front_end(GtkTreeModel *model, GtkTreeIter *iter,
 static void _admin_front_end(GtkTreeModel *model, GtkTreeIter *iter, char *type,
 			     char *node_list)
 {
-	uint16_t state = (uint16_t) NO_VAL;
+	uint16_t state = NO_VAL16;
 	update_front_end_msg_t front_end_update_msg;
 	char *new_type = NULL, *reason = NULL;
 	char tmp_char[100];
@@ -1039,11 +1046,22 @@ static void _admin_front_end(GtkTreeModel *model, GtkTreeIter *iter, char *type,
 	int rc;
 	GtkWidget *label = NULL;
 	GtkWidget *entry = NULL;
-	GtkWidget *popup = gtk_dialog_new_with_buttons(
+	GtkWidget *popup = NULL;
+
+	if (cluster_flags & CLUSTER_FLAG_FED) {
+		display_fed_disabled_popup(type);
+		global_entry_changed = 0;
+		return;
+	}
+
+	popup = gtk_dialog_new_with_buttons(
 		type,
 		GTK_WINDOW(main_window),
 		GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
 		NULL);
+
+	gtk_window_set_type_hint(GTK_WINDOW(popup),
+				 GDK_WINDOW_TYPE_HINT_NORMAL);
 
 	gtk_window_set_transient_for(GTK_WINDOW(popup), NULL);
 
@@ -1053,12 +1071,12 @@ static void _admin_front_end(GtkTreeModel *model, GtkTreeIter *iter, char *type,
 	gtk_dialog_add_button(GTK_DIALOG(popup),
 			      GTK_STOCK_CANCEL, GTK_RESPONSE_CANCEL);
 
-	if (!strncasecmp("Drain", type, 5)) {
+	if (!xstrncasecmp("Drain", type, 5)) {
 		new_type = "DRAIN";
 		reason = "\n\nPlease enter reason.";
 		state = NODE_STATE_DRAIN;
 		entry = create_entry();
-	} else if (!strncasecmp("Resume", type, 6)) {
+	} else if (!xstrncasecmp("Resume", type, 6)) {
 		new_type = "RESUME";
 		reason = "";
 		state = NODE_RESUME;
@@ -1069,10 +1087,10 @@ static void _admin_front_end(GtkTreeModel *model, GtkTreeIter *iter, char *type,
 	label = gtk_label_new(tmp_char);
 
 	gtk_box_pack_start(GTK_BOX(GTK_DIALOG(popup)->vbox),
-			   label, FALSE, FALSE, 0);
+			   label, false, false, 0);
 	if (entry)
 		gtk_box_pack_start(GTK_BOX(GTK_DIALOG(popup)->vbox),
-				   entry, TRUE, TRUE, 0);
+				   entry, true, true, 0);
 	gtk_widget_show_all(popup);
 	rc = gtk_dialog_run (GTK_DIALOG(popup));
 

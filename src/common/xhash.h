@@ -2,10 +2,9 @@
  *  xtree.h - functions used for hash table manament
  *****************************************************************************
  *  Copyright (C) 2012 CEA/DAM/DIF
- *  Copyright (C) 2013 SchedMD LLC. Written by David Bigagli
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -40,8 +39,9 @@
 #include <stdint.h>
 #include <pthread.h>
 
+#define xhash_free(__p) xhash_free_ptr(&(__p));
+
 /** Opaque definition of the hash table */
-struct xhash_st;
 typedef struct xhash_st xhash_t;
 
 /**
@@ -68,21 +68,27 @@ typedef const char* (*xhash_idfunc_t)(void* item);
 /* Currently not implementable with uthash */
 typedef unsigned (*xhash_hashfunc_t)(unsigned hashes_count, const char* id);
 
-/** @returns an item from a key searching through the hash table. NULL if not
- * found.
- */
-void* xhash_get(xhash_t* table, const char* key);
+/** This type of function is used to free data inserted into xhash table */
+typedef void (*xhash_freefunc_t)(void* item);
 
 /** Initialize the hash table.
  *
  * @param idfunc is used to calculate a string unique identifier from a user
  *               item.
+ * @param freefunc is used to free data insterted to the xhash table, use NULL
+ *		   to bypass it.
  *
  * @returns the newly allocated hash table. Must be freed with xhash_free.
  */
 xhash_t* xhash_init(xhash_idfunc_t idfunc,
+		    xhash_freefunc_t freefunc,
 		    xhash_hashfunc_t hashfunc, /* Currently: should be NULL */
 		    uint32_t table_size);      /* Currently: unused         */
+
+/** @returns an item from a key searching through the hash table. NULL if not
+ * found.
+ */
+void* xhash_get(xhash_t* table, const char* key);
 
 /** Add an item to the hash table.
  * @param table is the hash table you want to add the item to.
@@ -93,9 +99,14 @@ xhash_t* xhash_init(xhash_idfunc_t idfunc,
  */
 void* xhash_add(xhash_t* table, void* item);
 
-/** Remove an item associated with key from the hash table item is if found,
- * but do not free the item memory itself (the user is responsible for
- * managing item's memory).
+/** Remove an item associated with a key from the hash table but does not free
+ * memory associated with the item even if freefunc was not null at init time.
+ * @returns the removed item value.
+ */
+void* xhash_pop(xhash_t* table, const char* key);
+
+/** Remove an item associated with a key from the hash table.
+ * If found and freefunc at init time was not null, free the item's memory.
  */
 void xhash_delete(xhash_t* table, const char* key);
 
@@ -107,64 +118,16 @@ void xhash_walk(xhash_t* table,
         void (*callback)(void* item, void* arg),
         void* arg);
 
-/** This function frees the hash table, but does not free its stored items,
- * you can use xhash_walk to perform a free operation on all items if wanted.
+/** This function frees the hash table items. It frees items too if the
+ * freefunc was not null in the xhash_init function.
+ */
+void xhash_clear(xhash_t* table);
+
+/** This function frees the hash table, clearing it beforehand.
  * @parameter table is the hash table to free. The table pointer is invalid
  *                  after this call.
  */
-void xhash_free(xhash_t* table);
-
-/* String hash table using the pjw hashing algorithm
- * and chaining conflict resolution.
- * Includes a double linked list implementation.
- */
-struct hash_entry {
-	struct hash_entry *forw;
-	struct hash_entry *back;
-	char *key;
-	void *data;
-};
-
-struct hash_tab {
-	uint32_t size;
-	uint32_t num_ents;
-	struct list_ **lists;
-};
-
-struct list_ {
-    struct list_ *forw;
-    struct list_ *back;
-    uint32_t num_ents;
-    char *name;
-};
-
-#define LIST_NUM_ENTS(L) ((L)->num_ents)
-
-/* Double link list implementation is
- * part of the hash library.
- */
-extern struct list_ *list_make_(const char *);
-extern int  list_insert_(struct list_ *,
-			 struct list_ *,
-			 struct list_ *);
-extern int list_push_(struct list_ *,
-		      struct list_ *);
-extern int list_enque_(struct list_ *,
-		       struct list_ *);
-extern struct list_ *list_rm_(struct list_ *,
-			      struct list_ *);
-struct list_ *list_pop_(struct list_ *);
-extern struct list_ *list_deque_(struct list_ *);
-extern void list_free_(struct list_ *, void (*f)(void *));
-
-/* Hash table interface.
- */
-extern struct hash_tab *hash_make(uint32_t);
-extern int hash_install(struct hash_tab *, const char *, void *);
-extern void *hash_lookup(struct hash_tab *, const char *);
-extern void *hash_remove(struct hash_tab *, const char *);
-extern void hash_free(struct hash_tab *, void (*f)(char *key, void *data));
-
+void xhash_free_ptr(xhash_t** table);
 
 #endif
 

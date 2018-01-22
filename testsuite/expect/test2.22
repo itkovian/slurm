@@ -1,4 +1,4 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Test of SLURM functionality
 #          Validate scontrol requeuehold requeues job to held pending state.
@@ -12,7 +12,7 @@
 # Written by Nathan Yee <nyee32@schedmd.com>
 #
 # This file is part of SLURM, a resource management program.
-# For details, see <http://slurm.schedmd.com/>.
+# For details, see <https://slurm.schedmd.com/>.
 # Please also read the included file: DISCLAIMER.
 #
 # SLURM is free software; you can redistribute it and/or modify it under
@@ -127,7 +127,7 @@ proc check_state { job } {
 	}
 }
 
-spawn $sbatch -N1 -t1 -o /dev/null -e /dev/null $script
+spawn $sbatch -N1 -t1 -o /dev/null -e /dev/null --requeue $script
 expect {
 	-re "Submitted batch job ($number)" {
 		set job_id $expect_out(1,string)

@@ -6,7 +6,7 @@
  *  All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -38,10 +38,6 @@
 #ifndef _TREE_H
 #define _TREE_H
 
-#if     HAVE_CONFIG_H
-#  include "config.h"
-#endif
-
 enum {
 	TREE_CMD_KVS_FENCE,
 	TREE_CMD_KVS_FENCE_RESP,
@@ -50,6 +46,8 @@ enum {
 	TREE_CMD_NAME_PUBLISH,
 	TREE_CMD_NAME_UNPUBLISH,
 	TREE_CMD_NAME_LOOKUP,
+	TREE_CMD_RING,
+	TREE_CMD_RING_RESP,
 	TREE_CMD_COUNT
 };
 
@@ -57,7 +55,6 @@ enum {
 extern int handle_tree_cmd(int fd);
 extern int tree_msg_to_srun(uint32_t len, char *msg);
 extern int tree_msg_to_srun_with_resp(uint32_t len, char *msg, Buf *resp_ptr);
-extern int tree_msg_to_stepds(char *nodelist, uint32_t len, char *msg);
 extern int tree_msg_to_spawned_sruns(uint32_t len, char *msg);
 
 

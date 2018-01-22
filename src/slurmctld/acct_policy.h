@@ -7,7 +7,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -39,17 +39,7 @@
 #ifndef _HAVE_ACCT_POLICY_H
 #define _HAVE_ACCT_POLICY_H
 
-#define ADMIN_SET_LIMIT 0xffff
-
-typedef struct {
-	uint16_t max_cpus;
-	uint16_t max_nodes;
-	uint16_t min_cpus;
-	uint16_t min_nodes;
-	uint16_t pn_min_memory;
-	uint16_t qos;
-	uint16_t time;
-} acct_policy_limit_set_t;
+#include "src/common/list.h"
 
 /*
  * acct_policy_add_job_submit - Note that a job has been submitted for
@@ -87,13 +77,35 @@ extern void acct_policy_job_fini(struct job_record *job_ptr);
 extern void acct_policy_alter_job(struct job_record *job_ptr,
 				  uint32_t new_time_limit);
 
+/*
+ * acct_policy_validate - validate that a job request can be satisfied without
+ * exceeding any association or QOS limit.
+ * job_desc IN - job descriptor being submitted
+ * part_ptr IN - pointer to (one) partition to which the job is being submitted
+ * assoc_in IN - pointer to assocation to which the job is being submitted
+ * qos_ptr IN - pointer to QOS to which the job is being submitted
+ * state_reason OUT - if non-NULL, set to reason for rejecting the job
+ * acct_policy_limit_set IN/OUT - limits set for the job, pre-allocated storage
+ *		is filled in by acct_policy_validate
+ * update_call IN - true if request to update existing job request
+ * RET true if valid
+ */
 extern bool acct_policy_validate(job_desc_msg_t *job_desc,
 				 struct part_record *part_ptr,
-				 slurmdb_association_rec_t *assoc_in,
+				 slurmdb_assoc_rec_t *assoc_in,
 				 slurmdb_qos_rec_t *qos_ptr,
-				 uint16_t *state_reason,
+				 uint32_t *state_reason,
 				 acct_policy_limit_set_t *acct_policy_limit_set,
 				 bool update_call);
+
+/*
+ * acct_policy_validate_pack - validate that a pack job as a whole (all
+ * components at once) can be satisfied without exceeding any association or
+ * QOS limit.
+ * submit_job_list IN - list of "struct job_record" entries (already created)
+ * RET true if valid
+ */
+extern bool acct_policy_validate_pack(List submit_job_list);
 
 /*
  * acct_policy_job_runnable_pre_select - Determine of the specified
@@ -102,15 +114,16 @@ extern bool acct_policy_validate(job_desc_msg_t *job_desc,
  *	association limits prevent the job from ever running (lowered
  *	limits since job submission), then cancel the job.
  */
-extern bool acct_policy_job_runnable_pre_select(struct job_record *job_ptr);
+extern bool acct_policy_job_runnable_pre_select(struct job_record *job_ptr,
+						bool assoc_mgr_locked);
 
 /*
  * acct_policy_job_runnable_post_select - After nodes have been
  *	selected for the job verify the counts don't exceed aggregated limits.
  */
 extern bool acct_policy_job_runnable_post_select(
-	struct job_record *job_ptr, uint32_t cpu_cnt,
-	uint32_t node_cnt, uint32_t pn_min_memory);
+	struct job_record *job_ptr, uint64_t *tres_req_cnt,
+	bool assoc_mgr_locked);
 
 /*
  * Determine of the specified job can execute right now or is currently

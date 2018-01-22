@@ -8,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -37,10 +37,6 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#ifdef HAVE_CONFIG_H
-#  include "config.h"
-#endif
-
 #include "slurm/slurm.h"
 #include "slurm/slurm_errno.h"
 #include "slurm/slurmdb.h"
@@ -49,49 +45,61 @@
 
 /*
  * add associations to accounting system
- * IN:  association_list List of slurmdb_association_rec_t *
+ * IN:  assoc_list List of slurmdb_assoc_rec_t *
  * RET: SLURM_SUCCESS on success SLURM_ERROR else
  */
 extern int slurmdb_associations_add(void *db_conn, List assoc_list)
 {
-	return acct_storage_g_add_associations(db_conn, getuid(), assoc_list);
+	if (db_api_uid == -1)
+		db_api_uid = getuid();
+
+	return acct_storage_g_add_assocs(db_conn, db_api_uid, assoc_list);
 }
 
 /*
  * get info from the storage
- * IN:  slurmdb_association_cond_t *
- * RET: List of slurmdb_association_rec_t *
+ * IN:  slurmdb_assoc_cond_t *
+ * RET: List of slurmdb_assoc_rec_t *
  * note List needs to be freed when called
  */
 extern List slurmdb_associations_get(void *db_conn,
-				     slurmdb_association_cond_t *assoc_cond)
+				     slurmdb_assoc_cond_t *assoc_cond)
 {
-	return acct_storage_g_get_associations(db_conn, getuid(), assoc_cond);
+	if (db_api_uid == -1)
+		db_api_uid = getuid();
+
+	return acct_storage_g_get_assocs(db_conn, db_api_uid, assoc_cond);
 }
 
 
 /*
  * modify existing associations in the accounting system
- * IN:  slurmdb_association_cond_t *assoc_cond
- * IN:  slurmdb_association_rec_t *assoc
+ * IN:  slurmdb_assoc_cond_t *assoc_cond
+ * IN:  slurmdb_assoc_rec_t *assoc
  * RET: List containing (char *'s) else NULL on error
  */
 extern List slurmdb_associations_modify(void *db_conn,
-					slurmdb_association_cond_t *assoc_cond,
-					slurmdb_association_rec_t *assoc)
+					slurmdb_assoc_cond_t *assoc_cond,
+					slurmdb_assoc_rec_t *assoc)
 {
-	return acct_storage_g_modify_associations(db_conn, getuid(),
-						  assoc_cond, assoc);
+	if (db_api_uid == -1)
+		db_api_uid = getuid();
+
+	return acct_storage_g_modify_assocs(db_conn, db_api_uid,
+					    assoc_cond, assoc);
 }
 
 /*
  * remove associations from accounting system
- * IN:  slurmdb_association_cond_t *assoc_cond
+ * IN:  slurmdb_assoc_cond_t *assoc_cond
  * RET: List containing (char *'s) else NULL on error
  */
 extern List slurmdb_associations_remove(
-	void *db_conn, slurmdb_association_cond_t *assoc_cond)
+	void *db_conn, slurmdb_assoc_cond_t *assoc_cond)
 {
-	return acct_storage_g_remove_associations(db_conn, getuid(), assoc_cond);
+	if (db_api_uid == -1)
+		db_api_uid = getuid();
+
+	return acct_storage_g_remove_assocs(db_conn, db_api_uid, assoc_cond);
 }
 

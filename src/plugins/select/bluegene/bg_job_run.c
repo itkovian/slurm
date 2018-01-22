@@ -1,8 +1,6 @@
 /*****************************************************************************\
  *  bg_job_run.c - blue gene job execution (e.g. initiation and termination)
  *  functions.
- *
- *  $Id$
  *****************************************************************************
  *  Copyright (C) 2004-2006 The Regents of the University of California.
  *  Copyright (C) 2011 Lawrence Livermore National Security.
@@ -10,7 +8,7 @@
  *  Written by Morris Jette <jette1@llnl.gov>, Danny Auble <da@llnl.gov>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -39,19 +37,10 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#ifdef HAVE_CONFIG_H
-#  include "config.h"
-#  if HAVE_STDINT_H
-#    include <stdint.h>
-#  endif
-#  if HAVE_INTTYPES_H
-#    include <inttypes.h>
-#  endif
-#  if WITH_PTHREADS
-#    include <pthread.h>
-#  endif
-#endif
+#include "config.h"
 
+#include <inttypes.h>
+#include <pthread.h>
 #include <signal.h>
 #include <unistd.h>
 
@@ -274,7 +263,7 @@ static void _start_agent(bg_action_t *bg_action_ptr)
 	list_iterator_destroy(itr);
 
 	if (requeue_job) {
-		list_destroy(delete_list);
+		FREE_NULL_LIST(delete_list);
 
 		bg_reset_block(bg_record, bg_action_ptr->job_ptr);
 
@@ -289,7 +278,7 @@ static void _start_agent(bg_action_t *bg_action_ptr)
 	if (bg_conf->layout_mode == LAYOUT_DYNAMIC)
 		delete_it = 1;
 	free_block_list(req_job_id, delete_list, delete_it, 1);
-	list_destroy(delete_list);
+	FREE_NULL_LIST(delete_list);
 
 	while (1) {
 		slurm_mutex_lock(&block_state_mutex);
@@ -346,7 +335,7 @@ static void _start_agent(bg_action_t *bg_action_ptr)
 	rc = 0;
 #ifdef HAVE_BGL
 	if (bg_action_ptr->blrtsimage
-	   && strcasecmp(bg_action_ptr->blrtsimage, bg_record->blrtsimage)) {
+	   && xstrcasecmp(bg_action_ptr->blrtsimage, bg_record->blrtsimage)) {
 		debug3("changing BlrtsImage from %s to %s",
 		       bg_record->blrtsimage, bg_action_ptr->blrtsimage);
 		xfree(bg_record->blrtsimage);
@@ -378,7 +367,7 @@ static void _start_agent(bg_action_t *bg_action_ptr)
 
 #ifdef HAVE_BG_L_P
 	if (bg_action_ptr->linuximage
-	   && strcasecmp(bg_action_ptr->linuximage, bg_record->linuximage)) {
+	   && xstrcasecmp(bg_action_ptr->linuximage, bg_record->linuximage)) {
 # ifdef HAVE_BGL
 		debug3("changing LinuxImage from %s to %s",
 		       bg_record->linuximage, bg_action_ptr->linuximage);
@@ -391,7 +380,7 @@ static void _start_agent(bg_action_t *bg_action_ptr)
 		rc = 1;
 	}
 	if (bg_action_ptr->ramdiskimage
-	   && strcasecmp(bg_action_ptr->ramdiskimage,
+	   && xstrcasecmp(bg_action_ptr->ramdiskimage,
 			 bg_record->ramdiskimage)) {
 # ifdef HAVE_BGL
 		debug3("changing RamDiskImage from %s to %s",
@@ -406,7 +395,7 @@ static void _start_agent(bg_action_t *bg_action_ptr)
 	}
 #endif
 	if (bg_action_ptr->mloaderimage
-	   && strcasecmp(bg_action_ptr->mloaderimage,
+	   && xstrcasecmp(bg_action_ptr->mloaderimage,
 			 bg_record->mloaderimage)) {
 		debug3("changing MloaderImage from %s to %s",
 		       bg_record->mloaderimage, bg_action_ptr->mloaderimage);
@@ -567,7 +556,7 @@ no_reboot:
 	*/
 	if (block_inited && bg_action_ptr->job_ptr) {
 		slurmctld_lock_t job_write_lock = {
-			NO_LOCK, WRITE_LOCK, NO_LOCK, NO_LOCK };
+			NO_LOCK, WRITE_LOCK, NO_LOCK, NO_LOCK, NO_LOCK };
 		lock_slurmctld(job_write_lock);
 		bg_action_ptr->job_ptr->job_state &= (~JOB_CONFIGURING);
 		last_job_update = time(NULL);
@@ -580,7 +569,7 @@ no_reboot:
 		   the batch script, slurm_fail_job()
 		   is a no-op if issued prior
 		   to the script initiation do clean up just
-		   incase the fail job isn't ran */
+		   in case the fail job isn't ran */
 		(void) slurm_fail_job(req_job_id, JOB_BOOT_FAIL);
 	}
 }
@@ -773,7 +762,7 @@ extern int start_job(struct job_record *job_ptr)
 
 	if (!block_ptr_exist_in_list(bg_lists->booted, bg_record))
 		list_push(bg_lists->booted, bg_record);
-	/* Just incase something happens to free this block before we
+	/* Just in case something happens to free this block before we
 	   start the job we will make it so this job doesn't get blown
 	   away.
 	*/
@@ -796,7 +785,7 @@ extern int start_job(struct job_record *job_ptr)
  * RET - SLURM_SUCCESS or an error code
  *
  * NOTE: This happens in parallel with srun and slurmd terminating
- * the job. Insure that this function, mpirun and the epilog can
+ * the job. Ensure that this function, mpirun and the epilog can
  * all deal with termination race conditions.
  */
 int term_job(struct job_record *job_ptr)
@@ -841,7 +830,7 @@ extern int sync_jobs(List job_list)
 		return SLURM_ERROR;
 	}
 	slurm_mutex_lock(&block_state_mutex);
-	/* Insure that all running jobs own the specified block */
+	/* Ensure that all running jobs own the specified block */
 	itr = list_iterator_create(job_list);
 	while ((job_ptr = list_next(itr))) {
 		bg_action_t *bg_action_ptr = NULL;
@@ -928,10 +917,10 @@ extern int sync_jobs(List job_list)
 		 * the unlock of block_state_mutex.
 		 */
 		bg_status_process_kill_job_list(kill_list, JOB_BOOT_FAIL, 1);
-		list_destroy(kill_list);
+		FREE_NULL_LIST(kill_list);
 	}
 
-	/* Insure that all other blocks are free of users */
+	/* Ensure that all other blocks are free of users */
 	if (block_list) {
 		itr = list_iterator_create(block_list);
 		while ((bg_record = list_next(itr))) {
@@ -940,7 +929,7 @@ extern int sync_jobs(List job_list)
 			term_jobs_on_block(bg_record->bg_block_id);
 		}
 		list_iterator_destroy(itr);
-		list_destroy(block_list);
+		FREE_NULL_LIST(block_list);
 	} else {
 		/* this should never happen,
 		 * vestigial logic */

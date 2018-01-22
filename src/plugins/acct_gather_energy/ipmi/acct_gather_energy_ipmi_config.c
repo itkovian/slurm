@@ -5,7 +5,7 @@
  *  Written by Bull- Thomas Cadeau
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -61,6 +61,8 @@ extern void reset_slurm_ipmi_conf(slurm_ipmi_conf_t *slurm_ipmi_conf)
 {
 	if (slurm_ipmi_conf) {
 		slurm_ipmi_conf->power_sensor_num = -1;
+		xfree(slurm_ipmi_conf->power_sensors);
+		slurm_ipmi_conf->power_sensors = NULL;
 		slurm_ipmi_conf->freq = DEFAULT_IPMI_FREQ;
 		slurm_ipmi_conf->adjustment = false;
 		slurm_ipmi_conf->timeout = TIMEOUT;

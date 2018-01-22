@@ -7,7 +7,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -39,18 +39,17 @@
 #ifndef _SLURMD_STEP_INIT_H
 #define _SLURMD_STEP_INIT_H
 
-#if HAVE_CONFIG_H
-#  include "config.h"
-#endif
-
 #include "src/common/slurm_protocol_defs.h"
 
 #include "src/slurmd/slurmstepd/slurmstepd_job.h"
 #include "src/slurmd/slurmd/slurmd.h"
 
-/* If you want to run memcheck on slurmstepd switch this comment */
-//#define SLURMSTEPD_MEMCHECK 1
-#undef SLURMSTEPD_MEMCHECK
+/* If you want to run memory checks on slurmstepd switch this comment */
+#define SLURMSTEPD_MEMCHECK 0	/* Run slurmstepd without memory checks */
+//#define SLURMSTEPD_MEMCHECK 1	/* Run slurmstepd with memcheck */
+//#define SLURMSTEPD_MEMCHECK 2	/* Run slurmstepd with valgrind/memcheck */
+//#define SLURMSTEPD_MEMCHECK 3	/* Run slurmstepd with valgrind/drd */
+//#define SLURMSTEPD_MEMCHECK 4	/* Run slurmstepd with valgrind/helgrind */
 
 typedef enum slurmd_step_tupe {
 	LAUNCH_BATCH_JOB = 0,

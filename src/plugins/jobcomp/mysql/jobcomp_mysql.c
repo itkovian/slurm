@@ -1,7 +1,5 @@
 /*****************************************************************************\
  *  jobcomp_mysql.c - Store/Get all information in a mysql storage.
- *
- *  $Id: storage_mysql.c 10893 2007-01-29 21:53:48Z da $
  *****************************************************************************
  *  Copyright (C) 2004-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2009 Lawrence Livermore National Security.
@@ -9,7 +7,7 @@
  *  Written by Danny Auble <da@llnl.gov>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -68,16 +66,12 @@
  * only load job completion logging plugins if the plugin_type string has a
  * prefix of "jobacct/".
  *
- * plugin_version - an unsigned 32-bit integer giving the version number
- * of the plugin.  If major and minor revisions are desired, the major
- * version number may be multiplied by a suitable magnitude constant such
- * as 100 or 1000.  Various SLURM versions will likely require a certain
- * minimum version for their plugins as the job accounting API
- * matures.
+ * plugin_version - an unsigned 32-bit integer containing the Slurm version
+ * (major.minor.micro combined into a single number).
  */
 const char plugin_name[] = "Job completion MYSQL plugin";
 const char plugin_type[] = "jobcomp/mysql";
-const uint32_t plugin_version = 100;
+const uint32_t plugin_version = SLURM_VERSION_NUMBER;
 
 mysql_conn_t *jobcomp_mysql_conn = NULL;
 
@@ -89,7 +83,7 @@ storage_field_t jobcomp_table_fields[] = {
 	{ "gid", "int unsigned not null" },
 	{ "group_name", "tinytext not null" },
 	{ "name", "tinytext not null" },
-	{ "state", "smallint not null" },
+	{ "state", "int unsigned not null" },
 	{ "partition", "tinytext not null" },
 	{ "timelimit", "tinytext not null" },
 	{ "starttime", "int unsigned default 0 not null" },
@@ -129,7 +123,9 @@ static pthread_mutex_t  jobcomp_lock = PTHREAD_MUTEX_INITIALIZER;
 static int _mysql_jobcomp_check_tables()
 {
 	if (mysql_db_create_table(jobcomp_mysql_conn, jobcomp_table,
-				 jobcomp_table_fields, ")") == SLURM_ERROR)
+				  jobcomp_table_fields,
+				  ", primary key (jobid, starttime, endtime))")
+	    == SLURM_ERROR)
 		return SLURM_ERROR;
 
 	return SLURM_SUCCESS;
@@ -225,7 +221,7 @@ extern int fini ( void )
 
 extern int slurm_jobcomp_set_location(char *location)
 {
-	mysql_db_info_t *db_info = create_mysql_db_info(SLURM_MYSQL_PLUGIN_JC);
+	mysql_db_info_t *db_info;
 	int rc = SLURM_SUCCESS;
 	char *db_name = NULL;
 	int i = 0;
@@ -252,7 +248,11 @@ extern int slurm_jobcomp_set_location(char *location)
 	}
 
 	debug2("mysql_connect() called for db %s", db_name);
+	/* Just make sure our connection is gone. */
+	fini();
 	jobcomp_mysql_conn = create_mysql_conn(0, 0, NULL);
+
+	db_info = create_mysql_db_info(SLURM_MYSQL_PLUGIN_JC);
 
 	mysql_db_get_db_connection(jobcomp_mysql_conn, db_name, db_info);
 	xfree(db_name);
@@ -271,12 +271,12 @@ extern int slurm_jobcomp_set_location(char *location)
 extern int slurm_jobcomp_log_record(struct job_record *job_ptr)
 {
 	int rc = SLURM_SUCCESS;
-	char *usr_str = NULL, *grp_str = NULL, lim_str[32];
+	char *usr_str = NULL, *grp_str = NULL, lim_str[32], *jname = NULL;
 	char *connect_type = NULL, *reboot = NULL, *rotate = NULL,
 		*geometry = NULL, *start = NULL,
 		*blockid = NULL;
-	enum job_states job_state;
-	char *query = NULL;
+	uint32_t job_state;
+	char *query = NULL, *on_dup = NULL;
 	uint32_t time_limit, start_time, end_time;
 
 	if (!jobcomp_mysql_conn || mysql_db_ping(jobcomp_mysql_conn) != 0) {
@@ -325,6 +325,11 @@ extern int slurm_jobcomp_log_record(struct job_record *job_ptr)
 		end_time = job_ptr->end_time;
 	}
 
+	if (job_ptr->name && job_ptr->name[0])
+		jname = slurm_add_slash_to_quotes(job_ptr->name);
+	else
+		jname = xstrdup("allocation");
+
 	connect_type = select_g_select_jobinfo_xstrdup(job_ptr->select_jobinfo,
 						       SELECT_PRINT_CONNECTION);
 	reboot = select_g_select_jobinfo_xstrdup(job_ptr->select_jobinfo,
@@ -344,7 +349,7 @@ extern int slurm_jobcomp_log_record(struct job_record *job_ptr)
 #endif
 	query = xstrdup_printf(
 		"insert into %s (jobid, uid, user_name, gid, group_name, "
-		"name, state, proc_cnt, partition, timelimit, "
+		"name, state, proc_cnt, `partition`, timelimit, "
 		"starttime, endtime, nodecnt",
 		jobcomp_table);
 
@@ -364,48 +369,71 @@ extern int slurm_jobcomp_log_record(struct job_record *job_ptr)
 		xstrcat(query, ", start");
 	if (blockid)
 		xstrcat(query, ", blockid");
-	xstrfmtcat(query, ") values (%u, %u, '%s', %u, '%s', \"%s\", %d, %u, "
-		   "'%s', \"%s\", %u, %u, %u",
+	xstrfmtcat(query, ") values (%u, %u, '%s', %u, '%s', '%s', %u, %u, "
+		   "'%s', '%s', %u, %u, %u",
 		   job_ptr->job_id, job_ptr->user_id, usr_str,
-		   job_ptr->group_id, grp_str, job_ptr->name,
+		   job_ptr->group_id, grp_str, jname,
 		   job_state, job_ptr->total_cpus, job_ptr->partition, lim_str,
 		   start_time, end_time, job_ptr->node_cnt);
 
-	if (job_ptr->nodes)
+	xstrfmtcat(on_dup, "uid=%u, user_name='%s', gid=%u, group_name='%s', "
+		   "name='%s', state=%u, proc_cnt=%u, `partition`='%s', "
+		   "timelimit='%s', nodecnt=%u",
+		   job_ptr->user_id, usr_str, job_ptr->group_id, grp_str, jname,
+		   job_state, job_ptr->total_cpus, job_ptr->partition, lim_str,
+		   job_ptr->node_cnt);
+
+	if (job_ptr->nodes) {
 		xstrfmtcat(query, ", '%s'", job_ptr->nodes);
+		xstrfmtcat(on_dup, ", nodelist='%s'", job_ptr->nodes);
+	}
 
 	if (connect_type) {
 		xstrfmtcat(query, ", '%s'", connect_type);
+		xstrfmtcat(on_dup, ", connect_type='%s'", connect_type);
 		xfree(connect_type);
 	}
 	if (reboot) {
 		xstrfmtcat(query, ", '%s'", reboot);
+		xstrfmtcat(on_dup, ", reboot='%s'", reboot);
 		xfree(reboot);
 	}
 	if (rotate) {
 		xstrfmtcat(query, ", '%s'", rotate);
+		xstrfmtcat(on_dup, ", rotate='%s'", rotate);
 		xfree(rotate);
 	}
-	if (job_ptr->details && (job_ptr->details->max_cpus != NO_VAL))
+	if (job_ptr->details && (job_ptr->details->max_cpus != NO_VAL)) {
 		xstrfmtcat(query, ", '%u'", job_ptr->details->max_cpus);
+		xstrfmtcat(on_dup, ", maxprocs='%u'",
+			   job_ptr->details->max_cpus);
+	}
 
 	if (geometry) {
 		xstrfmtcat(query, ", '%s'", geometry);
+		xstrfmtcat(on_dup, ", geometry='%s'", geometry);
 		xfree(geometry);
 	}
 	if (start) {
 		xstrfmtcat(query, ", '%s'", start);
+		xstrfmtcat(on_dup, ", start='%s'", start);
 		xfree(start);
 	}
 	if (blockid) {
 		xstrfmtcat(query, ", '%s'", blockid);
+		xstrfmtcat(on_dup, ", blockid='%s'", blockid);
 		xfree(blockid);
 	}
-	xstrcat(query, ")");
-	//info("query = %s", query);
+	xstrfmtcat(query, ") ON DUPLICATE KEY UPDATE %s;", on_dup);
+
+	debug3("(%s:%d) query\n%s",
+	       THIS_FILE, __LINE__, query);
 	rc = mysql_db_query(jobcomp_mysql_conn, query);
 	xfree(usr_str);
 	xfree(grp_str);
+	xfree(jname);
+	xfree(query);
+	xfree(on_dup);
 
 	return rc;
 }

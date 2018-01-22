@@ -1,4 +1,4 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Test of SLURM functionality
 #          Confirms that the sbatch --array option is submitted and
@@ -13,7 +13,7 @@
 # Written by Nathan Yee <nyee32@schedmd.com>
 #
 # This file is part of SLURM, a resource management program.
-# For details, see <http://slurm.schedmd.com/>.
+# For details, see <https://slurm.schedmd.com/>.
 # Please also read the included file: DISCLAIMER.
 #
 # SLURM is free software; you can redistribute it and/or modify it under
@@ -105,18 +105,13 @@ proc multi_squeue_check {job_id} {
 
 proc multi_scontrol_check { job_id } {
 
-	global scontrol number array_id array_cnt  exit_code
+	global scontrol number array_id exit_code
 
-	set array_cnt 0
+	set task_cnt 0
 	spawn $scontrol show job $job_id
 	expect {
-		-re "ArrayTaskId=($number)" {
-			set array_id $expect_out(1,string)
-			if {$array_id != $array_cnt} {
-				send_user "\nFAILURE: incorrect number of jobs $array_id = $array_cnt\n"
-				set exit_code 1
-			}
-			incr array_cnt
+		-re "ArrayTaskId=($number)-($number)" {
+			set task_cnt [expr $expect_out(2,string) - $expect_out(1,string) + 1]
 			exp_continue
 		}
 		timeout {
@@ -128,7 +123,7 @@ proc multi_scontrol_check { job_id } {
 		}
 	}
 
-	return $array_cnt
+	return $task_cnt
 }
 
 ############Test Starts Here###########
@@ -155,9 +150,9 @@ expect {
 }
 
 # checks all the job array indexes
-set job_cnt [multi_scontrol_check $job_id]
-if {$job_cnt != $array_size} {
-	send_user "\nFAILURE: job count found by scontrol bad ($job_cnt != $array_size)\n"
+set task_cnt [multi_scontrol_check $job_id]
+if {$task_cnt != $array_size} {
+	send_user "\nFAILURE: job count found by scontrol bad ($task_cnt != $array_size)\n"
 	set exit_code
 }
 

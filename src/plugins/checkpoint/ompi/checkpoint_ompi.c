@@ -8,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -37,17 +37,7 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#ifdef HAVE_CONFIG_H
-#  include "config.h"
-#endif
-
-#if HAVE_STDINT_H
-#  include <stdint.h>
-#endif
-#if HAVE_INTTYPES_H
-#  include <inttypes.h>
-#endif
-
+#include <inttypes.h>
 #include <stdio.h>
 
 #include "slurm/slurm.h"
@@ -93,15 +83,12 @@ static int _ckpt_step(struct step_record * step_ptr, uint16_t wait, int vacate);
  * only load checkpoint plugins if the plugin_type string has a
  * prefix of "checkpoint/".
  *
- * plugin_version - an unsigned 32-bit integer giving the version number
- * of the plugin.  If major and minor revisions are desired, the major
- * version number may be multiplied by a suitable magnitude constant such
- * as 100 or 1000.  Various SLURM versions will likely require a certain
- * minimum version for their plugins as the checkpoint API matures.
+ * plugin_version - an unsigned 32-bit integer containing the Slurm version
+ * (major.minor.micro combined into a single number).
  */
 const char plugin_name[]       	= "OpenMPI checkpoint plugin";
 const char plugin_type[]       	= "checkpoint/ompi";
-const uint32_t plugin_version	= 100;
+const uint32_t plugin_version	= SLURM_VERSION_NUMBER;
 
 /*
  * init() is called when the plugin is loaded, before any other functions
@@ -251,7 +238,7 @@ extern int slurm_ckpt_pack_job(check_jobinfo_t jobinfo, Buf buffer,
 	struct check_job_info *check_ptr =
 		(struct check_job_info *)jobinfo;
 
-	if (protocol_version >= SLURM_14_03_PROTOCOL_VERSION) {
+	if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
 		uint32_t x;
 		uint32_t y;
 		uint32_t z;
@@ -275,13 +262,6 @@ extern int slurm_ckpt_pack_job(check_jobinfo_t jobinfo, Buf buffer,
 		set_buf_offset(buffer, x);
 		pack32(z - y, buffer);
 		set_buf_offset(buffer, z);
-	} else if (protocol_version >= SLURM_2_5_PROTOCOL_VERSION) {
-		pack16(check_ptr->disabled, buffer);
-		pack16(check_ptr->reply_cnt, buffer);
-		pack16(check_ptr->wait_time, buffer);
-		pack32(check_ptr->error_code, buffer);
-		packstr(check_ptr->error_msg, buffer);
-		pack_time(check_ptr->time_stamp, buffer);
 	}
 
 	return SLURM_SUCCESS;
@@ -294,7 +274,7 @@ extern int slurm_ckpt_unpack_job(check_jobinfo_t jobinfo, Buf buffer,
 	struct check_job_info *check_ptr =
 		(struct check_job_info *)jobinfo;
 
-	if (protocol_version >= SLURM_14_03_PROTOCOL_VERSION) {
+	if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
 		uint16_t id;
 		uint32_t size;
 
@@ -313,14 +293,6 @@ extern int slurm_ckpt_unpack_job(check_jobinfo_t jobinfo, Buf buffer,
 					       &uint32_tmp, buffer);
 			safe_unpack_time(&check_ptr->time_stamp, buffer);
 		}
-	} else if (protocol_version >= SLURM_2_5_PROTOCOL_VERSION) {
-		safe_unpack16(&check_ptr->disabled, buffer);
-		safe_unpack16(&check_ptr->reply_cnt, buffer);
-		safe_unpack16(&check_ptr->wait_time, buffer);
-		safe_unpack32(&check_ptr->error_code, buffer);
-		safe_unpackstr_xmalloc(&check_ptr->error_msg,
-				       &uint32_tmp, buffer);
-		safe_unpack_time(&check_ptr->time_stamp, buffer);
 	}
 
 	return SLURM_SUCCESS;

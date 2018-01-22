@@ -6,7 +6,7 @@
  *  All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -35,10 +35,6 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#if     HAVE_CONFIG_H
-#  include "config.h"
-#endif
-
 #if defined(__FreeBSD__)
 #include <roken.h>
 #include <sys/socket.h> /* AF_INET */
@@ -46,8 +42,8 @@
 
 #include <fcntl.h>
 #include <signal.h>
-#include <sys/types.h>
 #include <stdlib.h>
+#include <sys/types.h>
 
 #include "src/common/slurm_xlator.h"
 #include "src/common/log.h"
@@ -60,6 +56,7 @@
 #include "setup.h"
 #include "agent.h"
 #include "nameserv.h"
+#include "ring.h"
 
 /* PMI2 command handlers */
 static int _handle_fullinit(int fd, int lrank, client_req_t *req);
@@ -68,6 +65,7 @@ static int _handle_abort(int fd, int lrank, client_req_t *req);
 static int _handle_job_getid(int fd, int lrank, client_req_t *req);
 static int _handle_job_connect(int fd, int lrank, client_req_t *req);
 static int _handle_job_disconnect(int fd, int lrank, client_req_t *req);
+static int _handle_ring(int fd, int lrank, client_req_t *req);
 static int _handle_kvs_put(int fd, int lrank, client_req_t *req);
 static int _handle_kvs_fence(int fd, int lrank, client_req_t *req);
 static int _handle_kvs_get(int fd, int lrank, client_req_t *req);
@@ -90,6 +88,7 @@ static struct {
 	{ JOBGETID_CMD,          _handle_job_getid },
 	{ JOBCONNECT_CMD,        _handle_job_connect },
 	{ JOBDISCONNECT_CMD,     _handle_job_disconnect },
+	{ RING_CMD,              _handle_ring },
 	{ KVSPUT_CMD,            _handle_kvs_put },
 	{ KVSFENCE_CMD,          _handle_kvs_fence },
 	{ KVSGET_CMD,            _handle_kvs_get },
@@ -102,7 +101,6 @@ static struct {
 	{ SPAWN_CMD,             _handle_spawn },
 	{ NULL, NULL},
 };
-
 
 static int
 _handle_fullinit(int fd, int lrank, client_req_t *req)
@@ -228,6 +226,38 @@ _handle_job_disconnect(int fd, int lrank, client_req_t *req)
 }
 
 static int
+_handle_ring(int fd, int lrank, client_req_t *req)
+{
+	int rc = SLURM_SUCCESS;
+        int count   = 0;
+	char *left  = NULL;
+        char *right = NULL;
+
+	debug3("mpi/pmi2: in _handle_ring");
+
+	/* extract left, right, and count values from ring payload */
+	client_req_parse_body(req);
+	client_req_get_int(req, RING_COUNT_KEY, &count);
+	client_req_get_str(req, RING_LEFT_KEY,  &left);
+	client_req_get_str(req, RING_RIGHT_KEY, &right);
+
+	/* compute ring_id, we list all application tasks first,
+         * followed by stepds, so here we just use the application
+         * process rank */
+	int ring_id = lrank;
+
+        rc = pmix_ring_in(ring_id, count, left, right);
+
+	xfree(left);
+	xfree(right);
+
+        /* the repsonse is sent back to client from the pmix_ring_out call */
+
+	debug3("mpi/pmi2: out _handle_ring");
+	return rc;
+}
+
+static int
 _handle_kvs_put(int fd, int lrank, client_req_t *req)
 {
 	int rc = SLURM_SUCCESS;
@@ -241,6 +271,8 @@ _handle_kvs_put(int fd, int lrank, client_req_t *req)
 
 	/* no need to add k-v to hash. just get it ready to be up-forward */
 	rc = temp_kvs_add(key, val);
+	xfree(key);
+	xfree(val);
 
 	resp = client_resp_new();
 	client_resp_append(resp, CMD_KEY"="KVSPUTRESP_CMD";" RC_KEY"=%d;", rc);
@@ -291,7 +323,7 @@ _handle_kvs_get(int fd, int lrank, client_req_t *req)
 {
 	int rc;
 	client_resp_t *resp;
-	char *key, *val;
+	char *key = NULL, *val;
 
 	debug3("mpi/pmi2: in _handle_kvs_get");
 
@@ -299,6 +331,7 @@ _handle_kvs_get(int fd, int lrank, client_req_t *req)
 	client_req_get_str(req, KEY_KEY, &key);
 
 	val = kvs_get(key);
+	xfree(key);
 
 	resp = client_resp_new();
 	if (val != NULL) {
@@ -321,7 +354,7 @@ _handle_info_getnodeattr(int fd, int lrank, client_req_t *req)
 {
 	int rc = 0;
 	client_resp_t *resp;
-	char *key, *val;
+	char *key = NULL, *val;
 	bool wait = false;
 
 	debug3("mpi/pmi2: in _handle_info_getnodeattr from lrank %d", lrank);
@@ -347,7 +380,7 @@ _handle_info_getnodeattr(int fd, int lrank, client_req_t *req)
 	} else {
 		rc = enqueue_nag_req(fd, lrank, key);
 	}
-
+	xfree(key);
 	debug3("mpi/pmi2: out _handle_info_getnodeattr");
 	return rc;
 }
@@ -367,8 +400,12 @@ _handle_info_putnodeattr(int fd, int lrank, client_req_t *req)
 
 	rc = node_attr_put(key, val);
 
+	xfree(key);
+	xfree(val);
+
 	resp = client_resp_new();
-	client_resp_append(resp, CMD_KEY"="PUTNODEATTRRESP_CMD";" RC_KEY"=%d;", rc);
+	client_resp_append(resp,
+			   CMD_KEY"="PUTNODEATTRRESP_CMD";" RC_KEY"=%d;", rc);
 	rc = client_resp_send(resp, fd);
 	client_resp_free(resp);
 
@@ -379,7 +416,7 @@ _handle_info_putnodeattr(int fd, int lrank, client_req_t *req)
 static int
 _handle_info_getjobattr(int fd, int lrank, client_req_t *req)
 {
-	char *key, *val;
+	char *key = NULL, *val;
 	client_resp_t *resp;
 	int rc;
 
@@ -388,11 +425,13 @@ _handle_info_getjobattr(int fd, int lrank, client_req_t *req)
 	client_req_get_str(req, KEY_KEY, &key);
 
 	val = job_attr_get(key);
+	xfree(key);
 
 	resp = client_resp_new();
 	client_resp_append(resp, CMD_KEY"="GETJOBATTRRESP_CMD";" RC_KEY"=0;");
 	if (val != NULL) {
-		client_resp_append(resp, FOUND_KEY"="TRUE_VAL";" VALUE_KEY"=%s;",
+		client_resp_append(resp,
+				   FOUND_KEY"="TRUE_VAL";" VALUE_KEY"=%s;",
 				   val);
 	} else {
 		client_resp_append(resp, FOUND_KEY"="FALSE_VAL";");
@@ -417,7 +456,7 @@ _handle_name_publish(int fd, int lrank, client_req_t *req)
 	client_req_parse_body(req);
 	client_req_get_str(req, NAME_KEY, &name);
 	client_req_get_str(req, PORT_KEY, &port);
-	
+
 	rc = name_publish_up(name, port);
 	xfree(name);
 	xfree(port);
@@ -443,7 +482,7 @@ _handle_name_unpublish(int fd, int lrank, client_req_t *req)
 
 	client_req_parse_body(req);
 	client_req_get_str(req, NAME_KEY, &name);
-	
+
 	rc = name_unpublish_up(name);
 	xfree(name);
 
@@ -559,6 +598,29 @@ handle_pmi2_cmd(int fd, int lrank)
 
 	debug2("mpi/pmi2: got client request: %s %s", len_buf, buf);
 
+	if (!len) {
+		/*
+		 * This is an invalid request.
+		 *
+		 * The most likely cause of an invalid client request is a
+		 * second PMI2_Init call from the client end. This arrives
+		 * first as a "cmd=init" call. Ideally, we'd capture that
+		 * request, and respond with "cmd=response_to_init" with the rc
+		 * field set to PMI2_ERR_INIT and expect the client to cleanup
+		 * and die correctly.
+		 *
+		 * However - Slurm's libpmi2 has historically ignored the rc
+		 * value and immediately sends the FULLINIT_CMD regardless, and
+		 * then waits for a response to that. Rather than construct
+		 * two successive error messages, this call will send back
+		 * "cmd=finalize-response" back that will trigger the desired
+		 * error handling paths, and then tears down the connection
+		 * for good measure.
+		 */
+		_handle_finalize(fd, 0, NULL);
+		return SLURM_ERROR;
+	}
+
 	req = client_req_init(len, buf);
 	if (req == NULL) {
 		error("mpi/pmi2: invalid client request");
@@ -567,7 +629,7 @@ handle_pmi2_cmd(int fd, int lrank)
 
 	i = 0;
 	while (pmi2_cmd_handlers[i].cmd != NULL) {
-		if (!strcmp(req->cmd, pmi2_cmd_handlers[i].cmd))
+		if (!xstrcmp(req->cmd, pmi2_cmd_handlers[i].cmd))
 			break;
 		i ++;
 	}

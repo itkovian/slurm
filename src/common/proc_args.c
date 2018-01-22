@@ -1,13 +1,13 @@
 /*****************************************************************************\
  *  proc_args.c - helper functions for command argument processing
- *  $Id: opt.h 11996 2007-08-10 20:36:26Z jette $
  *****************************************************************************
  *  Copyright (C) 2007 Hewlett-Packard Development Company, L.P.
+ *  Portions Copyright (C) 2010-2015 SchedMD LLC <https://www.schedmd.com>.
  *  Written by Christopher Holmes <cholmes@hp.com>, who borrowed heavily
  *  from existing SLURM source code, particularly src/srun/opt.c
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -36,22 +36,10 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#if HAVE_CONFIG_H
-#  include "config.h"
-#endif
-
-#include <string.h>		/* strcpy, strncasecmp */
-
-#ifdef HAVE_STRINGS_H
-#  include <strings.h>
-#endif
+#include "config.h"
 
 #ifndef __USE_ISOC99
 #define __USE_ISOC99
-#endif
-
-#ifdef HAVE_LIMITS_H
-#  include <limits.h>
 #endif
 
 #ifndef _GNU_SOURCE
@@ -62,22 +50,25 @@
 #  define SYSTEM_DIMENSIONS 1
 #endif
 
+#include <ctype.h>		/* isdigit    */
 #include <fcntl.h>
+#include <limits.h>
+#include <pwd.h>		/* getpwuid   */
 #include <stdarg.h>		/* va_start   */
 #include <stdio.h>
 #include <stdlib.h>		/* getenv, strtoll */
-#include <pwd.h>		/* getpwuid   */
-#include <ctype.h>		/* isdigit    */
+#include <string.h>		/* strcpy */
 #include <sys/param.h>		/* MAXPATHLEN */
-#include <sys/stat.h>
-#include <unistd.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/utsname.h>
+#include <unistd.h>
 
 #include "src/common/gres.h"
 #include "src/common/list.h"
+#include "src/common/log.h"
 #include "src/common/proc_args.h"
+#include "src/common/slurm_protocol_api.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
 
@@ -104,8 +95,8 @@ void set_distribution(task_dist_states_t distribution,
 		      char **dist, char **lllp_dist)
 {
 	if (((int)distribution >= 0)
-	    && (distribution != SLURM_DIST_UNKNOWN)) {
-		switch (distribution) {
+	    && ((distribution & SLURM_DIST_STATE_BASE) != SLURM_DIST_UNKNOWN)) {
+		switch (distribution & SLURM_DIST_STATE_BASE) {
 		case SLURM_DIST_CYCLIC:
 			*dist      = "cyclic";
 			break;
@@ -143,8 +134,80 @@ void set_distribution(task_dist_states_t distribution,
 			*dist      = "block:fcyclic";
 			*lllp_dist = "cyclic";
 			break;
+		case SLURM_DIST_CYCLIC_CYCLIC_CYCLIC:
+			*dist      = "cyclic:cyclic:cyclic";
+			*lllp_dist = "cyclic:cyclic";
+			break;
+		case SLURM_DIST_CYCLIC_CYCLIC_BLOCK:
+			*dist      = "cyclic:cyclic:block";
+			*lllp_dist = "cyclic:block";
+			break;
+		case SLURM_DIST_CYCLIC_CYCLIC_CFULL:
+			*dist      = "cyclic:cyclic:fcyclic";
+			*lllp_dist = "cyclic:fcyclic";
+			break;
+		case SLURM_DIST_CYCLIC_BLOCK_CYCLIC:
+			*dist      = "cyclic:block:cyclic";
+			*lllp_dist = "block:cyclic";
+			break;
+		case SLURM_DIST_CYCLIC_BLOCK_BLOCK:
+			*dist      = "cyclic:block:block";
+			*lllp_dist = "block:block";
+			break;
+		case SLURM_DIST_CYCLIC_BLOCK_CFULL:
+			*dist      = "cyclic:cylic:cyclic";
+			*lllp_dist = "cyclic:cyclic";
+			break;
+		case SLURM_DIST_CYCLIC_CFULL_CYCLIC:
+			*dist      = "cyclic:cylic:cyclic";
+			*lllp_dist = "cyclic:cyclic";
+			break;
+		case SLURM_DIST_CYCLIC_CFULL_BLOCK:
+			*dist      = "cyclic:fcyclic:block";
+			*lllp_dist = "fcyclic:block";
+			break;
+		case SLURM_DIST_CYCLIC_CFULL_CFULL:
+			*dist      = "cyclic:fcyclic:fcyclic";
+			*lllp_dist = "fcyclic:fcyclic";
+			break;
+		case SLURM_DIST_BLOCK_CYCLIC_CYCLIC:
+			*dist      = "block:cyclic:cyclic";
+			*lllp_dist = "cyclic:cyclic";
+			break;
+		case SLURM_DIST_BLOCK_CYCLIC_BLOCK:
+			*dist      = "block:cyclic:block";
+			*lllp_dist = "cyclic:block";
+			break;
+		case SLURM_DIST_BLOCK_CYCLIC_CFULL:
+			*dist      = "block:cyclic:fcyclic";
+			*lllp_dist = "cyclic:fcyclic";
+			break;
+		case SLURM_DIST_BLOCK_BLOCK_CYCLIC:
+			*dist      = "block:block:cyclic";
+			*lllp_dist = "block:cyclic";
+			break;
+		case SLURM_DIST_BLOCK_BLOCK_BLOCK:
+			*dist      = "block:block:block";
+			*lllp_dist = "block:block";
+			break;
+		case SLURM_DIST_BLOCK_BLOCK_CFULL:
+			*dist      = "block:block:fcyclic";
+			*lllp_dist = "block:fcyclic";
+			break;
+		case SLURM_DIST_BLOCK_CFULL_CYCLIC:
+			*dist      = "block:fcyclic:cyclic";
+			*lllp_dist = "fcyclic:cyclic";
+			break;
+		case SLURM_DIST_BLOCK_CFULL_BLOCK:
+			*dist      = "block:fcyclic:block";
+			*lllp_dist = "fcyclic:block";
+			break;
+		case SLURM_DIST_BLOCK_CFULL_CFULL:
+			*dist      = "block:fcyclic:fcyclic";
+			*lllp_dist = "fcyclic:fcyclic";
+			break;
 		default:
-			error("unknown dist, type %d", distribution);
+			error("unknown dist, type 0x%X", distribution);
 			break;
 		}
 	}
@@ -156,55 +219,241 @@ void set_distribution(task_dist_states_t distribution,
  */
 task_dist_states_t verify_dist_type(const char *arg, uint32_t *plane_size)
 {
-	int len = strlen(arg);
+	int len;
 	char *dist_str = NULL;
 	task_dist_states_t result = SLURM_DIST_UNKNOWN;
-	bool lllp_dist = false, plane_dist = false;
+	bool pack_nodes = false, no_pack_nodes = false;
+	char *tok, *tmp, *save_ptr = NULL;
+	int i, j;
+	char *cur_ptr;
+	char buf[3][25];
+	buf[0][0] = '\0';
+	buf[1][0] = '\0';
+	buf[2][0] = '\0';
+	char outstr[100];
+	outstr[0]='\0';
 
-	dist_str = strchr(arg,':');
-	if (dist_str != NULL) {
-		/* -m cyclic|block:cyclic|block */
-		lllp_dist = true;
-	} else {
-		/* -m plane=<plane_size> */
-		dist_str = strchr(arg,'=');
+	if (!arg)
+		return result;
+
+	tmp = xstrdup(arg);
+	tok = strtok_r(tmp, ",", &save_ptr);
+	while (tok) {
+		bool lllp_dist = false, plane_dist = false;
+		len = strlen(tok);
+		dist_str = strchr(tok, ':');
 		if (dist_str != NULL) {
-			*plane_size=atoi(dist_str+1);
-			len = dist_str-arg;
-			plane_dist = true;
+			/* -m cyclic|block:cyclic|block */
+			lllp_dist = true;
+		} else {
+			/* -m plane=<plane_size> */
+			dist_str = strchr(tok, '=');
+			if (!dist_str)
+				dist_str = getenv("SLURM_DIST_PLANESIZE");
+			else {
+				len = dist_str - tok;
+				dist_str++;
+			}
+			if (dist_str) {
+				*plane_size = atoi(dist_str);
+				plane_dist = true;
+			}
 		}
-	}
 
-	if (lllp_dist) {
-		if (strcasecmp(arg, "cyclic:cyclic") == 0) {
-			result = SLURM_DIST_CYCLIC_CYCLIC;
-		} else if (strcasecmp(arg, "cyclic:block") == 0) {
-			result = SLURM_DIST_CYCLIC_BLOCK;
-		} else if (strcasecmp(arg, "block:block") == 0) {
-			result = SLURM_DIST_BLOCK_BLOCK;
-		} else if (strcasecmp(arg, "block:cyclic") == 0) {
-			result = SLURM_DIST_BLOCK_CYCLIC;
-		} else if (strcasecmp(arg, "block:fcyclic") == 0) {
-			result = SLURM_DIST_BLOCK_CFULL;
-		} else if (strcasecmp(arg, "cyclic:fcyclic") == 0) {
-			result = SLURM_DIST_CYCLIC_CFULL;
+		cur_ptr = tok;
+	 	for (j = 0; j < 3; j++) {
+			for (i = 0; i < 24; i++) {
+				if (*cur_ptr == '\0' || *cur_ptr ==':')
+					break;
+				buf[j][i] = *cur_ptr++;
+			}
+			buf[j][i] = '\0';
+			if (*cur_ptr == '\0')
+				break;
+			buf[j][i] = '\0';
+			cur_ptr++;
 		}
-	} else if (plane_dist) {
-		if (strncasecmp(arg, "plane", len) == 0) {
-			result = SLURM_DIST_PLANE;
+		if (xstrcmp(buf[0], "*") == 0)
+			/* default node distribution is block */
+			strcpy(buf[0], "block");
+		strcat(outstr, buf[0]);
+		if (xstrcmp(buf[1], "\0") != 0) {
+			strcat(outstr, ":");
+			if (!xstrcmp(buf[1], "*") || !xstrcmp(buf[1], "\0")) {
+				/* default socket distribution is cyclic */
+				strcpy(buf[1], "cyclic");
+			}
+			strcat(outstr, buf[1]);
 		}
-	} else {
-		if (strncasecmp(arg, "cyclic", len) == 0) {
-			result = SLURM_DIST_CYCLIC;
-		} else if (strncasecmp(arg, "block", len) == 0) {
-			result = SLURM_DIST_BLOCK;
-		} else if ((strncasecmp(arg, "arbitrary", len) == 0) ||
-			   (strncasecmp(arg, "hostfile", len) == 0)) {
-			result = SLURM_DIST_ARBITRARY;
+		if (xstrcmp(buf[2], "\0") != 0) {
+			strcat(outstr, ":");
+			if (!xstrcmp(buf[2], "*") || !xstrcmp(buf[2], "\0")) {
+				/* default core dist is inherited socket dist */
+				strcpy(buf[2], buf[1]);
+			}
+			strcat(outstr, buf[2]);
 		}
+
+		if (lllp_dist) {
+			if (xstrcasecmp(outstr, "cyclic:cyclic") == 0) {
+				result = SLURM_DIST_CYCLIC_CYCLIC;
+			} else if (xstrcasecmp(outstr, "cyclic:block") == 0) {
+				result = SLURM_DIST_CYCLIC_BLOCK;
+			} else if (xstrcasecmp(outstr, "block:block") == 0) {
+				result = SLURM_DIST_BLOCK_BLOCK;
+			} else if (xstrcasecmp(outstr, "block:cyclic") == 0) {
+				result = SLURM_DIST_BLOCK_CYCLIC;
+			} else if (xstrcasecmp(outstr, "block:fcyclic") == 0) {
+				result = SLURM_DIST_BLOCK_CFULL;
+			} else if (xstrcasecmp(outstr, "cyclic:fcyclic") == 0) {
+				result = SLURM_DIST_CYCLIC_CFULL;
+			} else if (xstrcasecmp(outstr, "cyclic:cyclic:cyclic")
+				   == 0) {
+				result = SLURM_DIST_CYCLIC_CYCLIC_CYCLIC;
+			} else if (xstrcasecmp(outstr, "cyclic:cyclic:block")
+				   == 0) {
+				result = SLURM_DIST_CYCLIC_CYCLIC_BLOCK;
+			} else if (xstrcasecmp(outstr, "cyclic:cyclic:fcyclic")
+				== 0) {
+				result = SLURM_DIST_CYCLIC_CYCLIC_CFULL;
+			} else if (xstrcasecmp(outstr, "cyclic:block:cyclic")
+				== 0) {
+				result = SLURM_DIST_CYCLIC_BLOCK_CYCLIC;
+			} else if (xstrcasecmp(outstr, "cyclic:block:block")
+				== 0) {
+				result = SLURM_DIST_CYCLIC_BLOCK_BLOCK;
+			} else if (xstrcasecmp(outstr, "cyclic:block:fcyclic")
+				== 0) {
+				result = SLURM_DIST_CYCLIC_BLOCK_CFULL;
+			} else if (xstrcasecmp(outstr, "cyclic:fcyclic:cyclic")
+				== 0) {
+				result = SLURM_DIST_CYCLIC_CFULL_CYCLIC;
+			} else if (xstrcasecmp(outstr, "cyclic:fcyclic:block")
+				== 0) {
+				result = SLURM_DIST_CYCLIC_CFULL_BLOCK;
+			} else if (xstrcasecmp(outstr, "cyclic:fcyclic:fcyclic")
+				== 0) {
+				result = SLURM_DIST_CYCLIC_CFULL_CFULL;
+			} else if (xstrcasecmp(outstr, "block:cyclic:cyclic")
+				== 0) {
+				result = SLURM_DIST_BLOCK_CYCLIC_CYCLIC;
+			} else if (xstrcasecmp(outstr, "block:cyclic:block")
+				== 0) {
+				result = SLURM_DIST_BLOCK_CYCLIC_BLOCK;
+			} else if (xstrcasecmp(outstr, "block:cyclic:fcyclic")
+				== 0) {
+				result = SLURM_DIST_BLOCK_CYCLIC_CFULL;
+			} else if (xstrcasecmp(outstr, "block:block:cyclic")
+				== 0) {
+				result = SLURM_DIST_BLOCK_BLOCK_CYCLIC;
+			} else if (xstrcasecmp(outstr, "block:block:block")
+				== 0) {
+				result = SLURM_DIST_BLOCK_BLOCK_BLOCK;
+			} else if (xstrcasecmp(outstr, "block:block:fcyclic")
+				== 0) {
+				result = SLURM_DIST_BLOCK_BLOCK_CFULL;
+			} else if (xstrcasecmp(outstr, "block:fcyclic:cyclic")
+				== 0) {
+				result = SLURM_DIST_BLOCK_CFULL_CYCLIC;
+			} else if (xstrcasecmp(outstr, "block:fcyclic:block")
+				== 0) {
+				result = SLURM_DIST_BLOCK_CFULL_BLOCK;
+			} else if (xstrcasecmp(outstr, "block:fcyclic:fcyclic")
+				== 0) {
+				result = SLURM_DIST_BLOCK_CFULL_CFULL;
+			}
+		} else if (plane_dist) {
+			if (xstrncasecmp(tok, "plane", len) == 0) {
+				result = SLURM_DIST_PLANE;
+			}
+		} else {
+			if (xstrncasecmp(tok, "cyclic", len) == 0) {
+				result = SLURM_DIST_CYCLIC;
+			} else if (xstrncasecmp(tok, "block", len) == 0) {
+				result = SLURM_DIST_BLOCK;
+			} else if ((xstrncasecmp(tok, "arbitrary", len) == 0) ||
+				   (xstrncasecmp(tok, "hostfile", len) == 0)) {
+				result = SLURM_DIST_ARBITRARY;
+			} else if (xstrncasecmp(tok, "nopack", len) == 0) {
+				no_pack_nodes = true;
+			} else if (xstrncasecmp(tok, "pack", len) == 0) {
+				pack_nodes = true;
+			}
+		}
+		tok = strtok_r(NULL, ",", &save_ptr);
 	}
+	xfree(tmp);
+
+	if (pack_nodes)
+		result |= SLURM_DIST_PACK_NODES;
+	else if (no_pack_nodes)
+		result |= SLURM_DIST_NO_PACK_NODES;
 
 	return result;
+}
+
+extern char *format_task_dist_states(task_dist_states_t t)
+{
+	switch (t & SLURM_DIST_STATE_BASE) {
+	case SLURM_DIST_BLOCK:
+		return "block";
+	case SLURM_DIST_CYCLIC:
+		return "cyclic";
+	case SLURM_DIST_PLANE:
+		return "plane";
+	case SLURM_DIST_ARBITRARY:
+		return "arbitrary";
+	case SLURM_DIST_CYCLIC_CYCLIC:
+		return "cyclic:cyclic";
+	case SLURM_DIST_CYCLIC_BLOCK:
+		return "cyclic:block";
+	case SLURM_DIST_CYCLIC_CFULL:
+		return "cyclic:fcyclic";
+	case SLURM_DIST_BLOCK_CYCLIC:
+		return "block:cyclic";
+	case SLURM_DIST_BLOCK_BLOCK:
+		return "block:block";
+	case SLURM_DIST_BLOCK_CFULL:
+		return "block:fcyclic";
+	case SLURM_DIST_CYCLIC_CYCLIC_CYCLIC:
+		return "cyclic:cyclic:cyclic";
+	case SLURM_DIST_CYCLIC_CYCLIC_BLOCK:
+		return "cyclic:cyclic:block";
+	case SLURM_DIST_CYCLIC_CYCLIC_CFULL:
+		return "cyclic:cyclic:fcyclic";
+	case SLURM_DIST_CYCLIC_BLOCK_CYCLIC:
+		return "cyclic:block:cyclic";
+	case SLURM_DIST_CYCLIC_BLOCK_BLOCK:
+		return "cyclic:block:block";
+	case SLURM_DIST_CYCLIC_BLOCK_CFULL:
+		return "cyclic:block:fcyclic";
+	case SLURM_DIST_CYCLIC_CFULL_CYCLIC:
+		return "cyclic:fcyclic:cyclic" ;
+	case SLURM_DIST_CYCLIC_CFULL_BLOCK:
+		return "cyclic:fcyclic:block";
+	case SLURM_DIST_CYCLIC_CFULL_CFULL:
+		return "cyclic:fcyclic:fcyclic";
+	case SLURM_DIST_BLOCK_CYCLIC_CYCLIC:
+		return "block:cyclic:cyclic";
+	case SLURM_DIST_BLOCK_CYCLIC_BLOCK:
+		return "block:cyclic:block";
+	case SLURM_DIST_BLOCK_CYCLIC_CFULL:
+		return "block:cyclic:fcyclic";
+	case SLURM_DIST_BLOCK_BLOCK_CYCLIC:
+		return "block:block:cyclic";
+	case SLURM_DIST_BLOCK_BLOCK_BLOCK:
+		return "block:block:block";
+	case SLURM_DIST_BLOCK_BLOCK_CFULL:
+		return "block:block:fcyclic";
+	case SLURM_DIST_BLOCK_CFULL_CYCLIC:
+		return "block:fcyclic:cyclic";
+	case SLURM_DIST_BLOCK_CFULL_BLOCK:
+		return "block:fcyclic:block";
+	case SLURM_DIST_BLOCK_CFULL_CFULL:
+		return "block:fcyclic:fcyclic";
+	default:
+		return "unknown";
+	}
 }
 
 static uint16_t _get_conn_type(char *arg, bool bgp)
@@ -213,29 +462,29 @@ static uint16_t _get_conn_type(char *arg, bool bgp)
 	if (!len) {
 		/* no input given */
 		error("no conn-type argument given.");
-		return (uint16_t)NO_VAL;
-	} else if (!strncasecmp(arg, "MESH", len))
+		return NO_VAL16;
+	} else if (!xstrncasecmp(arg, "MESH", len))
 		return SELECT_MESH;
-	else if (!strncasecmp(arg, "TORUS", len))
+	else if (!xstrncasecmp(arg, "TORUS", len))
 		return SELECT_TORUS;
-	else if (!strncasecmp(arg, "NAV", len))
+	else if (!xstrncasecmp(arg, "NAV", len))
 		return SELECT_NAV;
-	else if (!strncasecmp(arg, "SMALL", len))
+	else if (!xstrncasecmp(arg, "SMALL", len))
 		return SELECT_SMALL;
 	else if (bgp) {
-		if (!strncasecmp(arg, "HTC", len) ||
-		    !strncasecmp(arg, "HTC_S", len))
+		if (!xstrncasecmp(arg, "HTC", len) ||
+		    !xstrncasecmp(arg, "HTC_S", len))
 			return SELECT_HTC_S;
-		else if (!strncasecmp(arg, "HTC_D", len))
+		else if (!xstrncasecmp(arg, "HTC_D", len))
 			return SELECT_HTC_D;
-		else if (!strncasecmp(arg, "HTC_V", len))
+		else if (!xstrncasecmp(arg, "HTC_V", len))
 			return SELECT_HTC_V;
-		else if (!strncasecmp(arg, "HTC_L", len))
+		else if (!xstrncasecmp(arg, "HTC_L", len))
 			return SELECT_HTC_L;
 	}
 
 	error("invalid conn-type argument '%s' ignored.", arg);
-	return (uint16_t)NO_VAL;
+	return NO_VAL16;
 }
 
 /*
@@ -250,14 +499,10 @@ extern void verify_conn_type(const char *arg, uint16_t *conn_type)
 	char *arg_tmp = xstrdup(arg), *tok, *save_ptr = NULL;
 
 	if (working_cluster_rec) {
-		if (working_cluster_rec->flags & CLUSTER_FLAG_BGP)
-			got_bgp = 1;
-		else if (working_cluster_rec->flags & CLUSTER_FLAG_BGQ)
+		if (working_cluster_rec->flags & CLUSTER_FLAG_BGQ)
 			highest_dims = 4;
 	} else {
-#ifdef HAVE_BGP
-		got_bgp = 1;
-# elif defined HAVE_BGQ
+#if defined HAVE_BGQ
 		highest_dims = 4;
 #endif
 	}
@@ -277,7 +522,7 @@ extern void verify_conn_type(const char *arg, uint16_t *conn_type)
 	 * instead of highest_dims since that is the size of the
 	 * array. */
 	for ( ; inx < HIGHEST_DIMENSIONS; inx++) {
-		conn_type[inx] = (uint16_t)NO_VAL;
+		conn_type[inx] = NO_VAL16;
 	}
 
 	xfree(arg_tmp);
@@ -303,7 +548,7 @@ int verify_geometry(const char *arg, uint16_t *geometry)
 			break;
 		}
 		geometry[i] = (uint16_t)atoi(token);
-		if (geometry[i] == 0 || geometry[i] == (uint16_t)NO_VAL) {
+		if (geometry[i] == 0 || geometry[i] == NO_VAL16) {
 			error("invalid --geometry argument");
 			rc = -1;
 			break;
@@ -343,11 +588,7 @@ char * base_name(char* command)
 	return name;
 }
 
-/*
- * str_to_mbytes(): verify that arg is numeric with optional "K", "M", "G"
- * or "T" at end and return the number in mega-bytes
- */
-long str_to_mbytes(const char *arg)
+static long _str_to_mbtyes(const char *arg, int use_gbytes)
 {
 	long result;
 	char *endptr;
@@ -356,7 +597,9 @@ long str_to_mbytes(const char *arg)
 	result = strtol(arg, &endptr, 10);
 	if ((errno != 0) && ((result == LONG_MIN) || (result == LONG_MAX)))
 		result = -1;
-	else if (endptr[0] == '\0')
+	else if ((endptr[0] == '\0') && (use_gbytes == 1))  /* GB default */
+		result *= 1024;
+	else if (endptr[0] == '\0')	/* MB default */
 		;
 	else if ((endptr[0] == 'k') || (endptr[0] == 'K'))
 		result = (result + 1023) / 1024;	/* round up */
@@ -370,6 +613,36 @@ long str_to_mbytes(const char *arg)
 		result = -1;
 
 	return result;
+}
+
+/*
+ * str_to_mbytes(): verify that arg is numeric with optional "K", "M", "G"
+ * or "T" at end and return the number in mega-bytes. Default units are MB.
+ */
+long str_to_mbytes(const char *arg)
+{
+	return _str_to_mbtyes(arg, 0);
+}
+
+/*
+ * str_to_mbytes2(): verify that arg is numeric with optional "K", "M", "G"
+ * or "T" at end and return the number in mega-bytes. Default units are GB
+ * if "SchedulerParameters=default_gbytes" is configured, otherwise MB.
+ */
+long str_to_mbytes2(const char *arg)
+{
+	static int use_gbytes = -1;
+
+	if (use_gbytes == -1) {
+		char *sched_params = slurm_get_sched_params();
+		if (sched_params && strstr(sched_params, "default_gbytes"))
+			use_gbytes = 1;
+		else
+			use_gbytes = 0;
+		xfree(sched_params);
+	}
+
+	return _str_to_mbtyes(arg, use_gbytes);
 }
 
 /* Convert a string into a node count */
@@ -409,7 +682,7 @@ bool verify_node_count(const char *arg, int *min_nodes, int *max_nodes)
 
 	/* Does the string contain a "-" character?  If so, treat as a range.
 	 * otherwise treat as an absolute node count. */
-	if ((ptr = index(arg, '-')) != NULL) {
+	if ((ptr = xstrchr(arg, '-')) != NULL) {
 		min_str = xstrndup(arg, ptr-arg);
 		*min_nodes = _str_to_nodes(min_str, &leftover);
 		if (!xstring_is_whitespace(leftover)) {
@@ -480,7 +753,7 @@ bool verify_node_list(char **node_list_pptr, enum task_dist_states dist,
 	/* If we are using Arbitrary grab count out of the hostfile
 	   using them exactly the way we read it in since we are
 	   saying, lay it out this way! */
-	if (dist == SLURM_DIST_ARBITRARY)
+	if ((dist & SLURM_DIST_STATE_BASE) == SLURM_DIST_ARBITRARY)
 		nodelist = slurm_read_hostfile(*node_list_pptr, task_count);
 	else
 		nodelist = slurm_read_hostfile(*node_list_pptr, NO_VAL);
@@ -584,17 +857,19 @@ bool verify_socket_core_thread_count(const char *arg, int *min_sockets,
 				     int *min_cores, int *min_threads,
 				     cpu_bind_type_t *cpu_bind_type)
 {
-	bool tmp_val,ret_val;
-	int i,j;
-	int max_sockets = 0, max_cores, max_threads;
+	bool tmp_val, ret_val;
+	int i, j;
+	int max_sockets = 0, max_cores = 0, max_threads = 0;
 	const char *cur_ptr = arg;
 	char buf[3][48]; /* each can hold INT64_MAX - INT64_MAX */
-	buf[0][0] = '\0';
-	buf[1][0] = '\0';
-	buf[2][0] = '\0';
 
- 	for (j=0;j<3;j++) {
-		for (i=0;i<47;i++) {
+	if (!arg) {
+		error("%s: argument is NULL", __func__);
+		return false;
+	}
+	memset(buf, 0, sizeof(buf));
+	for (j = 0; j < 3; j++) {
+		for (i = 0; i < 47; i++) {
 			if (*cur_ptr == '\0' || *cur_ptr ==':')
 				break;
 			buf[j][i] = *cur_ptr++;
@@ -602,13 +877,13 @@ bool verify_socket_core_thread_count(const char *arg, int *min_sockets,
 		if (*cur_ptr == '\0')
 			break;
 		xassert(*cur_ptr == ':');
-		buf[j][i] = '\0';
 		cur_ptr++;
 	}
 	/* if cpu_bind_type doesn't already have a auto preference, choose
 	 * the level based on the level of the -E specification
 	 */
-	if (!(*cpu_bind_type & (CPU_BIND_TO_SOCKETS |
+	if (cpu_bind_type &&
+	    !(*cpu_bind_type & (CPU_BIND_TO_SOCKETS |
 				CPU_BIND_TO_CORES |
 				CPU_BIND_TO_THREADS))) {
 		if (j == 0) {
@@ -619,7 +894,6 @@ bool verify_socket_core_thread_count(const char *arg, int *min_sockets,
 			*cpu_bind_type |= CPU_BIND_TO_THREADS;
 		}
 	}
-	buf[j][i] = '\0';
 
 	ret_val = true;
 	tmp_val = get_resource_arg_range(&buf[0][0], "first arg of -B",
@@ -627,6 +901,7 @@ bool verify_socket_core_thread_count(const char *arg, int *min_sockets,
 	if ((*min_sockets == 1) && (max_sockets == INT_MAX))
 		*min_sockets = NO_VAL;	/* Use full range of values */
 	ret_val = ret_val && tmp_val;
+
 
 	tmp_val = get_resource_arg_range(&buf[1][0], "second arg of -B",
 					 min_cores, &max_cores, true);
@@ -652,9 +927,9 @@ bool verify_hint(const char *arg, int *min_sockets, int *min_cores,
 		 cpu_bind_type_t *cpu_bind_type)
 {
 	char *buf, *p, *tok;
-	if (!arg) {
+
+	if (!arg)
 		return true;
-	}
 
 	buf = xstrdup(arg);
 	p = buf;
@@ -668,7 +943,7 @@ bool verify_hint(const char *arg, int *min_sockets, int *min_cores,
 
 	p = buf;
 	while ((tok = strsep(&p, ";"))) {
-		if (strcasecmp(tok, "help") == 0) {
+		if (xstrcasecmp(tok, "help") == 0) {
 			printf(
 "Application hint options:\n"
 "    --hint=             Bind tasks according to application hints\n"
@@ -676,26 +951,34 @@ bool verify_hint(const char *arg, int *min_sockets, int *min_cores,
 "        memory_bound    use only one core in each socket\n"
 "        [no]multithread [don't] use extra threads with in-core multi-threading\n"
 "        help            show this help message\n");
+			xfree(buf);
 			return 1;
-		} else if (strcasecmp(tok, "compute_bound") == 0) {
+		} else if (xstrcasecmp(tok, "compute_bound") == 0) {
 			*min_sockets = NO_VAL;
 			*min_cores   = NO_VAL;
 			*min_threads = 1;
-			*cpu_bind_type |= CPU_BIND_TO_CORES;
-		} else if (strcasecmp(tok, "memory_bound") == 0) {
+			if (cpu_bind_type)
+				*cpu_bind_type |= CPU_BIND_TO_CORES;
+		} else if (xstrcasecmp(tok, "memory_bound") == 0) {
 			*min_cores   = 1;
 			*min_threads = 1;
-			*cpu_bind_type |= CPU_BIND_TO_CORES;
-		} else if (strcasecmp(tok, "multithread") == 0) {
+			if (cpu_bind_type)
+				*cpu_bind_type |= CPU_BIND_TO_CORES;
+		} else if (xstrcasecmp(tok, "multithread") == 0) {
 			*min_threads = NO_VAL;
-			*cpu_bind_type |= CPU_BIND_TO_THREADS;
-			*cpu_bind_type &= (~CPU_BIND_ONE_THREAD_PER_CORE);
+			if (cpu_bind_type) {
+				*cpu_bind_type |= CPU_BIND_TO_THREADS;
+				*cpu_bind_type &=
+					(~CPU_BIND_ONE_THREAD_PER_CORE);
+			}
 			if (*ntasks_per_core == NO_VAL)
 				*ntasks_per_core = INFINITE;
-		} else if (strcasecmp(tok, "nomultithread") == 0) {
+		} else if (xstrcasecmp(tok, "nomultithread") == 0) {
 			*min_threads = 1;
-			*cpu_bind_type |= CPU_BIND_TO_THREADS;
-			*cpu_bind_type |= CPU_BIND_ONE_THREAD_PER_CORE;
+			if (cpu_bind_type) {
+				*cpu_bind_type |= CPU_BIND_TO_THREADS;
+				*cpu_bind_type |= CPU_BIND_ONE_THREAD_PER_CORE;
+			}
 		} else {
 			error("unrecognized --hint argument \"%s\", "
 			      "see --hint=help", tok);
@@ -704,48 +987,122 @@ bool verify_hint(const char *arg, int *min_sockets, int *min_cores,
 		}
 	}
 
+	if (!cpu_bind_type)
+		setenvf(NULL, "SLURM_HINT", "%s", arg);
+
 	xfree(buf);
 	return 0;
 }
 
 uint16_t parse_mail_type(const char *arg)
 {
-	uint16_t rc;
+	char *buf, *tok, *save_ptr = NULL;
+	uint16_t rc = 0;
+	bool none_set = false;
 
-	if (strcasecmp(arg, "BEGIN") == 0)
-		rc = MAIL_JOB_BEGIN;
-	else if  (strcasecmp(arg, "END") == 0)
-		rc = MAIL_JOB_END;
-	else if (strcasecmp(arg, "FAIL") == 0)
-		rc = MAIL_JOB_FAIL;
-	else if (strcasecmp(arg, "REQUEUE") == 0)
-		rc = MAIL_JOB_REQUEUE;
-	else if (strcasecmp(arg, "ALL") == 0)
-		rc = MAIL_JOB_BEGIN |  MAIL_JOB_END |  MAIL_JOB_FAIL |
-		     MAIL_JOB_REQUEUE;
-	else
-		rc = 0;		/* failure */
+	if (!arg)
+		return INFINITE16;
+
+	buf = xstrdup(arg);
+	tok = strtok_r(buf, ",", &save_ptr);
+	while (tok) {
+		if (xstrcasecmp(tok, "NONE") == 0) {
+			rc = 0;
+			none_set = true;
+			break;
+		}
+		else if (xstrcasecmp(tok, "ARRAY_TASKS") == 0)
+			rc |= MAIL_ARRAY_TASKS;
+		else if (xstrcasecmp(tok, "BEGIN") == 0)
+			rc |= MAIL_JOB_BEGIN;
+		else if  (xstrcasecmp(tok, "END") == 0)
+			rc |= MAIL_JOB_END;
+		else if (xstrcasecmp(tok, "FAIL") == 0)
+			rc |= MAIL_JOB_FAIL;
+		else if (xstrcasecmp(tok, "REQUEUE") == 0)
+			rc |= MAIL_JOB_REQUEUE;
+		else if (xstrcasecmp(tok, "ALL") == 0)
+			rc |= MAIL_JOB_BEGIN |  MAIL_JOB_END |  MAIL_JOB_FAIL |
+			      MAIL_JOB_REQUEUE | MAIL_JOB_STAGE_OUT;
+		else if (!xstrcasecmp(tok, "STAGE_OUT"))
+			rc |= MAIL_JOB_STAGE_OUT;
+		else if (xstrcasecmp(tok, "TIME_LIMIT") == 0)
+			rc |= MAIL_JOB_TIME100;
+		else if (xstrcasecmp(tok, "TIME_LIMIT_90") == 0)
+			rc |= MAIL_JOB_TIME90;
+		else if (xstrcasecmp(tok, "TIME_LIMIT_80") == 0)
+			rc |= MAIL_JOB_TIME80;
+		else if (xstrcasecmp(tok, "TIME_LIMIT_50") == 0)
+			rc |= MAIL_JOB_TIME50;
+		tok = strtok_r(NULL, ",", &save_ptr);
+	}
+	xfree(buf);
+	if (!rc && !none_set)
+		rc = INFINITE16;
 
 	return rc;
 }
 char *print_mail_type(const uint16_t type)
 {
+	static char buf[256];
+
+	buf[0] = '\0';
+
 	if (type == 0)
 		return "NONE";
 
-	if (type == MAIL_JOB_BEGIN)
-		return "BEGIN";
-	if (type == MAIL_JOB_END)
-		return "END";
-	if (type == MAIL_JOB_FAIL)
-		return "FAIL";
-	if (type == MAIL_JOB_REQUEUE)
-		return "REQUEUE";
-	if (type == (MAIL_JOB_BEGIN |  MAIL_JOB_END |  MAIL_JOB_FAIL |
-		     MAIL_JOB_REQUEUE))
-		return "ALL";
+	if (type & MAIL_ARRAY_TASKS) {
+		if (buf[0])
+			strcat(buf, ",");
+		strcat(buf, "ARRAY_TASKS");
+	}
+	if (type & MAIL_JOB_BEGIN) {
+		if (buf[0])
+			strcat(buf, ",");
+		strcat(buf, "BEGIN");
+	}
+	if (type & MAIL_JOB_END) {
+		if (buf[0])
+			strcat(buf, ",");
+		strcat(buf, "END");
+	}
+	if (type & MAIL_JOB_FAIL) {
+		if (buf[0])
+			strcat(buf, ",");
+		strcat(buf, "FAIL");
+	}
+	if (type & MAIL_JOB_REQUEUE) {
+		if (buf[0])
+			strcat(buf, ",");
+		strcat(buf, "REQUEUE");
+	}
+	if (type & MAIL_JOB_STAGE_OUT) {
+		if (buf[0])
+			strcat(buf, ",");
+		strcat(buf, "STAGE_OUT");
+	}
+	if (type & MAIL_JOB_TIME50) {
+		if (buf[0])
+			strcat(buf, ",");
+		strcat(buf, "TIME_LIMIT_50");
+	}
+	if (type & MAIL_JOB_TIME80) {
+		if (buf[0])
+			strcat(buf, ",");
+		strcat(buf, "TIME_LIMIT_80");
+	}
+	if (type & MAIL_JOB_TIME90) {
+		if (buf[0])
+			strcat(buf, ",");
+		strcat(buf, "TIME_LIMIT_90");
+	}
+	if (type & MAIL_JOB_TIME100) {
+		if (buf[0])
+			strcat(buf, ",");
+		strcat(buf, "TIME_LIMIT");
+	}
 
-	return "MULTIPLE";
+	return buf;
 }
 
 static void
@@ -788,25 +1145,40 @@ _create_path_list(void)
 	return l;
 }
 
-char *
-search_path(char *cwd, char *cmd, bool check_current_dir, int access_mode)
+/*
+ * search PATH to confirm the location and access mode of the given command
+ * IN cwd - current working directory
+ * IN cmd - command to execute
+ * IN check_current_dir - if true, search cwd for the command
+ * IN access_mode - required access rights of cmd
+ * IN test_exec - if false, do not confirm access mode of cmd if full path
+ * RET full path of cmd or NULL if not found
+ */
+char *search_path(char *cwd, char *cmd, bool check_current_dir, int access_mode,
+		  bool test_exec)
 {
 	List         l        = NULL;
 	ListIterator i        = NULL;
 	char *path, *fullpath = NULL;
 
-#if defined HAVE_BG && !defined HAVE_BG_L_P
+#if defined HAVE_BG
 	/* BGQ's runjob command required a fully qualified path */
-	if ( (cmd[0] == '.' || cmd[0] == '/') &&
-	     (access(cmd, access_mode) == 0 ) ) {
+	if (((cmd[0] == '.') || (cmd[0] == '/')) &&
+	    (access(cmd, access_mode) == 0)) {
 		if (cmd[0] == '.')
 			xstrfmtcat(fullpath, "%s/", cwd);
 		xstrcat(fullpath, cmd);
 		goto done;
 	}
 #else
-	if ((cmd[0] == '.') || (cmd[0] == '/'))
-		return NULL;
+	if ((cmd[0] == '.') || (cmd[0] == '/')) {
+		if (test_exec && (access(cmd, access_mode) == 0)) {
+			if (cmd[0] == '.')
+				xstrfmtcat(fullpath, "%s/", cwd);
+			xstrcat(fullpath, cmd);
+		}
+		goto done;
+	}
 #endif
 
 	l = _create_path_list();
@@ -824,11 +1196,9 @@ search_path(char *cwd, char *cmd, bool check_current_dir, int access_mode)
 			goto done;
 
 		xfree(fullpath);
-		fullpath = NULL;
 	}
-  done:
-	if (l)
-		list_destroy(l);
+done:
+	FREE_NULL_LIST(l);
 	return fullpath;
 }
 
@@ -855,7 +1225,7 @@ char *print_geometry(const uint16_t *geometry)
 	int dims = slurmdb_setup_cluster_dims();
 
 	if ((dims == 0) || !geometry[0]
-	    ||  (geometry[0] == (uint16_t)NO_VAL))
+	    ||  (geometry[0] == NO_VAL16))
 		return NULL;
 
 	for (i=0; i<dims; i++) {
@@ -881,7 +1251,7 @@ int get_signal_opts(char *optarg, uint16_t *warn_signal, uint16_t *warn_time,
 	if (optarg == NULL)
 		return -1;
 
-	if (!strncasecmp(optarg, "B:", 2)) {
+	if (!xstrncasecmp(optarg, "B:", 2)) {
 		*warn_flags = KILL_JOB_BATCH;
 		optarg += 2;
 	}
@@ -911,51 +1281,97 @@ int get_signal_opts(char *optarg, uint16_t *warn_signal, uint16_t *warn_time,
 }
 
 /* Convert a signal name to it's numeric equivalent.
- * Return -1 on failure */
+ * Return 0 on failure */
 int sig_name2num(char *signal_name)
 {
-	char *sig_name[] = {"HUP", "INT", "QUIT", "KILL", "TERM",
-			    "USR1", "USR2", "CONT", NULL};
-	int sig_num[] = {SIGHUP, SIGINT, SIGQUIT, SIGKILL, SIGTERM,
-			       SIGUSR1, SIGUSR2, SIGCONT};
+	struct signal_name_value {
+		char *name;
+		uint16_t val;
+	} signals[] = {
+		{ "HUP",	SIGHUP	},
+		{ "INT",	SIGINT	},
+		{ "QUIT",	SIGQUIT	},
+		{ "ABRT",	SIGABRT	},
+		{ "KILL",	SIGKILL	},
+		{ "ALRM",	SIGALRM	},
+		{ "TERM",	SIGTERM	},
+		{ "USR1",	SIGUSR1	},
+		{ "USR2",	SIGUSR2	},
+		{ "URG",	SIGURG	},
+		{ "CONT",	SIGCONT	},
+		{ "STOP",	SIGSTOP	},
+		{ "TSTP",	SIGTSTP	},
+		{ "TTIN",	SIGTTIN	},
+		{ "TTOU",	SIGTTOU	},
+		{ NULL,		0	}	/* terminate array */
+	};
 	char *ptr;
 	long tmp;
-	int sig;
 	int i;
 
 	tmp = strtol(signal_name, &ptr, 10);
 	if (ptr != signal_name) { /* found a number */
 		if (xstring_is_whitespace(ptr))
-			sig = (int)tmp;
+			return (int)tmp;
 		else
 			return 0;
-	} else {
-		ptr = (char *)signal_name;
-		while (isspace((int)*ptr))
-			ptr++;
-		if (strncasecmp(ptr, "SIG", 3) == 0)
-			ptr += 3;
-		for (i = 0; ; i++) {
-			if (sig_name[i] == NULL)
-				return 0;
-			if (strncasecmp(ptr, sig_name[i],
-					strlen(sig_name[i])) == 0) {
-				/* found the signal name */
-				if (!xstring_is_whitespace(ptr +
-							   strlen(sig_name[i])))
-					return 0;
-				sig = sig_num[i];
-				break;
-			}
+	}
+
+	/* search the array */
+	ptr = signal_name;
+	while (isspace((int)*ptr))
+		ptr++;
+	if (xstrncasecmp(ptr, "SIG", 3) == 0)
+		ptr += 3;
+	for (i = 0; ; i++) {
+		int siglen;
+		if (signals[i].name == NULL)
+			return 0;
+		siglen = strlen(signals[i].name);
+		if ((!xstrncasecmp(ptr, signals[i].name, siglen)
+		    && xstring_is_whitespace(ptr + siglen))) {
+			/* found the signal name */
+			return signals[i].val;
 		}
 	}
 
-	return sig;
+	return 0;	/* not found */
 }
 
+/*
+ * parse_uint16 - Convert ascii string to a 16 bit unsigned int.
+ * IN      aval - ascii string.
+ * IN/OUT  ival - 16 bit pointer.
+ * RET     0 if no error, 1 otherwise.
+ */
+extern int parse_uint16(char *aval, uint16_t *ival)
+{
+	/*
+	 * First,  convert the ascii value it to a
+	 * long long int. If the result is greater then
+	 * or equal to 0 and less than NO_VAL16
+	 * set the value and return. Otherwise
+	 * return an error.
+	 */
+	uint16_t max16uint = NO_VAL16;
+	long long tval;
+	char *p;
+
+	/*
+	 * Return error for invalid value.
+	 */
+	tval = strtoll(aval, &p, 10);
+	if (p[0] || (tval == LLONG_MIN) || (tval == LLONG_MAX) ||
+	    (tval < 0) || (tval >= max16uint))
+		return 1;
+
+	*ival = (uint16_t) tval;
+
+	return 0;
+}
 
 /*
- * parse_uint32 - Convert anscii string to a 32 bit unsigned int.
+ * parse_uint32 - Convert ascii string to a 32 bit unsigned int.
  * IN      aval - ascii string.
  * IN/OUT  ival - 32 bit pointer.
  * RET     0 if no error, 1 otherwise.
@@ -969,12 +1385,12 @@ extern int parse_uint32(char *aval, uint32_t *ival)
 	 * set the value and return. Otherwise return
 	 * an error.
 	 */
-	uint32_t max32uint = (uint32_t) NO_VAL;
+	uint32_t max32uint = NO_VAL;
 	long long tval;
 	char *p;
 
 	/*
- 	 * Return error for invalid value.
+	 * Return error for invalid value.
 	 */
 	tval = strtoll(aval, &p, 10);
 	if (p[0] || (tval == LLONG_MIN) || (tval == LLONG_MAX) ||
@@ -987,21 +1403,21 @@ extern int parse_uint32(char *aval, uint32_t *ival)
 }
 
 /*
- * parse_uint16 - Convert anscii string to a 16 bit unsigned int.
+ * parse_uint64 - Convert ascii string to a 64 bit unsigned int.
  * IN      aval - ascii string.
- * IN/OUT  ival - 16 bit pointer.
+ * IN/OUT  ival - 64 bit pointer.
  * RET     0 if no error, 1 otherwise.
  */
-extern int parse_uint16(char *aval, uint16_t *ival)
+extern int parse_uint64(char *aval, uint64_t *ival)
 {
 	/*
-	 * First,  convert the ascii value it to a
-	 * long long int. If the result is greater then
-	 * or equal to 0 and less than (uint16_t) NO_VAL
-	 * set the value and return. Otherwise
-	 * return an error.
+	 * First,  convert the ascii value it to an
+	 * unsigned long long. If the result is greater
+	 * than or equal to 0 and less than NO_VAL
+	 * set the value and return. Otherwise return
+	 * an error.
 	 */
-	uint16_t max16uint = (uint16_t) NO_VAL;
+	uint64_t max64uint = NO_VAL64;
 	long long tval;
 	char *p;
 
@@ -1010,12 +1426,40 @@ extern int parse_uint16(char *aval, uint16_t *ival)
 	 */
 	tval = strtoll(aval, &p, 10);
 	if (p[0] || (tval == LLONG_MIN) || (tval == LLONG_MAX) ||
-	    (tval < 0) || (tval >= max16uint))
+	    (tval < 0) || (tval >= max64uint))
 		return 1;
 
-	*ival = (uint16_t) tval;
+	*ival = (uint64_t) tval;
 
 	return 0;
+}
+
+/*
+ *  Get a decimal integer from arg.
+ *
+ *  Returns the integer on success, exits program on failure.
+ */
+extern int parse_int(const char *name, const char *val, bool positive)
+{
+	char *p = NULL;
+	long int result = 0;
+
+	if (val)
+		result = strtol(val, &p, 10);
+
+	if ((p == NULL) || (p[0] != '\0') || (result < 0L) ||
+	    (positive && (result <= 0L))) {
+		error ("Invalid numeric value \"%s\" for %s.", val, name);
+		exit(1);
+	} else if (result == LONG_MAX) {
+		error ("Numeric argument (%ld) to big for %s.", result, name);
+		exit(1);
+	} else if (result == LONG_MIN) {
+		error ("Numeric argument (%ld) to small for %s.", result, name);
+		exit(1);
+	}
+
+	return (int) result;
 }
 
 /* print_db_notok() - Print an error message about slurmdbd
@@ -1031,7 +1475,7 @@ void print_db_notok(const char *cname, bool isenv)
 		      "%s or contact your admin to resolve the problem.",
 		      isenv ? "SLURM_CLUSTERS from your environment" :
 		      "--cluster from your command line");
-	else if (!strcasecmp("all", cname))
+	else if (!xstrcasecmp("all", cname))
 		error("No clusters can be reached now. "
 		      "Contact your admin to resolve the problem.");
 	else
@@ -1241,4 +1685,161 @@ extern void bg_figure_nodes_tasks(int *min_nodes, int *max_nodes,
 	if (!set_tasks && figured)
 		*ntasks_per_node = 0;
 
+}
+
+/* parse_resv_flags()
+ */
+uint32_t
+parse_resv_flags(const char *flagstr, const char *msg)
+{
+	int flip;
+	uint32_t outflags = 0;
+	const char *curr = flagstr;
+	int taglen = 0;
+
+	while (*curr != '\0') {
+		flip = 0;
+		if (*curr == '+') {
+			curr++;
+		} else if (*curr == '-') {
+			flip = 1;
+			curr++;
+		}
+		taglen = 0;
+		while (curr[taglen] != ',' && curr[taglen] != '\0')
+			taglen++;
+
+		if (xstrncasecmp(curr, "Maintenance", MAX(taglen,1)) == 0) {
+			curr += taglen;
+			if (flip)
+				outflags |= RESERVE_FLAG_NO_MAINT;
+			else
+				outflags |= RESERVE_FLAG_MAINT;
+		} else if ((xstrncasecmp(curr, "Overlap", MAX(taglen,1))
+			    == 0) && (!flip)) {
+			curr += taglen;
+			outflags |= RESERVE_FLAG_OVERLAP;
+			/* "-OVERLAP" is not supported since that's the
+			 * default behavior and the option only applies
+			 * for reservation creation, not updates */
+		} else if (xstrncasecmp(curr, "Flex", MAX(taglen,1)) == 0) {
+			curr += taglen;
+			if (flip)
+				outflags |= RESERVE_FLAG_NO_FLEX;
+			else
+				outflags |= RESERVE_FLAG_FLEX;
+		} else if (xstrncasecmp(curr, "Ignore_Jobs", MAX(taglen,1))
+			   == 0) {
+			curr += taglen;
+			if (flip)
+				outflags |= RESERVE_FLAG_NO_IGN_JOB;
+			else
+				outflags |= RESERVE_FLAG_IGN_JOBS;
+		} else if (xstrncasecmp(curr, "Daily", MAX(taglen,1)) == 0) {
+			curr += taglen;
+			if (flip)
+				outflags |= RESERVE_FLAG_NO_DAILY;
+			else
+				outflags |= RESERVE_FLAG_DAILY;
+		} else if (xstrncasecmp(curr, "Weekday", MAX(taglen,1)) == 0) {
+			curr += taglen;
+			if (flip)
+				outflags |= RESERVE_FLAG_NO_WEEKDAY;
+			else
+				outflags |= RESERVE_FLAG_WEEKDAY;
+		} else if (xstrncasecmp(curr, "Weekend", MAX(taglen,1)) == 0) {
+			curr += taglen;
+			if (flip)
+				outflags |= RESERVE_FLAG_NO_WEEKEND;
+			else
+				outflags |= RESERVE_FLAG_WEEKEND;
+		} else if (xstrncasecmp(curr, "Weekly", MAX(taglen,1)) == 0) {
+			curr += taglen;
+			if (flip)
+				outflags |= RESERVE_FLAG_NO_WEEKLY;
+			else
+				outflags |= RESERVE_FLAG_WEEKLY;
+		} else if (!xstrncasecmp(curr, "Any_Nodes", MAX(taglen,1)) ||
+			   !xstrncasecmp(curr, "License_Only", MAX(taglen,1))) {
+			curr += taglen;
+			if (flip)
+				outflags |= RESERVE_FLAG_NO_ANY_NODES;
+			else
+				outflags |= RESERVE_FLAG_ANY_NODES;
+		} else if (xstrncasecmp(curr, "Static_Alloc", MAX(taglen,1))
+			   == 0) {
+			curr += taglen;
+			if (flip)
+				outflags |= RESERVE_FLAG_NO_STATIC;
+			else
+				outflags |= RESERVE_FLAG_STATIC;
+		} else if (xstrncasecmp(curr, "Part_Nodes", MAX(taglen, 2))
+			   == 0) {
+			curr += taglen;
+			if (flip)
+				outflags |= RESERVE_FLAG_NO_PART_NODES;
+			else
+				outflags |= RESERVE_FLAG_PART_NODES;
+		} else if (xstrncasecmp(curr, "PURGE_COMP", MAX(taglen, 2))
+			   == 0) {
+			curr += taglen;
+			outflags |= RESERVE_FLAG_PURGE_COMP;
+		} else if (!xstrncasecmp(curr, "First_Cores", MAX(taglen,1)) &&
+			   !flip) {
+			curr += taglen;
+			outflags |= RESERVE_FLAG_FIRST_CORES;
+		} else if (!xstrncasecmp(curr, "Time_Float", MAX(taglen,1)) &&
+			   !flip) {
+			curr += taglen;
+			outflags |= RESERVE_FLAG_TIME_FLOAT;
+		} else if (!xstrncasecmp(curr, "Replace", MAX(taglen, 1)) &&
+			   !flip) {
+			curr += taglen;
+			outflags |= RESERVE_FLAG_REPLACE;
+		} else if (!xstrncasecmp(curr, "Replace_Down", MAX(taglen, 8))
+			   && !flip) {
+			curr += taglen;
+			outflags |= RESERVE_FLAG_REPLACE_DOWN;
+		} else if (!xstrncasecmp(curr, "NO_HOLD_JOBS_AFTER_END",
+					 MAX(taglen, 1)) && !flip) {
+			curr += taglen;
+			outflags |= RESERVE_FLAG_NO_HOLD_JOBS;
+		} else {
+			error("Error parsing flags %s.  %s", flagstr, msg);
+			return 0xffffffff;
+		}
+
+		if (*curr == ',') {
+			curr++;
+		}
+	}
+	return outflags;
+}
+
+/* parse --compress for a compression type, set to default type if not found */
+uint16_t parse_compress_type(const char *arg)
+{
+	/* if called with null string return default compression type */
+	if (!arg) {
+#if HAVE_LZ4
+		return COMPRESS_LZ4;
+#elif HAVE_LIBZ
+		return COMPRESS_ZLIB;
+#else
+		error("No compression library available,"
+		      " compression disabled.");
+		return COMPRESS_OFF;
+#endif
+	}
+
+	if (!strcasecmp(arg, "zlib"))
+		return COMPRESS_ZLIB;
+	else if (!strcasecmp(arg, "lz4"))
+		return COMPRESS_LZ4;
+	else if (!strcasecmp(arg, "none"))
+		return COMPRESS_OFF;
+
+	error("Compression type '%s' unknown, disabling compression support.",
+	      arg);
+	return COMPRESS_OFF;
 }

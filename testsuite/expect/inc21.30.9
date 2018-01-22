@@ -7,7 +7,7 @@
 # Written by Nathan Yee <nyee32@schedmd.com>
 #
 # This file is part of SLURM, a resource management program.
-# For details, see <http://slurm.schedmd.com/>.
+# For details, see <https://slurm.schedmd.com/>.
 # Please also read the included file: DISCLAIMER.
 #
 # SLURM is free software; you can redistribute it and/or modify it under
@@ -27,7 +27,8 @@
 
 # Test GrpCPUmins
 proc inc21_30_9 { } {
-	global salloc srun acct bin_sleep grpcpumin_num number qostest exit_code
+	global salloc srun nthreads acct bin_sleep grpcpumin_num number
+	global totcpus test_node qostest exit_code
 
 	send_user "\nStarting GrpCpuMins test (Within: inc21.30.9) \n\n"
 
@@ -38,14 +39,13 @@ proc inc21_30_9 { } {
 
 	set job_id1 0
 	set job_id2 0
-	set task_cnt 2
 	set timeout [expr $grpcpumin_num * 120]
-	set timelimit [expr $grpcpumin_num / $task_cnt]
+	set timelimit [expr $grpcpumin_num / $nthreads]
 	# Since GrpCpuMins is a decayed variable lets reset it to make sure
 	# the test gets exactly what we would expect.
 	reset_qos_usage "" $qostest
 
-	spawn $salloc --account=$acct --qos=$qostest -n$task_cnt -t$timelimit $srun $bin_sleep 1
+	spawn $salloc --account=$acct -w$test_node --qos=$qostest -n$nthreads -t$timelimit $srun $bin_sleep 1
 	expect {
 		-re "Granted job allocation ($number)" {
 			set job_id1 $expect_out(1,string)
@@ -54,6 +54,10 @@ proc inc21_30_9 { } {
 		-re "Pending job allocation ($number)" {
 			set job_id1 $expect_out(1,string)
 			send_user "\nFAILURE: This job should not be pending (Within: inc21.30.9)\n"
+			set exit_code 1
+		}
+		-re "error" {
+			send_user "\nFAILURE: Job allocation should not have failed. (Within: inc21.30.9)\n"
 			set exit_code 1
 		}
 		timeout {
@@ -68,7 +72,7 @@ proc inc21_30_9 { } {
 
 	reset_qos_usage "" $qostest
 
-	spawn $salloc --account=$acct --qos=$qostest -n$task_cnt -t[expr $timelimit + 1] $srun $bin_sleep 1
+	spawn $salloc --account=$acct -w$test_node --qos=$qostest -n$nthreads -t[expr $timelimit + 1] $srun $bin_sleep 1
 	expect {
 		-re "Pending job allocation ($number)" {
 			set job_id2 $expect_out(1,string)

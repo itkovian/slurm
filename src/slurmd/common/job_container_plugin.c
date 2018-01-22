@@ -5,7 +5,7 @@
  *  Written by Morris Jette
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -109,7 +109,7 @@ extern int job_container_init(void)
 			 (g_container_context_num + 1));
 		xrealloc(g_container_context, (sizeof(plugin_context_t *)
 					  * (g_container_context_num + 1)));
-		if (strncmp(job_container, "job_container/", 14) == 0)
+		if (xstrncmp(job_container, "job_container/", 14) == 0)
 			job_container += 14; /* backward compatibility */
 		job_container = xstrdup_printf("job_container/%s",
 					       job_container);

@@ -7,7 +7,7 @@
  *  Matthieu Hautreux
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -38,12 +38,9 @@
 
 /* FIXME: Enable when kernel support is ready. */
 
-/* #if HAVE_CONFIG_H */
-/* #include "config.h" */
-/* #endif */
-
-/* #include <sys/types.h> */
+/* #include <limits.h> */
 /* #include <stdlib.h>		/\* getenv   *\/ */
+/* #include <sys/types.h> */
 
 /* #include "slurm/slurm_errno.h" */
 /* #include "slurm/slurm.h" */
@@ -51,10 +48,6 @@
 /* #include "src/plugins/jobacct_gather/cgroup/jobacct_gather_cgroup.h" */
 /* #include "src/slurmd/slurmstepd/slurmstepd_job.h" */
 /* #include "src/slurmd/slurmd/slurmd.h" */
-
-/* #ifndef PATH_MAX */
-/* #define PATH_MAX 256 */
-/* #endif */
 
 /* static char user_cgroup_path[PATH_MAX]; */
 /* static char job_cgroup_path[PATH_MAX]; */
@@ -158,10 +151,22 @@
 
 /* 	/\* build job step cgroup relative path if not set (may not be) *\/ */
 /* 	if (*jobstep_cgroup_path == '\0') { */
-/* 		if (snprintf(jobstep_cgroup_path, PATH_MAX, "%s/step_%u", */
-/* 			     job_cgroup_path, stepid) >= PATH_MAX) { */
+/*		int len; */
+/*		if (stepid == SLURM_BATCH_SCRIPT) { */
+/*			len = snprintf(jobstep_cgroup_path, PATH_MAX, */
+/*				       "%s/step_batch", job_cgroup_path); */
+/*		} else if (stepid == SLURM_EXTERN_CONT) { */
+/*			len = snprintf(jobstep_cgroup_path, PATH_MAX, */
+/*				       "%s/step_extern", job_cgroup_path); */
+/*		} else { */
+/*			len = snprintf(jobstep_cgroup_path, PATH_MAX, */
+/*				       "%s/step_%u", */
+/*				       job_cgroup_path, stepid); */
+/*		} */
+/*		if (len >= PATH_MAX) { */
 /* 			error("jobacct_gather/cgroup: unable to build job step " */
-/* 			      "%u blkio cg relative path : %m", stepid); */
+/* 			      "%u.%u blkio cg relative path : %m", */
+/*			      jobid, stepid); */
 /* 			return SLURM_ERROR; */
 /* 		} */
 /* 	} */
@@ -213,7 +218,7 @@
 /* 		goto error; */
 /* 	} */
 
-/* 	if (xcgroup_instanciate(&user_blkio_cg) != XCGROUP_SUCCESS) { */
+/* 	if (xcgroup_instantiate(&user_blkio_cg) != XCGROUP_SUCCESS) { */
 /* 		xcgroup_destroy(&user_blkio_cg); */
 /* 		error("jobacct_gather/cgroup: unable to instanciate user %u " */
 /* 		      "blkio cgroup", uid); */
@@ -234,7 +239,7 @@
 /* 		goto error; */
 /* 	} */
 
-/* 	if (xcgroup_instanciate(&job_blkio_cg) != XCGROUP_SUCCESS) { */
+/* 	if (xcgroup_instantiate(&job_blkio_cg) != XCGROUP_SUCCESS) { */
 /* 		xcgroup_destroy(&user_blkio_cg); */
 /* 		xcgroup_destroy(&job_blkio_cg); */
 /* 		error("jobacct_gather/cgroup: unable to instanciate job %u " */
@@ -259,7 +264,7 @@
 /* 		goto error; */
 /* 	} */
 
-/* 	if (xcgroup_instanciate(&step_blkio_cg) != XCGROUP_SUCCESS) { */
+/* 	if (xcgroup_instantiate(&step_blkio_cg) != XCGROUP_SUCCESS) { */
 /* 		xcgroup_destroy(&user_blkio_cg); */
 /* 		xcgroup_destroy(&job_blkio_cg); */
 /* 		xcgroup_destroy(&step_blkio_cg); */
@@ -285,7 +290,7 @@
 /* 		goto error; */
 /* 	} */
 
-/* 	if (xcgroup_instanciate(&task_blkio_cg) != XCGROUP_SUCCESS) { */
+/* 	if (xcgroup_instantiate(&task_blkio_cg) != XCGROUP_SUCCESS) { */
 /* 		xcgroup_destroy(&user_blkio_cg); */
 /* 		xcgroup_destroy(&job_blkio_cg); */
 /* 		xcgroup_destroy(&step_blkio_cg); */

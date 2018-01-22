@@ -1,4 +1,4 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Test of SLURM functionality
 #          Test the qalter -N option for changing the name of a job.
@@ -11,7 +11,7 @@
 # Written by Nathan Yee <nyee32@schedmd.com>
 #
 # This file is part of SLURM, a resource management program.
-# For details, see <http://slurm.schedmd.com/>.
+# For details, see <https://slurm.schedmd.com/>.
 # Please also read the included file: DISCLAIMER.
 #
 # SLURM is free software; you can redistribute it and/or modify it under
@@ -31,8 +31,8 @@
 source ./globals
 
 set test_id     "20.8"
-set file_in     "$test_id\.script"
-set job_name    "$test_id\.newname"
+set file_in     "test$test_id\.bash"
+set job_name    "test$test_id\.newname"
 set job_id      0
 set exit_code   0
 
@@ -73,7 +73,7 @@ proc check_name { job_id name } {
 	}
 	if {$check_out != 1} {
 		send_user "\nFAILURE: job name for job $job_id was not changed\n"
-		set exi_code 1
+		set exit_code 1
 	}
 }
 
@@ -108,6 +108,9 @@ expect {
 }
 
 check_name $job_id $job_name
+if {[cancel_job $job_id] != 0} {
+	set exit_code 1
+}
 
 if {$exit_code == 0} {
 	exec $bin_rm -f $file_in

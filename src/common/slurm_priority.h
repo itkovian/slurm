@@ -7,7 +7,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -39,15 +39,7 @@
 #ifndef _SLURM_PRIORITY_H
 #define _SLURM_PRIORITY_H
 
-#if HAVE_CONFIG_H
-#  include "config.h"
-#endif
-#if HAVE_STDINT_H
-#  include <stdint.h>           /* for uint16_t, uint32_t definitions */
-#endif
-#if HAVE_INTTYPES_H
-#  include <inttypes.h>         /* for uint16_t, uint32_t definitions */
-#endif
+#include <inttypes.h>
 
 #include "src/slurmctld/slurmctld.h"
 #include "src/common/slurm_accounting_storage.h"
@@ -61,7 +53,7 @@ extern void priority_g_reconfig(bool assoc_clear);
  * association.
  * IN/OUT: assoc - association to have usage set.
  */
-extern void priority_g_set_assoc_usage(slurmdb_association_rec_t *assoc);
+extern void priority_g_set_assoc_usage(slurmdb_assoc_rec_t *assoc);
 extern double priority_g_calc_fs_factor(long double usage_efctv,
 					long double shares_norm);
 extern List priority_g_get_priority_factors_list(

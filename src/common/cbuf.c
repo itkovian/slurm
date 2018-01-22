@@ -1,7 +1,5 @@
 /*****************************************************************************
- *  $Id$
- *****************************************************************************
- *  $LSDId: cbuf.c,v 1.35 2005/01/13 00:41:17 dun Exp $
+ *  cbuf.c
  *****************************************************************************
  *  Copyright (C) 2002-2005 The Regents of the University of California.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -14,15 +12,15 @@
  *  Software Foundation; either version 2 of the License, or (at your option)
  *  any later version.
  *
- *  In addition, as a special exception, the copyright holders give permission 
- *  to link the code of portions of this program with the OpenSSL library under 
- *  certain conditions as described in each individual source file, and 
- *  distribute linked combinations including the two. You must obey the GNU 
- *  General Public License in all respects for all of the code used other than 
- *  OpenSSL. If you modify file(s) with this exception, you may extend this 
- *  exception to your version of the file(s), but you are not obligated to do 
+ *  In addition, as a special exception, the copyright holders give permission
+ *  to link the code of portions of this program with the OpenSSL library under
+ *  certain conditions as described in each individual source file, and
+ *  distribute linked combinations including the two. You must obey the GNU
+ *  General Public License in all respects for all of the code used other than
+ *  OpenSSL. If you modify file(s) with this exception, you may extend this
+ *  exception to your version of the file(s), but you are not obligated to do
  *  so. If you do not wish to do so, delete this exception statement from your
- *  version.  If you delete this exception statement from all source files in 
+ *  version.  If you delete this exception statement from all source files in
  *  the program, then also delete it here.
  *
  *  LSD-Tools is distributed in the hope that it will be useful, but WITHOUT
@@ -38,43 +36,17 @@
  *****************************************************************************/
 
 
-#ifdef HAVE_CONFIG_H
-#  include "config.h"
-#endif /* HAVE_CONFIG_H */
-
-#ifdef WITH_PTHREADS
-#  include <pthread.h>
-#endif /* WITH_PTHREADS */
+#include "config.h"
 
 #include <assert.h>
 #include <errno.h>
+#include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+
 #include "src/common/cbuf.h"
 #include "src/common/log.h"
-
-
-/*********************
- *  lsd_fatal_error  *
- *********************/
-
-#ifdef WITH_LSD_FATAL_ERROR_FUNC
-#  undef lsd_fatal_error
-   extern void lsd_fatal_error(char *file, int line, char *mesg);
-#else /* !WITH_LSD_FATAL_ERROR_FUNC */
-#  ifndef lsd_fatal_error
-#    include <errno.h>
-#    include <stdio.h>
-#    include <string.h>
-	static void lsd_fatal_error(char *file, int line, char *mesg)
-	{
-		fprintf(log_fp(), "ERROR: [%s:%d] %s: %s\n",
-			file, line, mesg, strerror(errno));
-		fflush(log_fp());
-	}
-#  endif /* !lsd_fatal_error */
-#endif /* !WITH_LSD_FATAL_ERROR_FUNC */
 
 
 /*********************
@@ -115,9 +87,7 @@ struct cbuf {
     unsigned long       magic;          /* cookie for asserting validity     */
 #endif /* !NDEBUG */
 
-#ifdef WITH_PTHREADS
     pthread_mutex_t     mutex;          /* mutex to protect access to cbuf   */
-#endif /* WITH_PTHREADS */
 
     int                 alloc;          /* num bytes malloc'd/realloc'd      */
     int                 minsize;        /* min bytes of data to allocate     */
@@ -158,78 +128,9 @@ static int cbuf_grow (cbuf_t cb, int n);
 static int cbuf_shrink (cbuf_t cb);
 
 #ifndef NDEBUG
-static int cbuf_is_valid (cbuf_t cb);
+static int _cbuf_is_valid (cbuf_t cb);
+static int _cbuf_mutex_is_locked (cbuf_t cb);
 #endif /* !NDEBUG */
-
-
-/************
- *  Macros  *
- ************/
-
-#ifndef MAX
-#  define MAX(x,y) (((x) >= (y)) ? (x) : (y))
-#endif /* !MAX */
-
-#ifndef MIN
-#  define MIN(x,y) (((x) <= (y)) ? (x) : (y))
-#endif /* !MIN */
-
-#ifdef WITH_PTHREADS
-
-#  define cbuf_mutex_init(cb)                                                 \
-     do {                                                                     \
-         int e = pthread_mutex_init(&cb->mutex, NULL);                        \
-         if (e) {                                                             \
-             errno = e;                                                       \
-             lsd_fatal_error(__FILE__, __LINE__, "cbuf mutex init");          \
-             abort();                                                         \
-         }                                                                    \
-     } while (0)
-
-#  define cbuf_mutex_lock(cb)                                                 \
-     do {                                                                     \
-         int e = pthread_mutex_lock(&cb->mutex);                              \
-         if (e) {                                                             \
-             errno = e;                                                       \
-             lsd_fatal_error(__FILE__, __LINE__, "cbuf mutex lock");          \
-             abort();                                                         \
-         }                                                                    \
-     } while (0)
-
-#  define cbuf_mutex_unlock(cb)                                               \
-     do {                                                                     \
-         int e = pthread_mutex_unlock(&cb->mutex);                            \
-         if (e) {                                                             \
-             errno = e;                                                       \
-             lsd_fatal_error(__FILE__, __LINE__, "cbuf mutex unlock");        \
-             abort();                                                         \
-         }                                                                    \
-     } while (0)
-
-#  define cbuf_mutex_destroy(cb)                                              \
-     do {                                                                     \
-         int e = pthread_mutex_destroy(&cb->mutex);                           \
-         if (e) {                                                             \
-             errno = e;                                                       \
-             lsd_fatal_error(__FILE__, __LINE__, "cbuf mutex destroy");       \
-             abort();                                                         \
-         }                                                                    \
-     } while (0)
-
-#  ifndef NDEBUG
-     static int cbuf_mutex_is_locked (cbuf_t cb);
-#  endif /* !NDEBUG */
-
-#else /* !WITH_PTHREADS */
-
-#  define cbuf_mutex_init(cb)
-#  define cbuf_mutex_lock(cb)
-#  define cbuf_mutex_unlock(cb)
-#  define cbuf_mutex_destroy(cb)
-#  define cbuf_mutex_is_locked(cb) (1)
-
-#endif /* !WITH_PTHREADS */
-
 
 /***************
  *  Functions  *
@@ -264,7 +165,7 @@ cbuf_create (int minsize, int maxsize)
         errno = ENOMEM;
         return(lsd_nomem_error(__FILE__, __LINE__, "cbuf data"));
     }
-    cbuf_mutex_init(cb);
+    slurm_mutex_init(&cb->mutex);
     cb->minsize = minsize;
     cb->maxsize = (maxsize > minsize) ? maxsize : minsize;
     cb->size = minsize;
@@ -288,9 +189,9 @@ cbuf_create (int minsize, int maxsize)
     memcpy(cb->data - CBUF_MAGIC_LEN, (void *) &cb->magic, CBUF_MAGIC_LEN);
     memcpy(cb->data + cb->size + 1, (void *) &cb->magic, CBUF_MAGIC_LEN);
 
-    cbuf_mutex_lock(cb);
-    assert(cbuf_is_valid(cb));
-    cbuf_mutex_unlock(cb);
+    slurm_mutex_lock(&cb->mutex);
+    assert(_cbuf_is_valid(cb));
+    slurm_mutex_unlock(&cb->mutex);
 #endif /* !NDEBUG */
 
     return(cb);
@@ -301,8 +202,8 @@ void
 cbuf_destroy (cbuf_t cb)
 {
     assert(cb != NULL);
-    cbuf_mutex_lock(cb);
-    assert(cbuf_is_valid(cb));
+    slurm_mutex_lock(&cb->mutex);
+    assert(_cbuf_is_valid(cb));
 
 #ifndef NDEBUG
     /*  The moon sometimes looks like a C, but you can't eat that.
@@ -315,8 +216,8 @@ cbuf_destroy (cbuf_t cb)
 #endif /* !NDEBUG */
 
     free(cb->data);
-    cbuf_mutex_unlock(cb);
-    cbuf_mutex_destroy(cb);
+    slurm_mutex_unlock(&cb->mutex);
+    slurm_mutex_destroy(&cb->mutex);
     free(cb);
     return;
 }
@@ -326,16 +227,16 @@ void
 cbuf_flush (cbuf_t cb)
 {
     assert(cb != NULL);
-    cbuf_mutex_lock(cb);
-    assert(cbuf_is_valid(cb));
+    slurm_mutex_lock(&cb->mutex);
+    assert(_cbuf_is_valid(cb));
     /*
      *  FIXME: Shrink buffer back to minimum size.
      */
     cb->used = 0;
     cb->got_wrap = 0;
     cb->i_in = cb->i_out = cb->i_rep = 0;
-    assert(cbuf_is_valid(cb));
-    cbuf_mutex_unlock(cb);
+    assert(_cbuf_is_valid(cb));
+    slurm_mutex_unlock(&cb->mutex);
     return;
 }
 
@@ -346,10 +247,10 @@ cbuf_size (cbuf_t cb)
     int size;
 
     assert(cb != NULL);
-    cbuf_mutex_lock(cb);
-    assert(cbuf_is_valid(cb));
+    slurm_mutex_lock(&cb->mutex);
+    assert(_cbuf_is_valid(cb));
     size = cb->maxsize;
-    cbuf_mutex_unlock(cb);
+    slurm_mutex_unlock(&cb->mutex);
     return(size);
 }
 
@@ -360,10 +261,10 @@ cbuf_free (cbuf_t cb)
     int nfree;
 
     assert(cb != NULL);
-    cbuf_mutex_lock(cb);
-    assert(cbuf_is_valid(cb));
+    slurm_mutex_lock(&cb->mutex);
+    assert(_cbuf_is_valid(cb));
     nfree = cb->maxsize - cb->used;
-    cbuf_mutex_unlock(cb);
+    slurm_mutex_unlock(&cb->mutex);
     return(nfree);
 }
 
@@ -374,10 +275,10 @@ cbuf_used (cbuf_t cb)
     int used;
 
     assert(cb != NULL);
-    cbuf_mutex_lock(cb);
-    assert(cbuf_is_valid(cb));
+    slurm_mutex_lock(&cb->mutex);
+    assert(_cbuf_is_valid(cb));
     used = cb->used;
-    cbuf_mutex_unlock(cb);
+    slurm_mutex_unlock(&cb->mutex);
     return(used);
 }
 
@@ -388,10 +289,10 @@ cbuf_lines_used (cbuf_t cb)
     int lines = -1;
 
     assert(cb != NULL);
-    cbuf_mutex_lock(cb);
-    assert(cbuf_is_valid(cb));
+    slurm_mutex_lock(&cb->mutex);
+    assert(_cbuf_is_valid(cb));
     cbuf_find_unread_line(cb, cb->size, &lines);
-    cbuf_mutex_unlock(cb);
+    slurm_mutex_unlock(&cb->mutex);
     return(lines);
 }
 
@@ -408,10 +309,10 @@ cbuf_reused (cbuf_t cb)
     int reused;
 
     assert(cb != NULL);
-    cbuf_mutex_lock(cb);
-    assert(cbuf_is_valid(cb));
+    slurm_mutex_lock(&cb->mutex);
+    assert(_cbuf_is_valid(cb));
     reused = (cb->i_out - cb->i_rep + (cb->size + 1)) % (cb->size + 1);
-    cbuf_mutex_unlock(cb);
+    slurm_mutex_unlock(&cb->mutex);
     return(reused);
 }
 
@@ -422,10 +323,10 @@ cbuf_lines_reused (cbuf_t cb)
     int lines = -1;
 
     assert(cb != NULL);
-    cbuf_mutex_lock(cb);
-    assert(cbuf_is_valid(cb));
+    slurm_mutex_lock(&cb->mutex);
+    assert(_cbuf_is_valid(cb));
     cbuf_find_replay_line(cb, cb->size, &lines, NULL);
-    cbuf_mutex_unlock(cb);
+    slurm_mutex_unlock(&cb->mutex);
     return(lines);
 }
 
@@ -436,10 +337,10 @@ cbuf_is_empty (cbuf_t cb)
     int used;
 
     assert(cb != NULL);
-    cbuf_mutex_lock(cb);
-    assert(cbuf_is_valid(cb));
+    slurm_mutex_lock(&cb->mutex);
+    assert(_cbuf_is_valid(cb));
     used = cb->used;
-    cbuf_mutex_unlock(cb);
+    slurm_mutex_unlock(&cb->mutex);
     return(used == 0);
 }
 
@@ -455,8 +356,8 @@ cbuf_opt_get (cbuf_t cb, cbuf_opt_t name, int *value)
         errno = EINVAL;
         return(-1);
     }
-    cbuf_mutex_lock(cb);
-    assert(cbuf_is_valid(cb));
+    slurm_mutex_lock(&cb->mutex);
+    assert(_cbuf_is_valid(cb));
     if (name == CBUF_OPT_OVERWRITE) {
         *value = cb->overwrite;
     }
@@ -464,7 +365,7 @@ cbuf_opt_get (cbuf_t cb, cbuf_opt_t name, int *value)
         errno = EINVAL;
         rc = -1;
     }
-    cbuf_mutex_unlock(cb);
+    slurm_mutex_unlock(&cb->mutex);
     return(rc);
 }
 
@@ -476,8 +377,8 @@ cbuf_opt_set (cbuf_t cb, cbuf_opt_t name, int value)
 
     assert(cb != NULL);
 
-    cbuf_mutex_lock(cb);
-    assert(cbuf_is_valid(cb));
+    slurm_mutex_lock(&cb->mutex);
+    assert(_cbuf_is_valid(cb));
     if (name == CBUF_OPT_OVERWRITE) {
         if  (  (value == CBUF_NO_DROP)
             || (value == CBUF_WRAP_ONCE)
@@ -493,8 +394,8 @@ cbuf_opt_set (cbuf_t cb, cbuf_opt_t name, int value)
         errno = EINVAL;
         rc = -1;
     }
-    assert(cbuf_is_valid(cb));
-    cbuf_mutex_unlock(cb);
+    assert(_cbuf_is_valid(cb));
+    slurm_mutex_unlock(&cb->mutex);
     return(rc);
 }
 
@@ -511,8 +412,8 @@ cbuf_drop (cbuf_t src, int len)
     if (len == 0) {
         return(0);
     }
-    cbuf_mutex_lock(src);
-    assert(cbuf_is_valid(src));
+    slurm_mutex_lock(&src->mutex);
+    assert(_cbuf_is_valid(src));
 
     if (len == -1) {
         len = src->used;
@@ -523,8 +424,8 @@ cbuf_drop (cbuf_t src, int len)
     if (len > 0) {
         cbuf_dropper(src, len);
     }
-    assert(cbuf_is_valid(src));
-    cbuf_mutex_unlock(src);
+    assert(_cbuf_is_valid(src));
+    slurm_mutex_unlock(&src->mutex);
     return(len);
 }
 
@@ -543,11 +444,11 @@ cbuf_peek (cbuf_t src, void *dstbuf, int len)
     if (len == 0) {
         return(0);
     }
-    cbuf_mutex_lock(src);
-    assert(cbuf_is_valid(src));
+    slurm_mutex_lock(&src->mutex);
+    assert(_cbuf_is_valid(src));
     n = cbuf_reader(src, len, (cbuf_iof) cbuf_put_mem, &dstbuf);
-    assert(cbuf_is_valid(src));
-    cbuf_mutex_unlock(src);
+    assert(_cbuf_is_valid(src));
+    slurm_mutex_unlock(&src->mutex);
     return(n);
 }
 
@@ -566,14 +467,14 @@ cbuf_read (cbuf_t src, void *dstbuf, int len)
     if (len == 0) {
         return(0);
     }
-    cbuf_mutex_lock(src);
-    assert(cbuf_is_valid(src));
+    slurm_mutex_lock(&src->mutex);
+    assert(_cbuf_is_valid(src));
     n = cbuf_reader(src, len, (cbuf_iof) cbuf_put_mem, &dstbuf);
     if (n > 0) {
         cbuf_dropper(src, n);
     }
-    assert(cbuf_is_valid(src));
-    cbuf_mutex_unlock(src);
+    assert(_cbuf_is_valid(src));
+    slurm_mutex_unlock(&src->mutex);
     return(n);
 }
 
@@ -592,11 +493,11 @@ cbuf_replay (cbuf_t src, void *dstbuf, int len)
     if (len == 0) {
         return(0);
     }
-    cbuf_mutex_lock(src);
-    assert(cbuf_is_valid(src));
+    slurm_mutex_lock(&src->mutex);
+    assert(_cbuf_is_valid(src));
     n = cbuf_replayer(src, len, (cbuf_iof) cbuf_put_mem, &dstbuf);
-    assert(cbuf_is_valid(src));
-    cbuf_mutex_unlock(src);
+    assert(_cbuf_is_valid(src));
+    slurm_mutex_unlock(&src->mutex);
     return(n);
 }
 
@@ -615,8 +516,8 @@ cbuf_rewind (cbuf_t src, int len)
     if (len == 0) {
         return(0);
     }
-    cbuf_mutex_lock(src);
-    assert(cbuf_is_valid(src));
+    slurm_mutex_lock(&src->mutex);
+    assert(_cbuf_is_valid(src));
 
     reused = (src->i_out - src->i_rep + (src->size + 1)) % (src->size + 1);
     if (len == -1) {
@@ -629,8 +530,8 @@ cbuf_rewind (cbuf_t src, int len)
         src->used += len;
         src->i_out = (src->i_out - len + (src->size + 1)) % (src->size + 1);
     }
-    assert(cbuf_is_valid(src));
-    cbuf_mutex_unlock(src);
+    assert(_cbuf_is_valid(src));
+    slurm_mutex_unlock(&src->mutex);
     return(len);
 }
 
@@ -652,11 +553,11 @@ cbuf_write (cbuf_t dst, void *srcbuf, int len, int *ndropped)
     if (len == 0) {
         return(0);
     }
-    cbuf_mutex_lock(dst);
-    assert(cbuf_is_valid(dst));
+    slurm_mutex_lock(&dst->mutex);
+    assert(_cbuf_is_valid(dst));
     n = cbuf_writer(dst, len, (cbuf_iof) cbuf_get_mem, &srcbuf, ndropped);
-    assert(cbuf_is_valid(dst));
-    cbuf_mutex_unlock(dst);
+    assert(_cbuf_is_valid(dst));
+    slurm_mutex_unlock(&dst->mutex);
     return(n);
 }
 
@@ -675,15 +576,15 @@ cbuf_drop_line (cbuf_t src, int len, int lines)
     if (lines == 0) {
         return(0);
     }
-    cbuf_mutex_lock(src);
-    assert(cbuf_is_valid(src));
+    slurm_mutex_lock(&src->mutex);
+    assert(_cbuf_is_valid(src));
 
     n = cbuf_find_unread_line(src, len, &lines);
     if (n > 0) {
         cbuf_dropper(src, n);
     }
-    assert(cbuf_is_valid(src));
-    cbuf_mutex_unlock(src);
+    assert(_cbuf_is_valid(src));
+    slurm_mutex_unlock(&src->mutex);
     return(n);
 }
 
@@ -703,8 +604,8 @@ cbuf_peek_line (cbuf_t src, char *dstbuf, int len, int lines)
     if (lines == 0) {
         return(0);
     }
-    cbuf_mutex_lock(src);
-    assert(cbuf_is_valid(src));
+    slurm_mutex_lock(&src->mutex);
+    assert(_cbuf_is_valid(src));
     n = cbuf_find_unread_line(src, len - 1, &lines);
     if (n > 0) {
         if (len > 0) {
@@ -712,14 +613,15 @@ cbuf_peek_line (cbuf_t src, char *dstbuf, int len, int lines)
             if (m > 0) {
                 pdst = dstbuf;
                 l = cbuf_reader(src, m, (cbuf_iof) cbuf_put_mem, &pdst);
-                assert(l == m);
+		if (l)
+			assert(l == m);
             }
             assert(m < len);
             dstbuf[m] = '\0';
         }
     }
-    assert(cbuf_is_valid(src));
-    cbuf_mutex_unlock(src);
+    assert(_cbuf_is_valid(src));
+    slurm_mutex_unlock(&src->mutex);
     return(n);
 }
 
@@ -739,8 +641,8 @@ cbuf_read_line (cbuf_t src, char *dstbuf, int len, int lines)
     if (lines == 0) {
         return(0);
     }
-    cbuf_mutex_lock(src);
-    assert(cbuf_is_valid(src));
+    slurm_mutex_lock(&src->mutex);
+    assert(_cbuf_is_valid(src));
     n = cbuf_find_unread_line(src, len - 1, &lines);
     if (n > 0) {
         if (len > 0) {
@@ -748,15 +650,16 @@ cbuf_read_line (cbuf_t src, char *dstbuf, int len, int lines)
             if (m > 0) {
                 pdst = dstbuf;
                 l = cbuf_reader(src, m, (cbuf_iof) cbuf_put_mem, &pdst);
-                assert(l == m);
+		if (l)
+			assert(l == m);
             }
             assert(m < len);
             dstbuf[m] = '\0';
         }
         cbuf_dropper(src, n);
     }
-    assert(cbuf_is_valid(src));
-    cbuf_mutex_unlock(src);
+    assert(_cbuf_is_valid(src));
+    slurm_mutex_unlock(&src->mutex);
     return(n);
 }
 
@@ -777,8 +680,8 @@ cbuf_replay_line (cbuf_t src, char *dstbuf, int len, int lines)
     if (lines == 0) {
         return(0);
     }
-    cbuf_mutex_lock(src);
-    assert(cbuf_is_valid(src));
+    slurm_mutex_lock(&src->mutex);
+    assert(_cbuf_is_valid(src));
     n = cbuf_find_replay_line(src, len - 1, &lines, &nl);
     if (n > 0) {
         if (len > 0) {
@@ -788,7 +691,8 @@ cbuf_replay_line (cbuf_t src, char *dstbuf, int len, int lines)
             if (m > 0) {
                 pdst = dstbuf;
                 l = cbuf_replayer(src, m, (cbuf_iof) cbuf_put_mem, &pdst);
-                assert(l == m);
+		if (l)
+			assert(l == m);
             }
             /*  Append newline if needed and space allows.
              */
@@ -800,8 +704,8 @@ cbuf_replay_line (cbuf_t src, char *dstbuf, int len, int lines)
             n += nl;
         }
     }
-    assert(cbuf_is_valid(src));
-    cbuf_mutex_unlock(src);
+    assert(_cbuf_is_valid(src));
+    slurm_mutex_unlock(&src->mutex);
     return(n);
 }
 
@@ -820,16 +724,16 @@ cbuf_rewind_line (cbuf_t src, int len, int lines)
     if (lines == 0) {
         return(0);
     }
-    cbuf_mutex_lock(src);
-    assert(cbuf_is_valid(src));
+    slurm_mutex_lock(&src->mutex);
+    assert(_cbuf_is_valid(src));
 
     n = cbuf_find_replay_line(src, len, &lines, NULL);
     if (n > 0) {
         src->used += n;
         src->i_out = (src->i_out - n + (src->size + 1)) % (src->size + 1);
     }
-    assert(cbuf_is_valid(src));
-    cbuf_mutex_unlock(src);
+    assert(_cbuf_is_valid(src));
+    slurm_mutex_unlock(&src->mutex);
     return(n);
 }
 
@@ -859,14 +763,14 @@ cbuf_write_line (cbuf_t dst, char *srcbuf, int *ndropped)
     if ((len == 0) || (srcbuf[len - 1] != '\n')) {
         len++;
     }
-    cbuf_mutex_lock(dst);
-    assert(cbuf_is_valid(dst));
+    slurm_mutex_lock(&dst->mutex);
+    assert(_cbuf_is_valid(dst));
     /*
      *  Attempt to grow dst cbuf if necessary.
      */
     nfree = dst->size - dst->used;
     if ((len > nfree) && (dst->size < dst->maxsize)) {
-        nfree += cbuf_grow(dst, len - nfree);
+        (void) cbuf_grow(dst, len - nfree);
     }
     /*  Determine if src will fit (or be made to fit) in dst cbuf.
      */
@@ -895,7 +799,8 @@ cbuf_write_line (cbuf_t dst, char *srcbuf, int *ndropped)
          */
         if (ncopy > 0) {
             n = cbuf_writer(dst, ncopy, (cbuf_iof) cbuf_get_mem, &psrc, &d);
-            assert(n == ncopy);
+	    if (n)
+		    assert(n == ncopy);
             ndrop += d;
         }
         /*  Append newline if needed.
@@ -906,8 +811,8 @@ cbuf_write_line (cbuf_t dst, char *srcbuf, int *ndropped)
             ndrop += d;
         }
     }
-    assert(cbuf_is_valid(dst));
-    cbuf_mutex_unlock(dst);
+    assert(_cbuf_is_valid(dst));
+    slurm_mutex_unlock(&dst->mutex);
     if (ndropped) {
         *ndropped = ndrop;
     }
@@ -926,16 +831,16 @@ cbuf_peek_to_fd (cbuf_t src, int dstfd, int len)
         errno = EINVAL;
         return(-1);
     }
-    cbuf_mutex_lock(src);
-    assert(cbuf_is_valid(src));
+    slurm_mutex_lock(&src->mutex);
+    assert(_cbuf_is_valid(src));
     if (len == -1) {
         len = src->used;
     }
     if (len > 0) {
         n = cbuf_reader(src, len, (cbuf_iof) cbuf_put_fd, &dstfd);
     }
-    assert(cbuf_is_valid(src));
-    cbuf_mutex_unlock(src);
+    assert(_cbuf_is_valid(src));
+    slurm_mutex_unlock(&src->mutex);
     return(n);
 }
 
@@ -951,8 +856,8 @@ cbuf_read_to_fd (cbuf_t src, int dstfd, int len)
         errno = EINVAL;
         return(-1);
     }
-    cbuf_mutex_lock(src);
-    assert(cbuf_is_valid(src));
+    slurm_mutex_lock(&src->mutex);
+    assert(_cbuf_is_valid(src));
     if (len == -1) {
         len = src->used;
     }
@@ -962,8 +867,8 @@ cbuf_read_to_fd (cbuf_t src, int dstfd, int len)
             cbuf_dropper(src, n);
         }
     }
-    assert(cbuf_is_valid(src));
-    cbuf_mutex_unlock(src);
+    assert(_cbuf_is_valid(src));
+    slurm_mutex_unlock(&src->mutex);
     return(n);
 }
 
@@ -979,16 +884,16 @@ cbuf_replay_to_fd (cbuf_t src, int dstfd, int len)
         errno = EINVAL;
         return(-1);
     }
-    cbuf_mutex_lock(src);
-    assert(cbuf_is_valid(src));
+    slurm_mutex_lock(&src->mutex);
+    assert(_cbuf_is_valid(src));
     if (len == -1) {
         len = src->size - src->used;
     }
     if (len > 0) {
         n = cbuf_replayer(src, len, (cbuf_iof) cbuf_put_fd, &dstfd);
     }
-    assert(cbuf_is_valid(src));
-    cbuf_mutex_unlock(src);
+    assert(_cbuf_is_valid(src));
+    slurm_mutex_unlock(&src->mutex);
     return(n);
 }
 
@@ -1007,8 +912,8 @@ cbuf_write_from_fd (cbuf_t dst, int srcfd, int len, int *ndropped)
         errno = EINVAL;
         return(-1);
     }
-    cbuf_mutex_lock(dst);
-    assert(cbuf_is_valid(dst));
+    slurm_mutex_lock(&dst->mutex);
+    assert(_cbuf_is_valid(dst));
     if (len == -1) {
         /*
          *  Try to use all of the free buffer space available for writing.
@@ -1022,8 +927,8 @@ cbuf_write_from_fd (cbuf_t dst, int srcfd, int len, int *ndropped)
     if (len > 0) {
         n = cbuf_writer(dst, len, (cbuf_iof) cbuf_get_fd, &srcfd, ndropped);
     }
-    assert(cbuf_is_valid(dst));
-    cbuf_mutex_unlock(dst);
+    assert(_cbuf_is_valid(dst));
+    slurm_mutex_unlock(&dst->mutex);
     return(n);
 }
 
@@ -1053,15 +958,15 @@ cbuf_copy (cbuf_t src, cbuf_t dst, int len, int *ndropped)
     /*  Lock cbufs in order of lowest memory address to prevent deadlock.
      */
     if (src < dst) {
-        cbuf_mutex_lock(src);
-        cbuf_mutex_lock(dst);
+        slurm_mutex_lock(&src->mutex);
+        slurm_mutex_lock(&dst->mutex);
     }
     else {
-        cbuf_mutex_lock(dst);
-        cbuf_mutex_lock(src);
+        slurm_mutex_lock(&dst->mutex);
+        slurm_mutex_lock(&src->mutex);
     }
-    assert(cbuf_is_valid(src));
-    assert(cbuf_is_valid(dst));
+    assert(_cbuf_is_valid(src));
+    assert(_cbuf_is_valid(dst));
 
     if (len == -1) {
         len = src->used;
@@ -1069,10 +974,10 @@ cbuf_copy (cbuf_t src, cbuf_t dst, int len, int *ndropped)
     if (len > 0) {
         n = cbuf_copier(src, dst, len, ndropped);
     }
-    assert(cbuf_is_valid(src));
-    assert(cbuf_is_valid(dst));
-    cbuf_mutex_unlock(src);
-    cbuf_mutex_unlock(dst);
+    assert(_cbuf_is_valid(src));
+    assert(_cbuf_is_valid(dst));
+    slurm_mutex_unlock(&src->mutex);
+    slurm_mutex_unlock(&dst->mutex);
     return(n);
 }
 
@@ -1102,15 +1007,15 @@ cbuf_move (cbuf_t src, cbuf_t dst, int len, int *ndropped)
     /*  Lock cbufs in order of lowest memory address to prevent deadlock.
      */
     if (src < dst) {
-        cbuf_mutex_lock(src);
-        cbuf_mutex_lock(dst);
+        slurm_mutex_lock(&src->mutex);
+        slurm_mutex_lock(&dst->mutex);
     }
     else {
-        cbuf_mutex_lock(dst);
-        cbuf_mutex_lock(src);
+        slurm_mutex_lock(&dst->mutex);
+        slurm_mutex_lock(&src->mutex);
     }
-    assert(cbuf_is_valid(src));
-    assert(cbuf_is_valid(dst));
+    assert(_cbuf_is_valid(src));
+    assert(_cbuf_is_valid(dst));
 
     if (len == -1) {
         len = src->used;
@@ -1121,10 +1026,10 @@ cbuf_move (cbuf_t src, cbuf_t dst, int len, int *ndropped)
             cbuf_dropper(src, n);
         }
     }
-    assert(cbuf_is_valid(src));
-    assert(cbuf_is_valid(dst));
-    cbuf_mutex_unlock(src);
-    cbuf_mutex_unlock(dst);
+    assert(_cbuf_is_valid(src));
+    assert(_cbuf_is_valid(dst));
+    slurm_mutex_unlock(&src->mutex);
+    slurm_mutex_unlock(&dst->mutex);
     return(n);
 }
 
@@ -1149,7 +1054,7 @@ cbuf_find_replay_line (cbuf_t cb, int chars, int *nlines, int *nl)
     assert(cb != NULL);
     assert(nlines != NULL);
     assert(*nlines >= -1);
-    assert(cbuf_mutex_is_locked(cb));
+    assert(_cbuf_mutex_is_locked(cb));
 
     n = m = l = 0;
     lines = *nlines;
@@ -1241,7 +1146,7 @@ cbuf_find_unread_line (cbuf_t cb, int chars, int *nlines)
     assert(cb != NULL);
     assert(nlines != NULL);
     assert(*nlines >= -1);
-    assert(cbuf_mutex_is_locked(cb));
+    assert(_cbuf_mutex_is_locked(cb));
 
     n = m = l = 0;
     lines = *nlines;
@@ -1371,8 +1276,8 @@ cbuf_copier (cbuf_t src, cbuf_t dst, int len, int *ndropped)
     assert(src != NULL);
     assert(dst != NULL);
     assert(len > 0);
-    assert(cbuf_mutex_is_locked(src));
-    assert(cbuf_mutex_is_locked(dst));
+    assert(_cbuf_mutex_is_locked(src));
+    assert(_cbuf_mutex_is_locked(dst));
 
     /*  Bound len by the number of bytes available.
      */
@@ -1453,7 +1358,7 @@ cbuf_dropper (cbuf_t cb, int len)
     assert(cb != NULL);
     assert(len > 0);
     assert(len <= cb->used);
-    assert(cbuf_mutex_is_locked(cb));
+    assert(_cbuf_mutex_is_locked(cb));
 
     cb->used -= len;
     cb->i_out = (cb->i_out + len) % (cb->size + 1);
@@ -1486,7 +1391,7 @@ cbuf_reader (cbuf_t src, int len, cbuf_iof putf, void *dst)
     assert(len > 0);
     assert(putf != NULL);
     assert(dst != NULL);
-    assert(cbuf_mutex_is_locked(src));
+    assert(_cbuf_mutex_is_locked(src));
 
     /*  Bound len by the number of bytes available.
      */
@@ -1542,7 +1447,7 @@ cbuf_replayer (cbuf_t src, int len, cbuf_iof putf, void *dst)
     assert(len > 0);
     assert(putf != NULL);
     assert(dst != NULL);
-    assert(cbuf_mutex_is_locked(src));
+    assert(_cbuf_mutex_is_locked(src));
 
     /*  Bound len by the number of bytes available.
      */
@@ -1600,7 +1505,7 @@ cbuf_writer (cbuf_t dst, int len, cbuf_iof getf, void *src, int *ndropped)
     assert(len > 0);
     assert(getf != NULL);
     assert(src != NULL);
-    assert(cbuf_mutex_is_locked(dst));
+    assert(_cbuf_mutex_is_locked(dst));
 
     /*  Attempt to grow dst cbuf if necessary.
      */
@@ -1683,7 +1588,7 @@ cbuf_grow (cbuf_t cb, int n)
 
     assert(cb != NULL);
     assert(n > 0);
-    assert(cbuf_mutex_is_locked(cb));
+    assert(_cbuf_mutex_is_locked(cb));
 
     if (cb->size == cb->maxsize) {
         return(0);
@@ -1740,7 +1645,7 @@ cbuf_grow (cbuf_t cb, int n)
         }
         cb->i_rep = m;
     }
-    assert(cbuf_is_valid(cb));
+    assert(_cbuf_is_valid(cb));
     return(cb->size - size_old);
 }
 
@@ -1751,8 +1656,8 @@ cbuf_shrink (cbuf_t cb)
 /*  XXX: DOCUMENT ME.
  */
     assert(cb != NULL);
-    assert(cbuf_mutex_is_locked(cb));
-    assert(cbuf_is_valid(cb));
+    assert(_cbuf_mutex_is_locked(cb));
+    assert(_cbuf_is_valid(cb));
 
     if (cb->size == cb->minsize) {
         return(0);
@@ -1762,15 +1667,14 @@ cbuf_shrink (cbuf_t cb)
     }
     /*  FIXME: NOT IMPLEMENTED.
      */
-    assert(cbuf_is_valid(cb));
+    assert(_cbuf_is_valid(cb));
     return(0);
 }
 
 
 #ifndef NDEBUG
-#ifdef WITH_PTHREADS
 static int
-cbuf_mutex_is_locked (cbuf_t cb)
+_cbuf_mutex_is_locked (cbuf_t cb)
 {
 /*  Returns true if the mutex is locked; o/w, returns false.
  */
@@ -1780,13 +1684,9 @@ cbuf_mutex_is_locked (cbuf_t cb)
     rc = pthread_mutex_trylock(&cb->mutex);
     return(rc == EBUSY ? 1 : 0);
 }
-#endif /* WITH_PTHREADS */
-#endif /* !NDEBUG */
 
-
-#ifndef NDEBUG
 static int
-cbuf_is_valid (cbuf_t cb)
+_cbuf_is_valid (cbuf_t cb)
 {
 /*  Validates the data structure.  All invariants should be tested here.
  *  Returns true if everything is valid; o/w, aborts due to assertion failure.
@@ -1794,7 +1694,7 @@ cbuf_is_valid (cbuf_t cb)
     int nfree;
 
     assert(cb != NULL);
-    assert(cbuf_mutex_is_locked(cb));
+    assert(_cbuf_mutex_is_locked(cb));
     assert(cb->data != NULL);
     assert(cb->magic == CBUF_MAGIC);
     /*

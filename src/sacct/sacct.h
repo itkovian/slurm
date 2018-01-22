@@ -1,7 +1,5 @@
 /*****************************************************************************\
  *  sacct.h - header file for sacct
- *
- *  $Id: sacct.h 7541 2006-03-18 01:44:58Z da $
  *****************************************************************************
  *  Copyright (C) 2006 The Regents of the University of California.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -9,7 +7,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -53,7 +51,6 @@
 #include <time.h>
 #include <unistd.h>
 
-#include "src/common/getopt.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
 #include "src/common/list.h"
@@ -69,11 +66,9 @@
 #define BRIEF_COMP_FIELDS "jobid,uid,state"
 #define DEFAULT_FIELDS "jobid,jobname,partition,account,alloccpus,state,exitcode"
 #define DEFAULT_COMP_FIELDS "jobid,uid,jobname,partition,nnodes,nodelist,state,end"
-#define LONG_FIELDS "jobid,jobname,partition,maxvmsize,maxvmsizenode,maxvmsizetask,avevmsize,maxrss,maxrssnode,maxrsstask,averss,maxpages,maxpagesnode,maxpagestask,avepages,mincpu,mincpunode,mincputask,avecpu,ntasks,alloccpus,elapsed,state,exitcode,avecpufreq,reqcpufreq,reqmem,consumedenergy,maxdiskread,maxdiskreadnode,maxdiskreadtask,avediskread,maxdiskwrite,maxdiskwritenode,maxdiskwritetask,avediskwrite"
+#define LONG_FIELDS "jobid,jobidraw,jobname,partition,maxvmsize,maxvmsizenode,maxvmsizetask,avevmsize,maxrss,maxrssnode,maxrsstask,averss,maxpages,maxpagesnode,maxpagestask,avepages,mincpu,mincpunode,mincputask,avecpu,ntasks,alloccpus,elapsed,state,exitcode,avecpufreq,reqcpufreqmin,reqcpufreqmax,reqcpufreqgov,reqmem,consumedenergy,maxdiskread,maxdiskreadnode,maxdiskreadtask,avediskread,maxdiskwrite,maxdiskwritenode,maxdiskwritetask,avediskwrite,allocgres,reqgres,reqtres,alloctres"
 
 #define LONG_COMP_FIELDS "jobid,uid,jobname,partition,nnodes,nodelist,state,start,end,timelimit"
-
-#define STATE_COUNT 10
 
 #define MAX_PRINTFIELDS 100
 #define FORMAT_STRING_SIZE 34
@@ -93,7 +88,12 @@ typedef enum {	HEADLINE,
 
 typedef enum {
 		PRINT_ACCOUNT,
+		PRINT_ADMIN_COMMENT,
 		PRINT_ALLOC_CPUS,
+		PRINT_ALLOC_GRES,
+		PRINT_ALLOC_NODES,
+		PRINT_TRESA,
+		PRINT_TRESR,
 		PRINT_ASSOCID,
 		PRINT_AVECPU,
 		PRINT_ACT_CPUFREQ,
@@ -111,12 +111,14 @@ typedef enum {
 		PRINT_CPU_TIME_RAW,
 		PRINT_DERIVED_EC,
 		PRINT_ELAPSED,
+		PRINT_ELAPSED_RAW,
 		PRINT_ELIGIBLE,
 		PRINT_END,
 		PRINT_EXITCODE,
 		PRINT_GID,
 		PRINT_GROUP,
 		PRINT_JOBID,
+		PRINT_JOBIDRAW,
 		PRINT_JOBNAME,
 		PRINT_LAYOUT,
 		PRINT_MAXDISKREAD,
@@ -134,6 +136,7 @@ typedef enum {
 		PRINT_MAXVSIZE,
 		PRINT_MAXVSIZENODE,
 		PRINT_MAXVSIZETASK,
+		PRINT_MCS_LABEL,
 		PRINT_MINCPU,
 		PRINT_MINCPUNODE,
 		PRINT_MINCPUTASK,
@@ -144,9 +147,15 @@ typedef enum {
 		PRINT_PRIO,
 		PRINT_QOS,
 		PRINT_QOSRAW,
-		PRINT_REQ_CPUFREQ,
+		PRINT_REQ_CPUFREQ_MIN,
+		PRINT_REQ_CPUFREQ_MAX,
+		PRINT_REQ_CPUFREQ_GOV,
 		PRINT_REQ_CPUS,
+		PRINT_REQ_GRES,
 		PRINT_REQ_MEM,
+		PRINT_REQ_NODES,
+		PRINT_RESERVATION,
+		PRINT_RESERVATION_ID,
 		PRINT_RESV,
 		PRINT_RESV_CPU,
 		PRINT_RESV_CPU_RAW,
@@ -162,30 +171,36 @@ typedef enum {
 		PRINT_USERCPU,
 		PRINT_WCKEY,
 		PRINT_WCKEYID,
+		PRINT_WORK_DIR
 } sacct_print_types_t;
 
 typedef struct {
+	char *cluster_name;	/* Set if in federated cluster */
+	int opt_allocs;		/* --total */
+	uint32_t convert_flags;	/* --noconvert */
 	slurmdb_job_cond_t *job_cond;
 	int opt_completion;	/* --completion */
 	int opt_dup;		/* --duplicates; +1 = explicitly set */
+	bool opt_federation;	/* --federation */
 	char *opt_field_list;	/* --fields= */
+	char *opt_filein;	/* --file */
 	int opt_gid;		/* running persons gid */
 	int opt_help;		/* --help */
-	char *opt_filein;
+	bool opt_local;		/* --local */
 	int opt_noheader;	/* can only be cleared */
-	int opt_allocs;		/* --total */
 	int opt_uid;		/* running persons uid */
+	int units;		/* --units*/
 } sacct_parameters_t;
 
 extern print_field_t fields[];
 extern sacct_parameters_t params;
 
 extern List jobs;
-
 extern List print_fields_list;
 extern ListIterator print_fields_itr;
 extern int field_count;
 extern List g_qos_list;
+extern List g_tres_list;
 
 /* process.c */
 char *find_hostname(uint32_t pos, char *hosts);
@@ -195,12 +210,12 @@ void aggregate_stats(slurmdb_stats_t *dest, slurmdb_stats_t *from);
 void print_fields(type_t type, void *object);
 
 /* options.c */
-int get_data(void);
+int  get_data(void);
 void parse_command_line(int argc, char **argv);
 void do_help(void);
 void do_list(void);
 void do_list_completion(void);
-void sacct_init();
-void sacct_fini();
+void sacct_init(void);
+void sacct_fini(void);
 
 #endif /* !_SACCT_H */

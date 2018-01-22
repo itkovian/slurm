@@ -1,4 +1,4 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Test of SLURM functionality
 #          Test that switch windows in uses are not re-used.
@@ -13,7 +13,7 @@
 # CODE-OCEC-09-009. All rights reserved.
 #
 # This file is part of SLURM, a resource management program.
-# For details, see <http://slurm.schedmd.com/>.
+# For details, see <https://slurm.schedmd.com/>.
 # Please also read the included file: DISCLAIMER.
 #
 # SLURM is free software; you can redistribute it and/or modify it under
@@ -55,25 +55,11 @@ log_user 0
 set step_delay 0
 spawn $scontrol show config
 expect {
-	-re "switch/elan" {
-		set windows_per_node 2048
-		set windows_iterations 50
-		set windows_used 48
-		set step_delay 10
-		exp_continue
-	}
-	-re "switch/federation" {
-		set windows_per_node 16
-		set windows_iterations 32
-		set windows_used 2
-		set step_delay 10
-		exp_continue
-	}
 	-re "switch/none" {
 		set windows_per_node 0
 		set windows_iterations 5
 		set windows_used 4
-		set step_delay 5
+		set step_delay 10
 		exp_continue
 	}
 	timeout {
@@ -86,7 +72,7 @@ expect {
 }
 log_user 1
 if {$step_delay == 0} {
-	send_user "\nWARNING: not running compatable switch, this test is not applicable\n"
+	send_user "\nWARNING: not running compatible switch, this test is not applicable\n"
 	exit $exit_code
 }
 
@@ -133,7 +119,7 @@ for {set inx 0} {$inx < $windows_iterations} {incr inx} {
 
 # wait for initial job step to complete
 expect -re $prompt
-send_user "(sleeping for $step_delay seconds, for job step zero to complete) "
+send_user "(sleeping for $step_delay seconds, for job step zero to complete)\n"
 exec $bin_sleep $step_delay
 send "exit\r"
 

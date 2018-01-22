@@ -7,7 +7,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -37,16 +37,6 @@
 \*****************************************************************************/
 #ifndef SPANK_H
 #define SPANK_H
-
-#undef BEGIN_C_DECLS
-#undef END_C_DECLS
-#ifdef __cplusplus
-#  define BEGIN_C_DECLS         extern "C" {
-#  define END_C_DECLS           }
-#else  /* !__cplusplus */
-#  define BEGIN_C_DECLS         /* empty */
-#  define END_C_DECLS           /* empty */
-#endif /* !__cplusplus */
 
 /*  SPANK handle. Plug-in's context for running SLURM job
  */
@@ -167,9 +157,9 @@ enum spank_item {
     S_STEP_CPUS_PER_TASK,    /* CPUs allocated per task (=1 if --overcommit
                               * option is used, uint32_t *)                  */
     S_JOB_ALLOC_CORES,       /* Job allocated cores in list format (char **) */
-    S_JOB_ALLOC_MEM,         /* Job allocated memory in MB (uint32_t *)      */
+    S_JOB_ALLOC_MEM,         /* Job allocated memory in MB (uint64_t *)      */
     S_STEP_ALLOC_CORES,      /* Step alloc'd cores in list format  (char **) */
-    S_STEP_ALLOC_MEM,        /* Step alloc'd memory in MB (uint32_t *)       */
+    S_STEP_ALLOC_MEM,        /* Step alloc'd memory in MB (uint64_t *)       */
     S_SLURM_RESTART_COUNT    /* Job restart count (uint32_t *)               */
 };
 
@@ -254,7 +244,9 @@ extern struct spank_option spank_options [];
 
 /*  SPANK interface prototypes
  */
-BEGIN_C_DECLS
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 /*
  *  Return the string representation of a spank_err_t error code.
@@ -334,7 +326,7 @@ spank_err_t spank_option_getopt (spank_t spank, struct spank_option *opt,
  *   item is requested from outside a task context, ESPANK_BAD_ARG
  *   if invalid args are passed to spank_get_item or spank_get_item
  *   is called from an invalid context, and ESPANK_NOT_REMOTE
- *   if not called from slurmstepd context or spank_user_local_init.
+ *   if not called from slurmstepd context or spank_local_user_init.
  */
 spank_err_t spank_get_item (spank_t spank, spank_item_t item, ...);
 
@@ -425,7 +417,9 @@ extern void slurm_debug2 (const char *format, ...)
 extern void slurm_debug3 (const char *format, ...)
   __attribute__ ((format (printf, 1, 2)));
 
-END_C_DECLS
+#ifdef __cplusplus
+}
+#endif
 
 /*
  *  All spank plugins must issue the following for the SLURM plugin
@@ -435,6 +429,5 @@ END_C_DECLS
     const char plugin_name [] = #__name; \
     const char plugin_type [] = "spank"; \
     const unsigned int plugin_version = __ver;
-
 
 #endif /* !SPANK_H */

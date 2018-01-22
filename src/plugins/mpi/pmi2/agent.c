@@ -4,9 +4,12 @@
  *  Copyright (C) 2011-2012 National University of Defense Technology.
  *  Written by Hongjia Cao <hjcao@nudt.edu.cn>.
  *  All rights reserved.
+ *  Portions copyright (C) 2015 Mellanox Technologies Inc.
+ *  Written by Artem Y. Polyakov <artemp@mellanox.com>.
+ *  All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -35,25 +38,22 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#if     HAVE_CONFIG_H
-#  include "config.h"
-#endif
-
 #if defined(__FreeBSD__)
 #include <roken.h>
 #include <sys/socket.h>	/* AF_INET */
 #endif
 
+#include <arpa/inet.h>
 #include <fcntl.h>
 #include <signal.h>
 #include <sys/types.h>
 #include <sys/un.h>
-#include <arpa/inet.h>
 #include <poll.h>
 
 #include "src/common/slurm_xlator.h"
 #include "src/common/eio.h"
-#include "src/common/mpi.h"
+#include "src/common/macros.h"
+#include "src/common/slurm_mpi.h"
 #include "src/common/xstring.h"
 #include "src/slurmd/slurmstepd/slurmstepd_job.h"
 
@@ -61,18 +61,20 @@
 #include "pmi.h"
 #include "setup.h"
 
-#define MAX_RETRIES 5
-
 static int *initialized = NULL;
 static int *finalized = NULL;
 
-static pthread_t pmi2_agent_tid = 0;
+static eio_handle_t *pmi2_handle;
+static volatile bool agent_started;
+static volatile bool agent_running;
+static volatile bool agent_stopped;
+static pthread_mutex_t agent_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static bool _tree_listen_readable(eio_obj_t *obj);
 static int  _tree_listen_read(eio_obj_t *obj, List objs);
 static struct io_operations tree_listen_ops = {
-readable:    &_tree_listen_readable,
-handle_read: &_tree_listen_read,
+.readable    = &_tree_listen_readable,
+.handle_read = &_tree_listen_read,
 };
 
 static bool _task_readable(eio_obj_t *obj);
@@ -80,8 +82,8 @@ static int  _task_read(eio_obj_t *obj, List objs);
 /* static bool _task_writable(eio_obj_t *obj); */
 /* static int  _task_write(eio_obj_t *obj, List objs); */
 static struct io_operations task_ops = {
-readable:       &_task_readable,
-handle_read:    &_task_read,
+.readable    =  &_task_readable,
+.handle_read =  &_task_read,
 };
 
 
@@ -252,7 +254,7 @@ _handle_pmi1_init(int fd, int lrank)
 	debug3("mpi/pmi2: in _handle_pmi1_init");
 
 	while ( (n = read(fd, buf, 64)) < 0 && errno == EINTR);
-	if (n < 0) {
+	if ((n < 0) || (n >= 64)) {
 		error("mpi/pmi2: failed to read PMI1 init command");
 		return SLURM_ERROR;
 	}
@@ -297,11 +299,15 @@ send_response:
 static void *
 _agent(void * unused)
 {
-	eio_handle_t *pmi2_handle;
 	eio_obj_t *tree_listen_obj, *task_obj;
+	eio_handle_t *orig_handle;
 	int i;
 
-	pmi2_handle = eio_handle_create();
+	slurm_mutex_lock(&agent_mutex);
+	agent_running = true;
+	slurm_mutex_unlock(&agent_mutex);
+
+	pmi2_handle = eio_handle_create(0);
 
 	//fd_set_nonblocking(tree_sock);
 	tree_listen_obj = eio_obj_create(tree_sock, &tree_listen_ops,
@@ -323,8 +329,23 @@ _agent(void * unused)
 
 	debug("mpi/pmi2: agent thread exit");
 
-	eio_handle_destroy(pmi2_handle);
+	slurm_mutex_lock(&agent_mutex);
+	agent_running = false;
+	orig_handle = pmi2_handle;
+	pmi2_handle = NULL;
+	slurm_mutex_unlock(&agent_mutex);
+	eio_handle_destroy(orig_handle);
+
 	return NULL;
+}
+
+static bool _agent_running_test(void)
+{
+	bool rc;
+	slurm_mutex_lock(&agent_mutex);
+	rc = agent_running;
+	slurm_mutex_unlock(&agent_mutex);
+	return rc;
 }
 
 /*
@@ -333,23 +354,22 @@ _agent(void * unused)
 extern int
 pmi2_start_agent(void)
 {
-	int retries = 0;
-	pthread_attr_t attr;
+	bool is_started;
 
-	pthread_attr_init(&attr);
-	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-	while ((errno = pthread_create(&pmi2_agent_tid, &attr,
-				       &_agent, NULL))) {
-		if (++retries > MAX_RETRIES) {
-			error ("mpi/pmi2: pthread_create error %m");
-			slurm_attr_destroy(&attr);
-			return SLURM_ERROR;
-		}
-		sleep(1);
+	slurm_mutex_lock(&agent_mutex);
+	is_started = agent_started;
+	agent_started = true;
+	slurm_mutex_unlock(&agent_mutex);
+
+	if (!is_started) {
+		slurm_thread_create_detached(NULL, _agent, NULL);
+		debug("mpi/pmi2: started agent thread");
 	}
-	slurm_attr_destroy(&attr);
-	debug("mpi/pmi2: started agent thread (%lu)",
-	      (unsigned long) pmi2_agent_tid);
+
+	/* wait for the agent to start */
+	while (!_agent_running_test()) {
+		sched_yield();
+	}
 
 	return SLURM_SUCCESS;
 }
@@ -360,8 +380,21 @@ pmi2_start_agent(void)
 extern int
 pmi2_stop_agent(void)
 {
-	if (pmi2_agent_tid)
-		pthread_cancel(pmi2_agent_tid);
+	bool is_stopped;
+
+	slurm_mutex_lock(&agent_mutex);
+	is_stopped = agent_stopped;
+	agent_stopped = true;
+	slurm_mutex_unlock(&agent_mutex);
+
+	if (!is_stopped && pmi2_handle)
+		eio_signal_shutdown(pmi2_handle);
+
+	/* wait for the agent to finish */
+	while (_agent_running_test()) {
+		sched_yield();
+	}
+
 	return SLURM_SUCCESS;
 }
 

@@ -8,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -39,10 +39,6 @@
 
 #ifndef _NODE_SELECT_H
 #define _NODE_SELECT_H
-
-#ifdef HAVE_CONFIG_H
-#  include "config.h"
-#endif /* HAVE_CONFIG_H */
 
 #include "slurm/slurm.h"
 #include "slurm/slurm_errno.h"
@@ -157,6 +153,7 @@ typedef struct slurm_select_ops {
 						 struct node_record *node_ptr);
 	int		(*job_signal)		(struct job_record *job_ptr,
 						 int signal);
+	int		(*job_mem_confirm)	(struct job_record *job_ptr);
 	int		(*job_fini)		(struct job_record *job_ptr);
 	int		(*job_suspend)		(struct job_record *job_ptr,
 						 bool indf_susp);
@@ -167,7 +164,8 @@ typedef struct slurm_select_ops {
 						 uint32_t node_count,
 						 bitstr_t **avail_nodes);
 	int             (*step_start)           (struct step_record *step_ptr);
-	int             (*step_finish)          (struct step_record *step_ptr);
+	int             (*step_finish)          (struct step_record *step_ptr,
+						 bool killing_step);
 	int		(*pack_select_info)	(time_t last_query_time,
 						 uint16_t show_flags,
 						 Buf *buffer_ptr,
@@ -223,16 +221,15 @@ typedef struct slurm_select_ops {
 	int		(*alter_node_cnt)	(enum select_node_cnt type,
 						 void *data);
 	int		(*reconfigure)		(void);
-	bitstr_t *      (*resv_test)            (bitstr_t *avail_bitmap,
+	bitstr_t *      (*resv_test)            (resv_desc_msg_t *resv_desc_ptr,
 						 uint32_t node_cnt,
-						 uint32_t *core_cnt,
-						 bitstr_t **core_bitmap,
-						 uint32_t flags);
+						 bitstr_t *avail_bitmap,
+						 bitstr_t **core_bitmap);
 	void            (*ba_init)              (node_info_msg_t *node_info_ptr,
 						 bool sanity_check);
 	void            (*ba_fini)              (void);
 	int *           (*ba_get_dims)          (void);
-
+	bitstr_t *      (*ba_cnodelist2bitmap)  (char *cnodelist);
 } slurm_select_ops_t;
 
 /*
@@ -265,6 +262,10 @@ extern int select_get_plugin_id_pos(uint32_t plugin_id);
 
 /* Get the plugin ID number. Unique for each select plugin type */
 extern int select_get_plugin_id(void);
+
+/* If the slurmctld is running a linear based select plugin return 1
+ * else 0. */
+extern int select_running_linear_based(void);
 
 /*
  * Save any global state information
@@ -430,9 +431,11 @@ extern int select_g_fail_cnode (struct step_record *step_ptr);
 #define SELECT_MODE_RUN_NOW	 0x0000
 #define SELECT_MODE_TEST_ONLY	 0x0001
 #define SELECT_MODE_WILL_RUN	 0x0002
+#define SELECT_MODE_RESV	 0x0004
 
 #define SELECT_MODE_PREEMPT_FLAG 0x0100
 #define SELECT_MODE_CHECK_FULL   0x0200
+#define SELECT_MODE_IGN_ERR      0x0400
 
 #define SELECT_IS_MODE_RUN_NOW(_X) \
 	(((_X & SELECT_MODE_BASE) == SELECT_MODE_RUN_NOW) \
@@ -442,7 +445,13 @@ extern int select_g_fail_cnode (struct step_record *step_ptr);
 	(_X & SELECT_MODE_TEST_ONLY)
 
 #define SELECT_IS_MODE_WILL_RUN(_X) \
-	(_X & SELECT_MODE_WILL_RUN)
+	(_X & SELECT_MODE_WILL_RUN || SELECT_IS_MODE_RESV(_X))
+
+#define SELECT_IS_MODE_RESV(_X) \
+	(_X & SELECT_MODE_RESV)
+
+#define SELECT_IGN_ERR(_X) \
+	(_X & SELECT_MODE_IGN_ERR)
 
 #define SELECT_IS_PREEMPT_SET(_X) \
 	(_X & SELECT_MODE_PREEMPT_FLAG)
@@ -587,12 +596,21 @@ extern int select_g_job_ready(struct job_record *job_ptr);
 extern int select_g_job_fini(struct job_record *job_ptr);
 
 /*
- * Pass job-step signal to plugin before signalling any job steps, so that
+ * Pass job-step signal to plugin before signaling any job steps, so that
  * any signal-dependent actions can be taken.
- * IN job_ptr - job to be signalled
+ * IN job_ptr - job to be signaled
  * IN signal  - signal(7) number
  */
 extern int select_g_job_signal(struct job_record *job_ptr, int signal);
+
+/*
+ * Confirm that a job's memory allocation is still valid after a node is
+ * restarted. This is an issue if the job is allocated all of the memory on a
+ * node and that node is restarted with a different memory size than at the time
+ * it is allocated to the job. This would mostly be an issue on an Intel KNL
+ * node where the memory size would vary with the MCDRAM cache mode.
+ */
+extern int select_g_job_mem_confirm(struct job_record *job_ptr);
 
 /*
  * Suspend a job. Executed from slurmctld.
@@ -668,8 +686,10 @@ extern int select_g_step_start(struct step_record *step_ptr);
 /*
  * clear what happened in select_g_step_pick_nodes and/or select_g_step_start
  * IN/OUT step_ptr - step pointer to operate on.
+ * IN killing_step - if true then we are just starting to kill the step
+ *                   if false, the step is completely terminated
  */
-extern int select_g_step_finish(struct step_record *step_ptr);
+extern int select_g_step_finish(struct step_record *step_ptr, bool killing_step);
 
 /*********************************\
  * ADVANCE RESERVATION FUNCTIONS *
@@ -680,16 +700,19 @@ extern int select_g_step_finish(struct step_record *step_ptr);
  *	request. "best" is defined as either single set of consecutive nodes
  *	satisfying the request and leaving the minimum number of unused nodes
  *	OR the fewest number of consecutive node sets
- * IN/OUT avail_bitmap - nodes available for the reservation
+ * IN/OUT resv_desc_ptr - reservation request - select_jobinfo can be
+ *	updated in the plugin
  * IN node_cnt - count of required nodes
- * IN core_cnt - count of required cores per node
- * IN/OUT core_bitmap - cores which can not be used for this reservation
- * IN flags - reservation request flags
+ * IN/OUT avail_bitmap - nodes available for the reservation
+ * IN/OUT core_bitmap - cores which can not be used for this
+ *	reservation IN, and cores to be used in the reservation OUT
+ *	(flush bitstr then apply only used cores)
  * RET - nodes selected for use by the reservation
  */
-extern bitstr_t * select_g_resv_test(bitstr_t *avail_bitmap, uint32_t node_cnt,
-				     uint32_t *core_cnt, bitstr_t **core_bitmap,
-				     uint32_t flags);
+extern bitstr_t * select_g_resv_test(resv_desc_msg_t *resv_desc_ptr,
+				     uint32_t node_cnt,
+				     bitstr_t *avail_bitmap,
+				     bitstr_t **core_bitmap);
 
 /*****************************\
  * GET INFORMATION FUNCTIONS *
@@ -740,5 +763,8 @@ extern void select_g_ba_init(node_info_msg_t *node_info_ptr, bool sanity_check);
 
 /* Free storage allocated by select_g_ba_init() */
 extern void select_g_ba_fini(void);
+
+/* returns a bitmap with the cnodelist bits in a midplane not set */
+extern bitstr_t *select_g_ba_cnodelist2bitmap(char *cnodelist);
 
 #endif /*__SELECT_PLUGIN_API_H__*/

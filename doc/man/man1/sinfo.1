@@ -1,13 +1,13 @@
-.TH SINFO "1" "August 2013" "sinfo 14.03" "Slurm components"
+.TH sinfo "1" "Slurm Commands" "November 2016" "Slurm Commands"
 
 .SH "NAME"
-sinfo \- view information about SLURM nodes and partitions.
+sinfo \- view information about Slurm nodes and partitions.
 
 .SH "SYNOPSIS"
 \fBsinfo\fR [\fIOPTIONS\fR...]
 .SH "DESCRIPTION"
 \fBsinfo\fR is used to view partition and node information for a
-system running SLURM.
+system running Slurm.
 
 .SH "OPTIONS"
 
@@ -34,6 +34,10 @@ with the minimum value followed by a "+" for nodes with the
 same partition and state (e.g., "250+").
 
 .TP
+\fB\-\-federation\fR
+Show all partitions from the federation if a member of one.
+
+.TP
 \fB\-h\fR, \fB\-\-noheader\fR
 Do not print a header on the output.
 
@@ -54,6 +58,11 @@ Sleep for the indicated number of seconds between reports.
 By default, prints a time stamp with the header.
 
 .TP
+\fB\-\-local\fR
+Show only jobs local to this cluster. Ignore other clusters in this federation
+(if any). Overrides \-\-federation.
+
+.TP
 \fB\-l\fR, \fB\-\-long\fR
 Print more detailed information.
 This is ignored if the \fB\-\-format\fR option is specified.
@@ -62,6 +71,8 @@ This is ignored if the \fB\-\-format\fR option is specified.
 \fB\-M\fR, \fB\-\-clusters\fR=<\fIstring\fR>
 Clusters to issue commands to.  Multiple cluster names may be comma separated.
 A value of of '\fIall\fR' will query to run on all clusters.
+Note that the SlurmDBD must be up for this option to work properly.
+This option implicitly sets the \fB\-\-local\fR option.
 
 .TP
 \fB\-n <nodes>\fR, \fB\-\-nodes=<nodes>\fR
@@ -73,8 +84,13 @@ Performance of the command can be measurably improved for systems with large
 numbers of nodes when a single node name is specified.
 
 .TP
+\fB\-\-noconvert\fR
+Don't convert units from their original type (e.g. 2048M won't be converted to
+2G).
+
+.TP
 \fB\-N\fR, \fB\-\-Node\fR
-Print information in a node\-oriented format.
+Print information in a node\-oriented format with one line per node.
 The default is to print information in a partition\-oriented format.
 This is ignored if the \fB\-\-format\fR option is specified.
 
@@ -86,19 +102,19 @@ when running with various options are
 .RS
 .TP 15
 .I "default"
-"%9P %.5a %.10l %.6D %.6t %N"
+"%#P %.5a %.10l %.6D %.6t %N"
 .TP
 .I "\-\-summarize"
-"%9P %.5a %.10l %.16F  %N"
+"%#P %.5a %.10l %.16F  %N"
 .TP
 .I "\-\-long"
-"%9P %.5a %.10l %.10s %.4r %.8h %.10g %.6D %.11T %N"
+"%#P %.5a %.10l %.10s %.4r %.8h %.10g %.6D %.11T %N"
 .TP
 .I "\-\-Node"
-"%N %.6D %.9P %6t"
+"%#N %.6D %#P %6t"
 .TP
 .I "\-\-long \-\-Node"
-"%N %.6D %.9P %.11T %.4c %.8z %.6m %.8d %.6w %.8f %20E"
+"%#N %.6D %#P %.11T %.4c %.8z %.6m %.8d %.6w %.8f %20E"
 .TP
 .I "\-\-list\-reasons"
 "%20E %9u %19H %N"
@@ -108,8 +124,13 @@ when running with various options are
 .RE
 
 .IP
-In the above format strings the use of "#" represents the
-maximum length of an node list to be printed.
+In the above format strings, the use of "#" represents the
+maximum length of any partition name or node list to be printed.
+A pass is made over the records to be printed to establish the size in order
+to align the sinfo output, then a second pass is made over the records to
+print them.
+Note that the literal character "#" itself is not a valid field length
+specification, but is only used to document this behaviour.
 .IP
 The field specifications available include:
 .RS
@@ -125,6 +146,9 @@ State/availability of a partition
 Number of nodes by state in the format "allocated/idle".
 Do not use this with a node state option ("%t" or "%T") or
 the different node states will be placed on separate lines.
+.TP
+\fB%b\fR
+Features currently active on the nodes, also see \fB%f\fR
 .TP
 \fB%B\fR
 The max number of CPUs per node available to jobs in the partition.
@@ -144,17 +168,20 @@ Size of temporary disk space per node in megabytes
 \fB%D\fR
 Number of nodes
 .TP
+\fB%e\fR
+Free memory of a node
+.TP
 \fB%E\fR
 The reason a node is unavailable (down, drained, or draining states).
 .TP
 \fB%f\fR
-Features associated with the nodes
+Features available the nodes, also see \fB%b\fR
 .TP
 \fB%F\fR
 Number of nodes by state in the format
-"allocated/idle/other/total".  Do not use this with a node
-state option ("%t" or "%T") or the different node states will
-be placed on separate lines.
+"allocated/idle/other/total".  Note the use of this format option with a node
+state format option ("%t" or "%T") will result in the different node states
+being be reported on separate lines.
 .TP
 \fB%g\fR
 Groups which may use the nodes
@@ -163,10 +190,14 @@ Groups which may use the nodes
 Generic resources (gres) associated with the nodes
 .TP
 \fB%h\fR
-Jobs may share nodes, "yes", "no", or "force"
+Jobs may oversubscribe compute resources (i.e. CPUs), "yes", "no", "exclusive"
+or "force"
 .TP
 \fB%H\fR
 Print the timestamp of the reason a node is unavailable.
+.TP
+\fB%I\fR
+Partition job priority weighting factor.
 .TP
 \fB%l\fR
 Maximum time for any job in the format "days\-hours:minutes:seconds"
@@ -193,7 +224,7 @@ List of node communication addresses
 CPU load of a node
 .TP
 \fB%p\fR
-Partition scheduling priority
+Partition scheduling tier priority.
 .TP
 \fB%P\fR
 Partition name followed by "*" for the default partition, also see \fB%R\fR
@@ -223,7 +254,10 @@ Print the user name of who set the reason a node is unavailable.
 Print the user name and uid of who set the reason a node is unavailable.
 .TP
 \fB%v\fR
-Print the version of the running slurmd dameon.
+Print the version of the running slurmd daemon.
+.TP
+\fB%V\fR
+Print the cluster name if running in a federation
 .TP
 \fB%w\fR
 Scheduling weight of the nodes
@@ -248,8 +282,180 @@ size of field
 .RE
 
 .TP
+\fB\-O <output_format>\fR, \fB\-\-Format=<output_format>\fR
+Specify the information to be displayed.
+Also see the \fB\-o <output_format>\fR, \fB\-\-format=<output_format>\fR
+option described below (which supports greater flexibility in formatting, but
+does not support access to all fields because we ran out of letters).
+Requests a comma separated list of job information to be displayed.
+
+.IP
+The format of each field is "type[:[.]size]"
+.RS
+.TP 8
+\fIsize\fR
+is the minimum field size.
+If no size is specified, 20 characters will be allocated to print the information.
+.TP
+\fI .\fR
+indicates the output should be right justified and size must be specified.
+By default, output is left justified.
+.RE
+
+.IP
+Valid \fItype\fR specifications include:
+.RS
+.TP 6
+\fBall\fR
+Print all fields available in the \-o format for this data type with a
+vertical bar separating each field.
+.TP
+\fBallocmem\fR
+Prints the amount of allocated memory on a node.
+.TP
+\fBallocnodes\fR
+Allowed allocating nodes.
+.TP
+\fBavailable\fR
+State/availability of a partition.
+.TP
+\fBcluster\fR
+Print the cluster name if running in a federation
+.TP
+\fBcpus\fR
+Number of CPUs per node.
+.TP
+\fBcpusload\fR
+CPU load of a node.
+.TP
+\fBfreemem\fR
+Free memory of a node.
+.TP
+\fBcpusstate\fR
+Number of CPUs by state in the format
+"allocated/idle/other/total". Do not use this with a node
+state option ("%t" or "%T") or the different node states will
+be placed on separate lines.
+.TP
+\fBcores\fR
+Number of cores per socket.
+.TP
+\fBdefaulttime\fR
+Default time for any job in the format "days\-hours:minutes:seconds".
+.TP
+\fBdisk\fR
+Size of temporary disk space per node in megabytes.
+.TP
+\fBfeatures\fR
+Features available on the nodes. Also see \fBfeatures_act\fR.
+.TP
+\fBfeatures_act\fR
+Features currently active on the nodes. Also see \fBfeatures\fR.
+.TP
+\fBgroups\fR
+Groups which may use the nodes.
+.TP
+\fBgres\fR
+Generic resources (gres) associated with the nodes.
+.TP
+\fBmaxcpuspernode\fR
+The max number of CPUs per node available to jobs in the partition.
+.TP
+\fBmemory\fR
+Size of memory per node in megabytes.
+.TP
+\fBnodes\fR
+Number of nodes.
+.TP
+\fBnodeaddr\fR
+List of node communication addresses.
+.TP
+\fBnodeai\fR
+Number of nodes by state in the format "allocated/idle".
+Do not use this with a node state option ("%t" or "%T") or
+the different node states will be placed on separate lines.
+.TP
+\fBnodeaiot\fR
+Number of nodes by state in the format
+"allocated/idle/other/total".  Do not use this with a node
+state option ("%t" or "%T") or the different node states will
+be placed on separate lines.
+.TP
+\fBnodehost\fR
+List of node hostnames.
+.TP
+\fBnodelist\fR
+List of node names.
+.TP
+\fBoversubscribe\fR
+Jobs may oversubscribe compute resources (i.e. CPUs), "yes", "no", "exclusive"
+or "force".
+.TP
+\fBpartition\fR
+Partition name followed by "*" for the default partition, also see \fB%R\fR.
+.TP
+\fBpartitionname\fR
+Partition name, also see \fB%P\fR.
+.TP
+\fBport\fR
+Node TCP port.
+.TP
+\fBpreemptmode\fR
+PreemptionMode.
+.TP
+\fBpriorityjobfactor\fR
+Partition factor used by priority/multifactor plugin in calculating job priority.
+.TP
+\fBprioritytier\fR or \fBpriority\fR
+Partition scheduling tier priority.
+.TP
+\fBreason\fR
+The reason a node is unavailable (down, drained, or draining states).
+.TP
+\fBroot\fR
+Only user root may initiate jobs, "yes" or "no".
+.TP
+\fBsize\fR
+Maximum job size in nodes.
+.TP
+\fBstatecompact\fR
+State of nodes, compact form.
+.TP
+\fBstatelong\fR
+State of nodes, extended form.
+.TP
+\fBsockets\fR
+Number of sockets per node.
+.TP
+\fBsocketcorethread\fR
+Extended processor information: number of sockets, cores, threads (S:C:T) per node.
+.TP
+\fBtime\fR
+Maximum time for any job in the format "days\-hours:minutes:seconds".
+.TP
+\fBtimestamp\fR
+Print the timestamp of the reason a node is unavailable.
+.TP
+\fBthreads\fR
+Number of threads per core.
+.TP
+\fBuser\fR
+Print the user name of who set the reason a node is unavailable.
+.TP
+\fBuserlong\fR
+Print the user name and uid of who set the reason a node is unavailable.
+.TP
+\fBversion\fR
+Print the version of the running slurmd daemon.
+.TP
+\fBweight\fR
+Scheduling weight of the nodes.
+.RE
+
+.TP
 \fB\-p <partition>\fR, \fB\-\-partition=<partition>\fR
-Print information only about the specified partition.
+Print information only about the specified partition(s). Multiple partitions
+are separated by commas.
 
 .TP
 \fB\-r\fR, \fB\-\-responding\fR
@@ -258,7 +464,7 @@ If set only report state information for responding nodes.
 .TP
 \fB\-R\fR, \fB\-\-list\-reasons\fR
 List reasons nodes are in the down, drained, fail or failing state.
-When nodes are in these states SLURM supports optional inclusion
+When nodes are in these states Slurm supports optional inclusion
 of a "reason" string by an administrator.
 This option will display the first 35 characters of the reason
 field and list of nodes with that reason for all nodes that are,
@@ -285,7 +491,7 @@ separated by commas.  The field specifications may be preceded
 by "+" or "\-" for ascending (default) and descending order
 respectively.  The partition field specification, "P", may be
 preceded by a "#" to report partitions in the same order that
-they appear in SLURM's  configuration file, \fBslurm.conf\fR.
+they appear in Slurm's  configuration file, \fBslurm.conf\fR.
 For example, a sort value of "+P,\-m" requests that records
 be printed in order of increasing partition name and within a
 partition by decreasing memory size.  The default value of sort
@@ -299,14 +505,9 @@ List nodes only having the given state(s).  Multiple states
 may be comma separated and the comparison is case insensitive.
 Possible values include (case insensitive): ALLOC, ALLOCATED,
 COMP, COMPLETING, DOWN, DRAIN (for node in DRAINING or DRAINED
-states), DRAINED, DRAINING, ERR, ERROR, FAIL, FAILING, FUTURE, FUTR,
+states), DRAINED, DRAINING, ERR, ERROR, FAIL, FUTURE, FUTR,
 IDLE, MAINT, MIX, MIXED, NO_RESPOND, NPC, PERFCTRS,
 POWER_DOWN, POWER_UP, RESV, RESERVED, UNK, and UNKNOWN.
-
-Possible states include: allocated, completing, down,
-drained, draining, fail, failing, future, idle, maint, mixed,
-perfctrs, power_down, power_up, reserved, and unknown plus
-
 By default nodes in the specified state are reported whether
 they are responding or not.
 The \fB\-\-dead\fR and \fB\-\-responding\fR options may be
@@ -314,7 +515,7 @@ used to filtering nodes by the responding flag.
 
 .TP
 \fB\-T\fR, \fB\-\-reservation\fR
-Only display information about SLURM reservations.
+Only display information about Slurm reservations.
 
 .TP
 \fB\-\-usage\fR
@@ -385,19 +586,22 @@ state in the form "available/idle/other/total".
 Name of a partition.  Note that the suffix "*" identifies the
 default partition.
 .TP
+\fBPORT\fR
+Local TCP port used by slurmd on the node.
+.TP
 \fBROOT\fR
 Is the ability to allocate resources in this partition
 restricted to user root, \fByes\fR or \fBno\fR.
 .TP
-\fBSHARE\fR
-Will jobs allocated resources in this partition share those
-resources.
-\fBno\fR indicates resources are never shared.
+\fBOVERSUBSCRIBE\fR
+Will jobs allocated resources in this partition oversubscribe those
+compute resources (i.e. CPUs).
+\fBno\fR indicates resources are never oversubscribed.
 \fBexclusive\fR indicates whole nodes are dedicated to jobs
 (equivalent to srun \-\-exclusive option, may be used even
-with shared/cons_res managing individual processors).
-\fBforce\fR indicates resources are always available to be shared.
-\fByes\fR indicates resource may be shared or not
+with select/cons_res managing individual processors).
+\fBforce\fR indicates resources are always available to be oversubscribed.
+\fByes\fR indicates resource may be oversubscribed or not
 per job's resource allocation.
 .TP
 \fBSTATE\fR
@@ -417,18 +621,29 @@ Size of temporary disk space in megabytes on these nodes.
 .SH "NODE STATE CODES"
 .PP
 Node state codes are shortened as required for the field size.
-If the node state code is followed by "*", this indicates the
-node is presently not responding and will not be allocated
+These node states may be followed by a special character to identify
+state flags associated with the node.
+The following node sufficies and states are used:
+.TP 4
+\fB*\fR
+The node is presently not responding and will not be allocated
 any new work.  If the node remains non\-responsive, it will
 be placed in the \fBDOWN\fR state (except in the case of
 \fBCOMPLETING\fR, \fBDRAINED\fR, \fBDRAINING\fR,
 \fBFAIL\fR, \fBFAILING\fR nodes).
-
-If the node state code is followed by "~", this indicates
-the node is presently in a power saving mode (typically
+.TP
+\fB~\fR
+The node is presently in a power saving mode (typically
 running at reduced frequency).
-If the node state code is followed by "#", this indicates
-the node is presently being powered up or configured.
+.TP
+\fB#\fR
+The node is presently being powered up or configured.
+.TP
+\fB$\fR
+The node is currently in a reservation with a flag value of "maintenance".
+.TP
+\fB@\fR
+The node is pending reboot.
 .TP 12
 \fBALLOCATED\fR
 The node has been allocated to one or more jobs.
@@ -440,16 +655,16 @@ one or more jobs are in the process of COMPLETING.
 \fBCOMPLETING\fR
 All jobs associated with this node are in the process of
 COMPLETING.  This node state will be removed when
-all of the job's processes have terminated and the SLURM
+all of the job's processes have terminated and the Slurm
 epilog program (if any) has terminated. See the \fBEpilog\fR
 parameter description in the \fBslurm.conf\fR man page for
 more information.
 .TP
 \fBDOWN\fR
-The node is unavailable for use. SLURM can automatically
+The node is unavailable for use. Slurm can automatically
 place nodes in this state if some failure occurs. System
 administrators may also explicitly place nodes in this state. If
-a node resumes normal operation, SLURM can automatically
+a node resumes normal operation, Slurm can automatically
 return it to service. See the \fBReturnToService\fR
 and \fBSlurmdTimeout\fR parameter descriptions in the
 \fBslurm.conf\fR(5) man page for more information.
@@ -470,9 +685,9 @@ node\fR command in the \fBscontrol\fR(1) man page or the
 .TP
 \fBERROR\fR
 The node is currently in an error state and not capable of running any jobs.
-SLURM can automatically place nodes in this state if some failure occurs.
+Slurm can automatically place nodes in this state if some failure occurs.
 System administrators may also explicitly place nodes in this state. If
-a node resumes normal operation, SLURM can automatically
+a node resumes normal operation, Slurm can automatically
 return it to service. See the \fBReturnToService\fR
 and \fBSlurmdTimeout\fR parameter descriptions in the
 \fBslurm.conf\fR(5) man page for more information.
@@ -497,8 +712,10 @@ some point in the indefinite future for use.
 The node is not allocated to any jobs and is available for use.
 .TP
 \fBMAINT\fR
-The node is currently in a reservation with a flag value of "maintenance"
-or is scheduled to be rebooted.
+The node is currently in a reservation with a flag value of "maintainence".
+.TP
+\fBREBOOT\fR
+The node is currently scheduled to be rebooted.
 .TP
 \fBMIXED\fR
 The node has some of its CPUs ALLOCATED while others are IDLE.
@@ -517,7 +734,7 @@ The node is currently in the process of being powered up.
 The node is in an advanced reservation and not generally available.
 .TP
 \fBUNKNOWN\fR
-The SLURM controller has just started and the node's state
+The Slurm controller has just started and the node's state
 has not yet been determined.
 
 .SH "ENVIRONMENT VARIABLES"
@@ -530,8 +747,14 @@ Commandline options will always override these settings.)
 \fBSINFO_ALL\fR
 \fB\-a, \-\-all\fR
 .TP
+\fBSINFO_FEDERATION\fR
+Same as \fB\-\-federation\fR
+.TP
 \fBSINFO_FORMAT\fR
 \fB\-o <output_format>, \-\-format=<output_format>\fR
+.TP
+\fBSINFO_LOCAL\fR
+Same as \fB\-\-local\fR
 .TP
 \fBSINFO_PARTITION\fR
 \fB\-p <partition>, \-\-partition=<partition>\fR
@@ -543,19 +766,20 @@ Commandline options will always override these settings.)
 Same as \fB\-\-clusters\fR
 .TP
 \fBSLURM_CONF\fR
-The location of the SLURM configuration file.
+The location of the Slurm configuration file.
 .TP
 \fBSLURM_TIME_FORMAT\fR
 Specify the format used to report time stamps. A value of \fIstandard\fR, the
-default value, generates output in the form "year-month-dateThour:minute:second".
+default value, generates output in the form "year\-month\-dateThour:minute:second".
 A value of \fIrelative\fR returns only "hour:minute:second" if the current day.
 For other dates in the current year it prints the "hour:minute" preceded by
 "Tomorr" (tomorrow), "Ystday" (yesterday), the name of the day for the coming
 week (e.g. "Mon", "Tue", etc.), otherwise the date (e.g. "25 Apr").
 For other years it returns a date month and year without a time (e.g.
-"6 Jun 2012").
-Another suggested value is "%a %T" for a day of week and time stamp (e.g.
-"Mon 12:34:56"). All of the time stamps use a 24 hour format.
+"6 Jun 2012"). All of the time stamps use a 24 hour format.
+
+A valid strftime() format can also be specified. For example, a value of
+"%a %T" will report the day of the week and a time stamp (e.g. "Mon 12:34:56").
 
 .SH "EXAMPLES"
 .eo
@@ -585,8 +809,8 @@ Report more complete information about the partition debug:
 .nf
 
 > sinfo --long --partition=debug
-PARTITION AVAIL TIMELIMIT JOB_SIZE ROOT SHARE GROUPS NODES STATE NODELIST
-debug*    up        30:00        8 no   no    all        8 idle  dev[0-7]
+PARTITION AVAIL TIMELIMIT JOB_SIZE ROOT OVERSUBS GROUPS NODES STATE NODELIST
+debug*    up        30:00        8 no   no       all        8 idle  dev[0-7]
 .fi
 
 Report only those nodes that are in state DRAINED:
@@ -628,17 +852,17 @@ Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
 .br
 Copyright (C) 2008\-2009 Lawrence Livermore National Security.
 .br
-Copyright (C) 2010-2013 SchedMD LLC.
+Copyright (C) 2010-2017 SchedMD LLC.
 .LP
-This file is part of SLURM, a resource management program.
-For details, see <http://slurm.schedmd.com/>.
+This file is part of Slurm, a resource management program.
+For details, see <https://slurm.schedmd.com/>.
 .LP
-SLURM is free software; you can redistribute it and/or modify it under
+Slurm is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free
 Software Foundation; either version 2 of the License, or (at your option)
 any later version.
 .LP
-SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
 WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
 FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
 details.

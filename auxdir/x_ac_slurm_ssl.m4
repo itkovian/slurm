@@ -1,6 +1,4 @@
 ##*****************************************************************************
-## $Id$
-##*****************************************************************************
 #  AUTHOR:
 #     Mark Grondona <mgrondona@llnl.gov>
 #     (Mostly taken from OpenSSH configure.ac)
@@ -30,13 +28,7 @@ AC_DEFUN([X_AC_SLURM_WITH_SSL], [
     [
   	tryssldir=$withval
 
-  	# Hack around a libtool bug on AIX.
-  	# libcrypto is in a non-standard library path on AIX (/opt/freeware
-  	# which is specified with --with-ssl), and libtool is not setting
-  	# the correct runtime library path in the binaries.
-  	if test "x$ac_have_aix" = "xyes"; then
-  		SSL_LIB_TEST="-lcrypto-static"
-	elif test "x$ac_have_nrt" = "xyes"; then
+	if test "x$ac_have_nrt" = "xyes"; then
 		# it appears on p7 machines the openssl doesn't
 		# link correctly so we need to add -ldl
 		SSL_LIB_TEST="$SSL_LIB_TEST -ldl"
@@ -144,12 +136,9 @@ AC_DEFUN([X_AC_SLURM_WITH_SSL], [
   		fi
   	fi
     fi
-  
-    AC_LINK_IFELSE([AC_LANG_PROGRAM([[#include <openssl/evp.h>]], [[EVP_MD_CTX_cleanup(NULL);]])],[AC_DEFINE(HAVE_EVP_MD_CTX_CLEANUP, 1,
-               [Define to 1 if function EVP_MD_CTX_cleanup exists.])],[])
   else
     SSL_LIBS=""
-    AC_MSG_WARN([Could not find working OpenSSL library])
+    AC_MSG_WARN([could not find working OpenSSL library])
   fi
   
   LIBS="$saved_LIBS"

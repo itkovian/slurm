@@ -1,6 +1,7 @@
 /*****************************************************************************\
  *  sreport.h - report generating tool for slurm accounting header file.
  *****************************************************************************
+ *  Copyright (C) 2010-2015 SchedMD LLC.
  *  Copyright (C) 2008 Lawrence Livermore National Security.
  *  Copyright (C) 2002-2007 The Regents of the University of California.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -8,7 +9,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -40,26 +41,15 @@
 #ifndef __SREPORT_H__
 #define __SREPORT_H__
 
-#if HAVE_CONFIG_H
-#  include "config.h"
-#endif
-
-#if HAVE_GETOPT_H
-#  include <getopt.h>
-#else
-#  include "src/common/getopt.h"
-#endif
+#include "config.h"
 
 #include <ctype.h>
 #include <errno.h>
+#include <getopt.h>
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
-#ifdef HAVE_STRING_H
-#  include <string.h>
-#endif
-#ifdef HAVE_STRINGS_H
-#  include <strings.h>
-#endif
+#include <string.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -68,41 +58,50 @@
 #  include <readline/history.h>
 #endif
 
-#if HAVE_INTTYPES_H
-#  include <inttypes.h>
-#else  /* !HAVE_INTTYPES_H */
-#  if HAVE_STDINT_H
-#    include <stdint.h>
-#  endif
-#endif  /* HAVE_INTTYPES_H */
-
 #include "slurm/slurm.h"
 #include "slurm/slurmdb.h"
 
 #include "src/common/slurm_jobacct_gather.h"
 #include "src/common/parse_time.h"
 #include "src/common/slurm_accounting_storage.h"
+#include "src/common/slurm_protocol_defs.h"
 #include "src/common/xstring.h"
 #include "src/common/print_fields.h"
 
 #define CKPT_WAIT	10
 #define	MAX_INPUT_FIELDS 128
 
+typedef enum {
+	GROUP_BY_ACCOUNT,
+	GROUP_BY_ACCOUNT_JOB_SIZE,
+	GROUP_BY_ACCOUNT_JOB_SIZE_DURATION,
+	GROUP_BY_USER,
+	GROUP_BY_USER_JOB_SIZE,
+	GROUP_BY_USER_JOB_SIZE_DURATION,
+	GROUP_BY_NONE
+} report_grouping_t;
+
 extern slurmdb_report_time_format_t time_format;
 extern char *time_format_string;
 extern char *command_name;
 extern int exit_code;	/* sacctmgr's exit code, =1 on any error at any time */
 extern int exit_flag;	/* program to terminate if =1 */
+extern char *fed_name;	/* Set if operating in federation mode */
 extern int input_words;	/* number of words of input permitted */
 extern int quiet_flag;	/* quiet=1, verbose=-1, normal=0 */
+extern char *tres_str;	/* --tres= value */
+extern List g_tres_list;/* tres list from database - unaltered */
+extern List tres_list;	/* TRES list based of tres_str (--tres=str) */
 extern void *db_conn;
-extern uint32_t my_uid;
 extern int all_clusters_flag;
 extern slurmdb_report_sort_t sort_flag;
+extern char *cluster_flag;
+extern char *tres_usage_str;
 
 extern void slurmdb_report_print_time(print_field_t *field,
 			       uint64_t value, uint64_t total_time, int last);
 extern int parse_option_end(char *option);
+extern time_t sanity_check_endtime(time_t endtime);
 extern char *strip_quotes(char *option, int *increased);
 extern int sort_user_dec(void *, void *);
 extern int sort_cluster_dec(void *, void *);
@@ -110,5 +109,35 @@ extern int sort_assoc_dec(void *, void *);
 extern int sort_reservations_dec(void *, void *);
 
 extern int get_uint(char *in_value, uint32_t *out_value, char *type);
+
+/* Fills in cluster_tres_rec and tres_rec and validates tres_rec has
+ * allocated seconds.  As we still want to print a line if the usage
+ * is zero NULLs must be handled after the function is called.
+ */
+extern void sreport_set_tres_recs(slurmdb_tres_rec_t **cluster_tres_rec,
+				  slurmdb_tres_rec_t **tres_rec,
+				  List cluster_tres_list, List tres_list,
+				  slurmdb_tres_rec_t *tres_rec_in);
+
+/* Since usage columns can get big, instead of always giving a 20
+ * column spacing, figure it out here.
+ */
+extern void sreport_set_usage_col_width(print_field_t *field, uint64_t number);
+
+extern void sreport_set_usage_column_width(print_field_t *usage_field,
+					   print_field_t *energy_field,
+					   List slurmdb_report_cluster_list);
+
+/* For duplicate user/account records, combine TRES records into the original
+ * list and purge the duplicate records */
+extern void combine_assoc_tres(List first_assoc_list, List new_assoc_list);
+
+/* Given two TRES lists, combine the content of the second with the first,
+ * adding the counts for duplicate TRES IDs */
+extern void combine_tres_list(List orig_tres_list, List dup_tres_list);
+
+/* For duplicate user/account records, combine TRES records into the original
+ * list and purge the duplicate records */
+extern void combine_user_tres(List first_user_list, List new_user_list);
 
 #endif /* HAVE_SREPORT_H */

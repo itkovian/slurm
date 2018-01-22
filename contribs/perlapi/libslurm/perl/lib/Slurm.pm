@@ -112,7 +112,7 @@ In the following L</"METHODS"> section, if a parameter is omitted, it will be li
     
 =head2 DATA STRUCTURES
     
-Typicaly, C structures are converted to (maybe blessed) Perl hash references, with field names as hash keys. Arrays in C are converted to arrays in Perl. For example, there is a structure C<job_info_msg_t>:
+Typically, C structures are converted to (maybe blessed) Perl hash references, with field names as hash keys. Arrays in C are converted to arrays in Perl. For example, there is a structure C<job_info_msg_t>:
 
     typedef struct job_info_msg {
         time_t last_update;     /* time of latest info */
@@ -371,7 +371,7 @@ Allocate resources for a job request. If the requested resources are not immedia
 
 =over 2
 
-=item * IN $job_desc: description of resource allocation request, with sturcture of C<job_desc_msg_t>.
+=item * IN $job_desc: description of resource allocation request, with structure of C<job_desc_msg_t>.
 
 =item * RET: response to request, with structure of C<resource_allocation_response_msg_t>.  This only represents a job allocation if resources are immediately available.  Otherwise it just contains the job id of the enqueued job request. On failure C<undef> is returned.
     
@@ -383,7 +383,7 @@ Allocate resources for a job request.  This call will block until the allocation
     
 =over 2
 
-=item * IN $job_desc: description of resource allocation request, with sturcture of C<job_desc_msg_t>.
+=item * IN $job_desc: description of resource allocation request, with structure of C<job_desc_msg_t>.
 
 =item * IN $timeout: amount of time, in seconds, to wait for a response before giving up. A timeout of zero will wait indefinitely.    
 
@@ -394,21 +394,9 @@ pending callback is given, it will be called with the job id of the pending job 
     
 =back
 
-=head3 $resp = $slurm->allocation_lookup($job_id);
+=head3 $resp = $slurm->allocatiion_lookup($job_id);
 
 Retrieve info for an existing resource allocation.
-
-=over 2
-
-=item * IN $job_id: job allocation identifier.
-
-=item * RET: job allocation info, with structure of C<job_alloc_info_response_msg_t>. On failure C<undef> is returned with errno set.    
-
-=back
-
-=head3 $resp = $slurm->allocatiion_lookup_lite($job_id);
-
-Retrieve minor info for an existing resource allocation.
 
 =over 2
 

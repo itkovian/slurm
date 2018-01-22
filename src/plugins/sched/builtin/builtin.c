@@ -12,7 +12,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -59,6 +59,7 @@
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
 
+#include "src/slurmctld/burst_buffer.h"
 #include "src/slurmctld/locks.h"
 #include "src/slurmctld/preempt.h"
 #include "src/slurmctld/reservation.h"
@@ -86,21 +87,24 @@ static void _my_sleep(int secs);
 /* Terminate builtin_agent */
 extern void stop_builtin_agent(void)
 {
-	pthread_mutex_lock(&term_lock);
+	slurm_mutex_lock(&term_lock);
 	stop_builtin = true;
-	pthread_cond_signal(&term_cond);
-	pthread_mutex_unlock(&term_lock);
+	slurm_cond_signal(&term_cond);
+	slurm_mutex_unlock(&term_lock);
 }
 
 static void _my_sleep(int secs)
 {
 	struct timespec ts = {0, 0};
+	struct timeval now;
 
-	ts.tv_sec = time(NULL) + secs;
-	pthread_mutex_lock(&term_lock);
+	gettimeofday(&now, NULL);
+	ts.tv_sec = now.tv_sec + secs;
+	ts.tv_nsec = now.tv_usec * 1000;
+	slurm_mutex_lock(&term_lock);
 	if (!stop_builtin)
-		pthread_cond_timedwait(&term_cond, &term_lock, &ts);
-	pthread_mutex_unlock(&term_lock);
+		slurm_cond_timedwait(&term_cond, &term_lock, &ts);
+	slurm_mutex_unlock(&term_lock);
 }
 
 static void _load_config(void)
@@ -133,7 +137,7 @@ static void _load_config(void)
 	xfree(sched_params);
 
 	select_type = slurm_get_select_type();
-	if (!strcmp(select_type, "select/serial")) {
+	if (!xstrcmp(select_type, "select/serial")) {
 		/* Do not spend time computing expected start time for
 		 * pending jobs */
 		max_sched_job_cnt = 0;
@@ -154,6 +158,7 @@ static void _compute_start_times(void)
 	bitstr_t *exc_core_bitmap = NULL;
 	uint32_t max_nodes, min_nodes, req_nodes, time_limit;
 	time_t now = time(NULL), sched_start, last_job_alloc;
+	bool resv_overlap = false;
 
 	sched_start = now;
 	last_job_alloc = now - 1;
@@ -198,7 +203,7 @@ static void _compute_start_times(void)
 		}
 
 		j = job_test_resv(job_ptr, &now, true, &avail_bitmap,
-				  &exc_core_bitmap);
+				  &exc_core_bitmap, &resv_overlap, false);
 		if (j != SLURM_SUCCESS) {
 			FREE_NULL_BITMAP(avail_bitmap);
 			FREE_NULL_BITMAP(exc_core_bitmap);
@@ -237,7 +242,7 @@ static void _compute_start_times(void)
 			break;
 		}
 	}
-	list_destroy(job_queue);
+	FREE_NULL_LIST(job_queue);
 	FREE_NULL_BITMAP(alloc_bitmap);
 }
 
@@ -255,7 +260,7 @@ extern void *builtin_agent(void *args)
 	static time_t last_sched_time = 0;
 	/* Read config, nodes and partitions; Write jobs */
 	slurmctld_lock_t all_locks = {
-		READ_LOCK, WRITE_LOCK, READ_LOCK, READ_LOCK };
+		READ_LOCK, WRITE_LOCK, READ_LOCK, READ_LOCK, READ_LOCK };
 
 	_load_config();
 	last_sched_time = time(NULL);
@@ -275,6 +280,7 @@ extern void *builtin_agent(void *args)
 		lock_slurmctld(all_locks);
 		_compute_start_times();
 		last_sched_time = time(NULL);
+		(void) bb_g_job_try_stage_in();
 		unlock_slurmctld(all_locks);
 	}
 	return NULL;

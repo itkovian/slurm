@@ -9,7 +9,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -37,10 +37,6 @@
  *  with SLURM; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
-
-#ifdef HAVE_CONFIG_H
-#  include "config.h"
-#endif
 
 #include <ctype.h>
 #include <errno.h>
@@ -88,7 +84,8 @@ slurm_load_licenses(time_t t,
 	req.show_flags = show_flags;
 	msg_request.data = &req;
 
-	cc = slurm_send_recv_controller_msg(&msg_request, &msg_reply);
+	cc = slurm_send_recv_controller_msg(&msg_request, &msg_reply,
+					    working_cluster_rec);
 	if (cc < 0)
 		return SLURM_ERROR;
 

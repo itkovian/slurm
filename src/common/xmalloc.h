@@ -3,7 +3,6 @@
  *  - default: never return if errors are encountered.
  *  - attempt to report file, line, and calling function on assertion failure
  *  - use configurable slurm log facility for reporting errors
- *  $Id$
  *****************************************************************************
  *  Copyright (C) 2002 The Regents of the University of California.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -12,7 +11,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -77,38 +76,43 @@
 #ifndef _XMALLOC_H
 #define _XMALLOC_H
 
-#if HAVE_SYS_TYPES_H
-#  include <sys/types.h>
-#endif
+#include <sys/types.h>
 
 #include "macros.h"
 
 #define xmalloc(__sz) \
-	slurm_xmalloc (__sz, __FILE__, __LINE__, __CURRENT_FUNC__)
+	slurm_xmalloc (__sz, true, __FILE__, __LINE__, __func__)
+
+#define xmalloc_nz(__sz) \
+	slurm_xmalloc (__sz, false, __FILE__, __LINE__, __func__)
 
 #define try_xmalloc(__sz) \
-	slurm_try_xmalloc(__sz, __FILE__, __LINE__, __CURRENT_FUNC__)
+	slurm_try_xmalloc(__sz, __FILE__, __LINE__, __func__)
 
 #define xfree(__p) \
-	slurm_xfree((void **)&(__p), __FILE__, __LINE__, __CURRENT_FUNC__)
+	slurm_xfree((void **)&(__p), __FILE__, __LINE__, __func__)
 
 #define xrealloc(__p, __sz) \
-        slurm_xrealloc((void **)&(__p), __sz, \
-                       __FILE__, __LINE__, __CURRENT_FUNC__)
+        slurm_xrealloc((void **)&(__p), __sz, true, \
+                       __FILE__, __LINE__, __func__)
+
+#define xrealloc_nz(__p, __sz) \
+        slurm_xrealloc((void **)&(__p), __sz, false, \
+                       __FILE__, __LINE__, __func__)
 
 #define try_xrealloc(__p, __sz) \
 	slurm_try_xrealloc((void **)&(__p), __sz, \
-                           __FILE__, __LINE__,  __CURRENT_FUNC__)
+                           __FILE__, __LINE__,  __func__)
 
 #define xsize(__p) \
-	slurm_xsize((void *)__p, __FILE__, __LINE__, __CURRENT_FUNC__)
+	slurm_xsize((void *)__p, __FILE__, __LINE__, __func__)
 
-void *slurm_xmalloc(size_t, const char *, int, const char *);
+void *slurm_xmalloc(size_t, bool, const char *, int, const char *);
 void *slurm_try_xmalloc(size_t , const char *, int , const char *);
 void slurm_xfree(void **, const char *, int, const char *);
-void *slurm_xrealloc(void **, size_t, const char *, int, const char *);
+void *slurm_xrealloc(void **, size_t, bool, const char *, int, const char *);
 int  slurm_try_xrealloc(void **, size_t, const char *, int, const char *);
-int  slurm_xsize(void *, const char *, int, const char *);
+size_t slurm_xsize(void *, const char *, int, const char *);
 
 #define XMALLOC_MAGIC 0x42
 

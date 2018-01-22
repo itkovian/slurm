@@ -8,7 +8,7 @@
  *  LLNL-CODE-402394.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -37,9 +37,7 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#ifdef HAVE_CONFIG_H
-#  include "config.h"
-#endif                /* HAVE_CONFIG_H */
+#include "config.h"
 
 #if USE_ALIAS == 0
 /* only do anything if we don't use alias */
@@ -48,12 +46,12 @@
 // make wrappers
 extern int slurm_hostlist_count(hostlist_t hl)
 {
-	return hostlist_count(hostlist);
+	return hostlist_count(hl);
 }
 
 extern hostlist_t slurm_hostlist_create(const char *hostlist)
 {
-	return hostlist_create(hl);
+	return hostlist_create(hostlist);
 }
 
 extern void slurm_hostlist_destroy(hostlist_t hl)

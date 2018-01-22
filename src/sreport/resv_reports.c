@@ -2,14 +2,14 @@
  *  resv_reports.c - functions for generating reservation reports
  *                       from accounting infrastructure.
  *****************************************************************************
- *
+ *  Copyright (C) 2010-2015 SchedMD LLC.
  *  Copyright (C) 2008 Lawrence Livermore National Security.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Danny Auble <da@llnl.gov>
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -39,36 +39,39 @@
 \*****************************************************************************/
 
 #include "cluster_reports.h"
-
+#include "resv_reports.h"
 enum {
-	PRINT_RESV_NAME,
-	PRINT_RESV_CLUSTER,
-	PRINT_RESV_CPUS,
-	PRINT_RESV_ACPU,
-	PRINT_RESV_DCPU,
-	PRINT_RESV_ICPU,
-	PRINT_RESV_NODES,
 	PRINT_RESV_ASSOCS,
-	PRINT_RESV_START,
+	PRINT_RESV_CLUSTER,
 	PRINT_RESV_END,
 	PRINT_RESV_FLAGS,
+	PRINT_RESV_ID,
+	PRINT_RESV_NAME,
+	PRINT_RESV_NODES,
+	PRINT_RESV_START,
 	PRINT_RESV_TIME,
-	PRINT_RESV_CPUTIME,
+	PRINT_RESV_TRES_ALLOC,
+	PRINT_RESV_TRES_CNT,
+	PRINT_RESV_TRES_IDLE,
+	PRINT_RESV_TRES_NAME,
+	PRINT_RESV_TRES_USAGE,
 };
 
-typedef enum {
-	GROUP_BY_ACCOUNT,
-	GROUP_BY_ACCOUNT_JOB_SIZE,
-	GROUP_BY_ACCOUNT_JOB_SIZE_DURATION,
-	GROUP_BY_USER,
-	GROUP_BY_USER_JOB_SIZE,
-	GROUP_BY_USER_JOB_SIZE_DURATION,
-	GROUP_BY_NONE
-} report_grouping_t;
 
 static List print_fields_list = NULL; /* types are of print_field_t */
 
-static int _set_resv_cond(int *start, int argc, char *argv[],
+static int _find_resv(void *x, void *key)
+{
+	slurmdb_reservation_rec_t *rec = (slurmdb_reservation_rec_t *)x;
+	uint32_t id = *(uint32_t *)key;
+
+	if (rec->id == id)
+		return 1;
+
+	return 0;
+}
+
+static int _set_resv_cond(int *start, int argc, char **argv,
 			  slurmdb_reservation_cond_t *resv_cond,
 			  List format_list)
 {
@@ -88,6 +91,9 @@ static int _set_resv_cond(int *start, int argc, char *argv[],
 
 	if (!resv_cond->cluster_list)
 		resv_cond->cluster_list = list_create(slurm_destroy_char);
+	if (cluster_flag)
+		slurm_addto_char_list(resv_cond->cluster_list, cluster_flag);
+
 	for (i=(*start); i<argc; i++) {
 		end = parse_option_end(argv[i]);
 		if (!end)
@@ -99,44 +105,45 @@ static int _set_resv_cond(int *start, int argc, char *argv[],
 			}
 		}
 
-		if (!end && !strncasecmp(argv[i], "all_clusters",
-					       MAX(command_len, 1))) {
+		if (!end && !xstrncasecmp(argv[i], "all_clusters",
+					  MAX(command_len, 1))) {
 			local_cluster_flag = 1;
 		} else if (!end
-			  || !strncasecmp (argv[i], "Names",
-					 MAX(command_len, 1))) {
+			  || !xstrncasecmp(argv[i], "Names",
+					   MAX(command_len, 1))) {
 			if (!resv_cond->name_list)
 				resv_cond->name_list =
 					list_create(slurm_destroy_char);
 			slurm_addto_char_list(resv_cond->name_list,
 					      argv[i]+end);
 			set = 1;
-		} else if (!strncasecmp (argv[i], "Clusters",
+		} else if (!xstrncasecmp(argv[i], "Clusters",
 					 MAX(command_len, 1))) {
 			slurm_addto_char_list(resv_cond->cluster_list,
 					      argv[i]+end);
 			set = 1;
-		} else if (!strncasecmp (argv[i], "End", MAX(command_len, 1))) {
+		} else if (!xstrncasecmp(argv[i], "End", MAX(command_len, 1))) {
 			resv_cond->time_end = parse_time(argv[i]+end, 1);
+			resv_cond->time_end = sanity_check_endtime(resv_cond->time_end);
 			set = 1;
-		} else if (!strncasecmp (argv[i], "Flags",
+		} else if (!xstrncasecmp(argv[i], "Flags",
 					 MAX(command_len, 2))) {
-			/* FIX ME: make flags work here */
-			//resv_cond->flags = parse_resv_flags(argv[i]+end);
+			resv_cond->flags = parse_resv_flags(argv[i]+end,
+							    __func__);
 			set = 1;
-		} else if (!strncasecmp (argv[i], "Format",
+		} else if (!xstrncasecmp(argv[i], "Format",
 					 MAX(command_len, 2))) {
 			if (format_list)
 				slurm_addto_char_list(format_list,
 						      argv[i]+end);
-		} else if (!strncasecmp (argv[i], "Ids",
+		} else if (!xstrncasecmp(argv[i], "Ids",
 					 MAX(command_len, 1))) {
 			if (!resv_cond->id_list)
 				resv_cond->id_list =
 					list_create(slurm_destroy_char);
 			slurm_addto_char_list(resv_cond->id_list, argv[i]+end);
 			set = 1;
-		} else if (!strncasecmp (argv[i], "Nodes",
+		} else if (!xstrncasecmp(argv[i], "Nodes",
 					 MAX(command_len, 1))) {
 			if (resv_cond->nodes) {
 				error("You already specified nodes '%s' "
@@ -147,12 +154,12 @@ static int _set_resv_cond(int *start, int argc, char *argv[],
 			}
 			resv_cond->nodes = xstrdup(argv[i]+end);
 			set = 1;
-		} else if (!strncasecmp (argv[i], "Start",
+		} else if (!xstrncasecmp(argv[i], "Start",
 					 MAX(command_len, 1))) {
 			resv_cond->time_start = parse_time(argv[i]+end, 1);
 			set = 1;
 		} else {
-			exit_code=1;
+			exit_code = 1;
 			fprintf(stderr," Unknown condition: %s\n"
 			       "Use keyword set to modify value\n", argv[i]);
 		}
@@ -160,6 +167,7 @@ static int _set_resv_cond(int *start, int argc, char *argv[],
 	(*start) = i;
 
 	if (!local_cluster_flag && !list_count(resv_cond->cluster_list)) {
+		/* Get the default Cluster since no cluster is specified */
 		char *temp = slurm_get_cluster_name();
 		if (temp)
 			list_append(resv_cond->cluster_list, temp);
@@ -185,9 +193,9 @@ static int _setup_print_fields_list(List format_list)
 	char *object = NULL;
 
 	if (!format_list || !list_count(format_list)) {
-		exit_code=1;
-			fprintf(stderr, " we need a format list "
-				"to set up the print.\n");
+		exit_code = 1;
+		fprintf(stderr,
+			" we need a format list to set up the print.\n");
 		return SLURM_ERROR;
 	}
 
@@ -195,105 +203,120 @@ static int _setup_print_fields_list(List format_list)
 		print_fields_list = list_create(destroy_print_field);
 
 	itr = list_iterator_create(format_list);
-	while((object = list_next(itr))) {
+	while ((object = list_next(itr))) {
 		char *tmp_char = NULL;
 		int command_len = 0;
 		int newlen = 0;
 
 		if ((tmp_char = strstr(object, "\%"))) {
-			newlen = atoi(tmp_char+1);
+			newlen = atoi(tmp_char + 1);
 			tmp_char[0] = '\0';
 		}
 
 		command_len = strlen(object);
 
 		field = xmalloc(sizeof(print_field_t));
-		if (!strncasecmp("allocated", object,
-				MAX(command_len, 2))) {
-			field->type = PRINT_RESV_ACPU;
+		if (!xstrncasecmp("allocated", object,
+				  MAX(command_len, 2))) {
+			field->type = PRINT_RESV_TRES_ALLOC;
 			field->name = xstrdup("Allocated");
 			if (time_format == SLURMDB_REPORT_TIME_SECS_PER
 			   || time_format == SLURMDB_REPORT_TIME_MINS_PER
 			   || time_format == SLURMDB_REPORT_TIME_HOURS_PER)
-				field->len = 20;
+				field->len = 29;
 			else
-				field->len = 9;
+				field->len = 20;
 			field->print_routine = slurmdb_report_print_time;
-		} else if (!strncasecmp("Associations",
-				       object, MAX(command_len, 2))) {
+		} else if (!xstrncasecmp("Associations",
+					 object, MAX(command_len, 2))) {
 			field->type = PRINT_RESV_ASSOCS;
 			field->name = xstrdup("Associations");
 			field->len = 15;
 			field->print_routine = print_fields_str;
-		} else if (!strncasecmp("Cluster", object,
-				       MAX(command_len, 2))) {
+		} else if (!xstrncasecmp("Cluster", object,
+					 MAX(command_len, 2))) {
 			field->type = PRINT_RESV_CLUSTER;
 			field->name = xstrdup("Cluster");
 			field->len = 9;
 			field->print_routine = print_fields_str;
-		} else if (!strncasecmp("cpucount", object,
-				       MAX(command_len, 2))) {
-			field->type = PRINT_RESV_CPUS;
-			field->name = xstrdup("CPU count");
-			field->len = 9;
-			field->print_routine = print_fields_uint;
-		} else if (!strncasecmp("down", object, MAX(command_len, 1))) {
-			field->type = PRINT_RESV_DCPU;
-			field->name = xstrdup("Down");
-			if (time_format == SLURMDB_REPORT_TIME_SECS_PER
-			   || time_format == SLURMDB_REPORT_TIME_MINS_PER
-			   || time_format == SLURMDB_REPORT_TIME_HOURS_PER)
-				field->len = 20;
-			else
-				field->len = 9;
-			field->print_routine = slurmdb_report_print_time;
-		} else if (!strncasecmp("idle", object, MAX(command_len, 1))) {
-			field->type = PRINT_RESV_ICPU;
-			field->name = xstrdup("Idle");
-			if (time_format == SLURMDB_REPORT_TIME_SECS_PER
-			   || time_format == SLURMDB_REPORT_TIME_MINS_PER
-			   || time_format == SLURMDB_REPORT_TIME_HOURS_PER)
-				field->len = 20;
-			else
-				field->len = 9;
-			field->print_routine = slurmdb_report_print_time;
-		} else if (!strncasecmp("Nodes", object, MAX(command_len, 2))) {
-			field->type = PRINT_RESV_NODES;
-			field->name = xstrdup("Nodes");
-			field->len = 15;
-			field->print_routine = print_fields_str;
-		} else if (!strncasecmp("Name", object,
-				       MAX(command_len, 2))) {
-			field->type = PRINT_RESV_NAME;
-			field->name = xstrdup("Name");
-			field->len = 9;
-			field->print_routine = print_fields_str;
-		} else if (!strncasecmp("Start", object,
-				       MAX(command_len, 2))) {
-			field->type = PRINT_RESV_START;
-			field->name = xstrdup("Start");
-			field->len = 19;
-			field->print_routine = print_fields_date;
-		} else if (!strncasecmp("End", object,
-				       MAX(command_len, 2))) {
+		} else if (!xstrncasecmp("End", object,
+					 MAX(command_len, 2))) {
 			field->type = PRINT_RESV_END;
 			field->name = xstrdup("End");
 			field->len = 19;
 			field->print_routine = print_fields_date;
-		} else if (!strncasecmp("TotalTime", object,
-				       MAX(command_len, 2))) {
+		} else if (!xstrncasecmp("Flags", object,
+					 MAX(command_len, 2))) {
+			field->type = PRINT_RESV_FLAGS;
+			field->name = xstrdup("Flags");
+			field->len = 20;
+			field->print_routine = print_fields_str;
+		} else if (!xstrncasecmp("Idle", object, MAX(command_len, 1))) {
+			field->type = PRINT_RESV_TRES_IDLE;
+			field->name = xstrdup("Idle");
+			if (time_format == SLURMDB_REPORT_TIME_SECS_PER
+			   || time_format == SLURMDB_REPORT_TIME_MINS_PER
+			   || time_format == SLURMDB_REPORT_TIME_HOURS_PER)
+				field->len = 29;
+			else
+				field->len = 20;
+			field->print_routine = slurmdb_report_print_time;
+		} else if (!xstrncasecmp("Name", object,
+					 MAX(command_len, 2))) {
+			field->type = PRINT_RESV_NAME;
+			field->name = xstrdup("Name");
+			field->len = 9;
+			field->print_routine = print_fields_str;
+		} else if (!xstrncasecmp("Nodes", object,
+					 MAX(command_len, 2))) {
+			field->type = PRINT_RESV_NODES;
+			field->name = xstrdup("Nodes");
+			field->len = 15;
+			field->print_routine = print_fields_str;
+		} else if (!xstrncasecmp("ReservationId", object,
+					 MAX(command_len, 2))) {
+			field->type = PRINT_RESV_ID;
+			field->name = xstrdup("Id");
+			field->len = 8;
+			field->print_routine = print_fields_uint;
+		} else if (!xstrncasecmp("Start", object,
+					 MAX(command_len, 2))) {
+			field->type = PRINT_RESV_START;
+			field->name = xstrdup("Start");
+			field->len = 19;
+			field->print_routine = print_fields_date;
+		} else if (!xstrncasecmp("TotalTime", object,
+					 MAX(command_len, 2))) {
 			field->type = PRINT_RESV_TIME;
 			field->name = xstrdup("TotalTime");
 			field->len = 9;
 			field->print_routine = print_fields_time_from_secs;
-		} else if (!strncasecmp("CPUTime", object,
-				       MAX(command_len, 2))) {
-			field->type = PRINT_RESV_CPUTIME;
-			field->name = xstrdup("CPUTime");
+		} else if (!xstrncasecmp("TresCount", object,
+					 MAX(command_len, 5)) ||
+			   !xstrncasecmp("CpuCount", object,
+					 MAX(command_len, 2)) ||
+			   !xstrncasecmp("count", object,
+					 MAX(command_len, 2))) {
+			field->type = PRINT_RESV_TRES_CNT;
+			field->name = xstrdup("TRES count");
+			field->len = 10;
+			field->print_routine = print_fields_uint;
+		} else if (!xstrncasecmp("TresName", object,
+					 MAX(command_len, 5))) {
+			field->type = PRINT_RESV_TRES_NAME;
+			field->name = xstrdup("TRES Name");
+			field->len = 14;
+			field->print_routine = print_fields_str;
+		} else if (!xstrncasecmp("TresTime", object,
+					 MAX(command_len, 2)) ||
+			   !xstrncasecmp("CpuTime", object,
+					 MAX(command_len, 5))) {
+			field->type = PRINT_RESV_TRES_USAGE;
+			field->name = xstrdup("TRES Time");
 			field->len = 9;
 			field->print_routine = print_fields_time_from_secs;
 		} else {
-			exit_code=1;
+			exit_code = 1;
 			fprintf(stderr, " Unknown field '%s'\n", object);
 			xfree(field);
 			continue;
@@ -309,12 +332,12 @@ static int _setup_print_fields_list(List format_list)
 	return SLURM_SUCCESS;
 }
 
-static List _get_resv_list(int argc, char *argv[],
+static List _get_resv_list(int argc, char **argv,
 			   char *report_name, List format_list)
 {
 	slurmdb_reservation_cond_t *resv_cond =
 		xmalloc(sizeof(slurmdb_reservation_cond_t));
-	int i=0;
+	int i = 0;
 	List resv_list = NULL;
 
 	resv_cond->with_usage = 1;
@@ -323,8 +346,8 @@ static List _get_resv_list(int argc, char *argv[],
 
 	resv_list = slurmdb_reservations_get(db_conn, resv_cond);
 	if (!resv_list) {
-		exit_code=1;
-		fprintf(stderr, " Problem with resv query.\n");
+		exit_code = 1;
+		fprintf(stderr, " Problem with reservation query.\n");
 		return NULL;
 	}
 
@@ -342,12 +365,13 @@ static List _get_resv_list(int argc, char *argv[],
 		       "----------------------------------------\n");
 		printf("%s %s - %s\n",
 		       report_name, start_char, end_char);
-		switch(time_format) {
+		switch (time_format) {
 		case SLURMDB_REPORT_TIME_PERCENT:
-			printf("Time reported in %s\n", time_format_string);
+			printf("Usage reported in %s\n", time_format_string);
 			break;
 		default:
-			printf("Time reported in CPU %s\n", time_format_string);
+			printf("Usage reported in TRES %s\n",
+			       time_format_string);
 			break;
 		}
 		printf("----------------------------------------"
@@ -359,201 +383,257 @@ static List _get_resv_list(int argc, char *argv[],
 	return resv_list;
 }
 
-extern int resv_utilization(int argc, char *argv[])
+static void _resv_tres_report(slurmdb_reservation_rec_t *tot_resv,
+			      slurmdb_tres_rec_t *resv_tres)
+{
+	uint64_t idle_secs = 0, total_reported = 0;
+	uint64_t tres_alloc_cnt = 0, tres_alloc_secs = 0;
+	int curr_inx = 1;
+	char *temp_char = NULL, *tres_tmp = NULL;
+	slurmdb_tres_rec_t *tres_rec;
+	print_field_t *field;
+	int field_count = 0;
+	ListIterator iter = NULL;
+	int32_t total_time = 0;
+
+	total_time = tot_resv->time_end - tot_resv->time_start;
+	if (total_time <= 0)
+		return;
+
+	/*
+	 * Need to get allocated from reservation which is in
+	 * tres_str/resv_tres. tot_resv->tres_list contains the accumulated
+	 * tres seconds that were used by jobs that ran in the reservation. The
+	 * tres_list will have more tres types than exist in the reservations
+	 * tres because only cpu, licenses and bb are supported tres types than
+	 * can be reserved.
+	 */
+	if (tot_resv->tres_list &&
+	    (tres_rec = list_find_first(tot_resv->tres_list,
+					slurmdb_find_tres_in_list,
+					&resv_tres->id))) {
+		tres_alloc_secs = tres_rec->alloc_secs;
+	}
+
+	tres_alloc_cnt  = resv_tres->count;
+	total_reported  = (uint64_t)(total_time * tres_alloc_cnt);
+	idle_secs       = total_reported - tres_alloc_secs;
+
+	field_count = list_count(print_fields_list);
+	iter = list_iterator_create(print_fields_list);
+	while ((field = list_next(iter))) {
+		switch (field->type) {
+		case PRINT_RESV_NAME:
+			field->print_routine(field, tot_resv->name,
+					     (curr_inx == field_count));
+			break;
+		case PRINT_RESV_CLUSTER:
+			field->print_routine(field, tot_resv->cluster,
+					     (curr_inx == field_count));
+			break;
+		case PRINT_RESV_TRES_CNT:
+			field->print_routine(field, tres_alloc_cnt,
+					     (curr_inx == field_count));
+			break;
+		case PRINT_RESV_ID:
+			field->print_routine(field, tot_resv->id,
+					     (curr_inx == field_count));
+			break;
+		case PRINT_RESV_TRES_ALLOC:
+			field->print_routine(field, tres_alloc_secs,
+					     total_reported,
+					     (curr_inx == field_count));
+			break;
+		case PRINT_RESV_TRES_IDLE:
+			field->print_routine(field, idle_secs, total_reported,
+					     (curr_inx == field_count));
+			break;
+		case PRINT_RESV_NODES:
+			field->print_routine(field, tot_resv->nodes,
+					     (curr_inx == field_count));
+			break;
+		case PRINT_RESV_ASSOCS:
+			field->print_routine(field, tot_resv->assocs,
+					     (curr_inx == field_count));
+			break;
+		case PRINT_RESV_START:
+			field->print_routine(field, tot_resv->time_start,
+					     (curr_inx == field_count));
+			break;
+		case PRINT_RESV_END:
+			field->print_routine(field, tot_resv->time_end,
+					     (curr_inx == field_count));
+			break;
+		case PRINT_RESV_FLAGS:
+			temp_char = reservation_flags_string(tot_resv->flags);
+			field->print_routine(field, temp_char,
+					     (curr_inx == field_count));
+			break;
+		case PRINT_RESV_TIME:
+			field->print_routine(field, (uint32_t)total_time,
+					     (curr_inx == field_count));
+			break;
+		case PRINT_RESV_TRES_NAME:
+			xstrfmtcat(tres_tmp, "%s%s%s",
+				   resv_tres->type,
+				   resv_tres->name ? "/" : "",
+				   resv_tres->name ? resv_tres->name : "");
+
+			field->print_routine(field, tres_tmp,
+					     (curr_inx == field_count));
+			xfree(tres_tmp);
+			break;
+		case PRINT_RESV_TRES_USAGE:
+			field->print_routine(field, total_reported,
+					     (curr_inx == field_count));
+			break;
+		default:
+			field->print_routine(field, NULL,
+					     (curr_inx == field_count));
+			break;
+		}
+		curr_inx++;
+		xfree(temp_char);
+	}
+	list_iterator_reset(iter);
+	printf("\n");
+}
+
+extern int resv_utilization(int argc, char **argv)
 {
 	int rc = SLURM_SUCCESS;
 	ListIterator itr = NULL;
 	ListIterator tot_itr = NULL;
-	ListIterator itr2 = NULL;
 	slurmdb_reservation_rec_t *resv = NULL;
 	slurmdb_reservation_rec_t *tot_resv = NULL;
-
-	print_field_t *field = NULL;
-	int32_t total_time = 0;
-
 	List resv_list = NULL;
 	List tot_resv_list = NULL;
+	List req_tres_list = tres_list;
 
 	List format_list = list_create(slurm_destroy_char);
-	int field_count = 0;
 
 	print_fields_list = list_create(destroy_print_field);
 
-
 	if (!(resv_list = _get_resv_list(argc, argv,
-					"Reservation Utilization",
-					format_list)))
+					 "Reservation Utilization",
+					 format_list)))
 		goto end_it;
 
-	if (!list_count(format_list))
+	if (!list_count(format_list)) {
 		slurm_addto_char_list(format_list,
-				      "Cl,name,start,end,al,i");
+				      "Cl,name,start,end,TresName,al,i");
+	}
 
 	_setup_print_fields_list(format_list);
-	list_destroy(format_list);
+	FREE_NULL_LIST(format_list);
 
 	/* we will just use the pointers returned from the
-	   get_resv_list here, so don't remove them
-	*/
+	 * get_resv_list here, so don't remove them */
 	tot_resv_list = list_create(NULL);
-
-	itr = list_iterator_create(resv_list);
-	tot_itr = list_iterator_create(tot_resv_list);
-	itr2 = list_iterator_create(print_fields_list);
 
 	print_fields_header(print_fields_list);
 
-	field_count = list_count(print_fields_list);
+	/* Compress duplicate reservations into a single record. Reservations
+	 * can have multiple entries if there are changes after starting (e.g.
+	 * changing node count). Compressed reservations will have their
+	 * resource usage averaged. */
+	itr = list_iterator_create(resv_list);
+	while ((resv = list_next(itr))) {
+		if (!(tot_resv = list_find_first(
+			      tot_resv_list, _find_resv, &resv->id))) {
+			list_append(tot_resv_list, resv);
+			continue;
+		}
 
-	/* compress all the reservations into a single reservation.
-	   Since reservations can have multiple entries like if the
-	   node count changes or something after the reservation
-	   starts.  Here we colapse them into 1 record.
-	*/
-	while((resv = list_next(itr))) {
-		while((tot_resv = list_next(tot_itr))) {
-			if (tot_resv->id == resv->id) {
-				/* get an average of cpus if the
-				   reservation changes we will just
-				   get an average.
-				*/
-				tot_resv->cpus += resv->cpus;
-				tot_resv->cpus /= 2;
-				tot_resv->alloc_secs += resv->alloc_secs;
-				tot_resv->down_secs += resv->down_secs;
-				if (resv->time_start < tot_resv->time_start)
-					tot_resv->time_start = resv->time_start;
-				if (resv->time_end > tot_resv->time_end)
-					tot_resv->time_end = resv->time_end;
-				break;
+		if (resv->tres_list && list_count(resv->tres_list)) {
+			if (!tot_resv->tres_list) {
+				tot_resv->tres_list = slurmdb_copy_tres_list(
+					resv->tres_list);
+			} else {
+				slurmdb_tres_rec_t *tres_rec, *loc_tres_rec;
+				ListIterator tres_itr = list_iterator_create(
+					resv->tres_list);
+				while ((tres_rec = list_next(tres_itr))) {
+					if (!(loc_tres_rec = list_find_first(
+						      tot_resv->tres_list,
+						      slurmdb_find_tres_in_list,
+						      &tres_rec->id))) {
+						loc_tres_rec =
+							slurmdb_copy_tres_rec(
+								tres_rec);
+						list_append(tot_resv->tres_list,
+							    loc_tres_rec);
+						continue;
+					}
+					loc_tres_rec->count += tres_rec->count;
+					loc_tres_rec->count /= 2;
+					loc_tres_rec->alloc_secs +=
+						tres_rec->alloc_secs;
+				}
+				list_iterator_destroy(tres_itr);
 			}
 		}
-		if (!tot_resv)
-			list_append(tot_resv_list, resv);
+		if (resv->time_start < tot_resv->time_start)
+			tot_resv->time_start = resv->time_start;
+		if (resv->time_end > tot_resv->time_end)
+			tot_resv->time_end = resv->time_end;
+	}
+	list_iterator_destroy(itr);
 
-		list_iterator_reset(tot_itr);
+	if (!tres_str) {
+		/*
+		 * If the user didn't request specific TRES types then display
+		 * the all TRES types that are on the reservation. Use the
+		 * g_tres_list as it is the unaltered list from the database.
+		 */
+		req_tres_list = g_tres_list;
 	}
 
 	list_sort(tot_resv_list, (ListCmpF)sort_reservations_dec);
-	list_iterator_reset(tot_itr);
-	while((tot_resv = list_next(tot_itr))) {
-		uint64_t idle_secs = 0, total_reported = 0;
-		int curr_inx = 1;
+	tot_itr = list_iterator_create(tot_resv_list);
+	while ((tot_resv = list_next(tot_itr))) {
+		List resv_tres_list = NULL;
+		ListIterator tres_itr;
+		slurmdb_tres_rec_t *resv_tres, *req_tres;
 
-		total_time = tot_resv->time_end - tot_resv->time_start;
-		if (total_time <= 0)
+		slurmdb_tres_list_from_string(&resv_tres_list,
+					      tot_resv->tres_str,
+					      TRES_STR_FLAG_NONE);
+		if (!resv_tres_list)
 			continue;
-		total_reported = (uint64_t)(total_time * tot_resv->cpus);
 
-		idle_secs = total_reported
-			- tot_resv->alloc_secs - tot_resv->down_secs;
-
-		while((field = list_next(itr2))) {
-			switch(field->type) {
-			case PRINT_RESV_NAME:
-				field->print_routine(field,
-						     tot_resv->name,
-						     (curr_inx ==
-						      field_count));
-				break;
-			case PRINT_RESV_CLUSTER:
-				field->print_routine(field,
-						     tot_resv->cluster,
-						     (curr_inx ==
-						      field_count));
-				break;
-			case PRINT_RESV_CPUS:
-				field->print_routine(field,
-						     tot_resv->cpus,
-						     (curr_inx ==
-						      field_count));
-				break;
-			case PRINT_RESV_ACPU:
-				field->print_routine(field,
-						     tot_resv->alloc_secs,
-						     total_reported,
-						     (curr_inx ==
-						      field_count));
-				break;
-			case PRINT_RESV_DCPU:
-				field->print_routine(field,
-						     tot_resv->down_secs,
-						     total_reported,
-						     (curr_inx ==
-						      field_count));
-				break;
-			case PRINT_RESV_ICPU:
-				field->print_routine(field,
-						     idle_secs,
-						     total_reported,
-						     (curr_inx ==
-						      field_count));
-				break;
-			case PRINT_RESV_NODES:
-				field->print_routine(field,
-						     tot_resv->nodes,
-						     (curr_inx ==
-						      field_count));
-				break;
-			case PRINT_RESV_ASSOCS:
-				field->print_routine(field,
-						     tot_resv->assocs,
-						     (curr_inx ==
-						      field_count));
-				break;
-			case PRINT_RESV_START:
-				field->print_routine(field,
-						     tot_resv->time_start,
-						     (curr_inx ==
-						      field_count));
-				break;
-			case PRINT_RESV_END:
-				field->print_routine(field,
-						     tot_resv->time_end,
-						     (curr_inx ==
-						      field_count));
-				break;
-			case PRINT_RESV_TIME:
-				field->print_routine(field,
-						     (uint64_t)total_time,
-						     (curr_inx ==
-						      field_count));
-				break;
-			case PRINT_RESV_CPUTIME:
-				field->print_routine(field,
-						     total_reported,
-						     (curr_inx ==
-						      field_count));
-				break;
-			default:
-				field->print_routine(
-					field, NULL,
-					(curr_inx == field_count));
-				break;
+		tres_itr = list_iterator_create(resv_tres_list);
+		while ((resv_tres = list_next(tres_itr))) {
+			/* see if it is in the the requested tres list */
+			if (!(req_tres = list_find_first(
+						req_tres_list,
+						slurmdb_find_tres_in_list,
+						&resv_tres->id))) {
+				debug2("TRES id %d is not in the requested TRES list",
+				       resv_tres->id);
+				continue;
 			}
-			curr_inx++;
-		}
-		list_iterator_reset(itr2);
-		printf("\n");
-	}
 
+			/*
+			 * The resveration's tres doesn't have the name or type
+			 * on it. The req_tres tres came from the database.
+			 */
+			xfree(resv_tres->type);
+			xfree(resv_tres->name);
+			resv_tres->type = xstrdup(req_tres->type);
+			resv_tres->name = xstrdup(req_tres->name);
+
+			_resv_tres_report(tot_resv, resv_tres);
+		}
+		list_iterator_destroy(tres_itr);
+		FREE_NULL_LIST(resv_tres_list);
+	}
 	list_iterator_destroy(tot_itr);
-	list_iterator_destroy(itr2);
-	list_iterator_destroy(itr);
 
 end_it:
-	if (resv_list) {
-		list_destroy(resv_list);
-		resv_list = NULL;
-	}
-	if (tot_resv_list) {
-		list_destroy(tot_resv_list);
-		tot_resv_list = NULL;
-	}
-	if (print_fields_list) {
-		list_destroy(print_fields_list);
-		print_fields_list = NULL;
-	}
+	FREE_NULL_LIST(resv_list);
+	FREE_NULL_LIST(tot_resv_list);
+	FREE_NULL_LIST(print_fields_list);
 
 	return rc;
 }

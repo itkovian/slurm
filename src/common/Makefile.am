@@ -10,15 +10,7 @@
 
 AUTOMAKE_OPTIONS = foreign
 
-if HAVE_UNSETENV
-build_unsetenv_src =
-extra_unsetenv_src = unsetenv.c unsetenv.h
-else
-build_unsetenv_src = unsetenv.c unsetenv.h
-extra_unsetenv_src =
-endif
-
-AM_CPPFLAGS     = -I$(top_srcdir) $(BG_INCLUDES) $(HWLOC_CPPFLAGS)
+AM_CPPFLAGS     = -I$(top_srcdir) $(BG_INCLUDES) $(lua_CFLAGS)
 
 noinst_PROGRAMS = libcommon.o libeio.o libspank.o
 # This is needed if compiling on windows
@@ -31,17 +23,16 @@ noinst_LTLIBRARIES = 			\
 	libspank.la
 
 libcommon_la_SOURCES = 			\
-	xcgroup_read_config.c xcgroup_read_config.h		\
-	xcgroup.c xcgroup.h 					\
-	xcpuinfo.c xcpuinfo.h 					\
-	cpu_frequency.c cpu_frequency.h \
 	assoc_mgr.c assoc_mgr.h 	\
+	cpu_frequency.c cpu_frequency.h \
+	node_features.c node_features.h	\
 	xmalloc.c xmalloc.h 		\
 	xassert.c xassert.h		\
 	xstring.c xstring.h		\
 	xsignal.c xsignal.h		\
 	strnatcmp.c strnatcmp.h		\
 	forward.c forward.h     	\
+	msg_aggr.c msg_aggr.h     	\
 	strlcpy.c strlcpy.h		\
 	list.c list.h 			\
 	xtree.c xtree.h			\
@@ -51,12 +42,13 @@ libcommon_la_SOURCES = 			\
 	cbuf.c cbuf.h			\
 	safeopen.c safeopen.h		\
 	bitstring.c bitstring.h 	\
-	mpi.c mpi.h                     \
+	mpi.c slurm_mpi.h               \
 	pack.c pack.h			\
 	parse_config.c parse_config.h	\
-	parse_spec.c parse_spec.h	\
+	parse_value.c parse_value.h	\
 	plugin.c plugin.h		\
 	plugrack.c plugrack.h		\
+	power.c power.h			\
 	print_fields.c print_fields.h	\
 	read_config.c read_config.h	\
 	node_select.c node_select.h	\
@@ -66,6 +58,8 @@ libcommon_la_SOURCES = 			\
 	slurm_cred.c			\
 	slurm_errno.c			\
 	slurm_ext_sensors.c slurm_ext_sensors.h \
+	slurm_mcs.c			\
+	slurm_mcs.h			\
 	slurm_priority.c		\
 	slurm_priority.h		\
 	slurm_protocol_api.c		\
@@ -94,16 +88,15 @@ libcommon_la_SOURCES = 			\
 	slurm_jobacct_gather.c slurm_jobacct_gather.h \
 	slurm_acct_gather_energy.c slurm_acct_gather_energy.h \
 	slurm_acct_gather_profile.c slurm_acct_gather_profile.h \
-	slurm_acct_gather_infiniband.c slurm_acct_gather_infiniband.h \
+	slurm_acct_gather_interconnect.c slurm_acct_gather_interconnect.h \
 	slurm_acct_gather_filesystem.c slurm_acct_gather_filesystem.h \
 	slurm_jobcomp.c slurm_jobcomp.h	\
+	slurm_opt.h			\
+	slurm_route.c slurm_route.h	\
+	slurm_time.c slurm_time.h	\
 	slurm_topology.c slurm_topology.h \
 	switch.c switch.h		\
-	arg_desc.c arg_desc.h		\
 	macros.h			\
-	malloc.c malloc.h		\
-	getopt.h getopt.c getopt1.c     \
-	$(build_unsetenv_src)		\
 	slurm_selecttype_info.c 	\
 	slurm_selecttype_info.h		\
 	slurm_resource_info.c 		\
@@ -121,16 +114,28 @@ libcommon_la_SOURCES = 			\
 	write_labelled_message.c	\
 	write_labelled_message.h	\
 	proc_args.c proc_args.h		\
-	slurm_strcasestr.c slurm_strcasestr.h \
 	node_conf.h node_conf.c		\
 	gres.h gres.c			\
-	sim_funcs.h sim_funcs.c
+	sim_funcs.h sim_funcs.c		\
+	entity.h entity.c		\
+	layout.h layout.c		\
+	layouts_mgr.h layouts_mgr.c	\
+	mapping.c mapping.h		\
+	xcgroup_read_config.c xcgroup_read_config.h \
+	xlua.c xlua.h                   \
+	callerid.c callerid.h		\
+	group_cache.c group_cache.h	\
+	slurm_persist_conn.c slurm_persist_conn.h \
+	run_command.c run_command.h	\
+	x11_util.c x11_util.h		\
+	state_control.c state_control.h
+
 
 EXTRA_libcommon_la_SOURCES = 		\
-	$(extra_unsetenv_src)		\
 	uthash/LICENSE			\
 	uthash/README			\
 	uthash/uthash.h
+
 
 libdaemonize_la_SOURCES =  		\
 	daemonize.c       	 	\
@@ -144,9 +149,9 @@ libspank_la_SOURCES = \
 	plugstack.c plugstack.h \
 	optz.c      optz.h
 
-libcommon_la_LIBADD   = $(DL_LIBS) $(HWLOC_LIBS)
+libcommon_la_LIBADD   = $(DL_LIBS)
 
-libcommon_la_LDFLAGS  = $(HWLOC_LDFLAGS) $(LIB_LDFLAGS) -module --export-dynamic
+libcommon_la_LDFLAGS  = $(LIB_LDFLAGS) -module --export-dynamic
 
 # This was made so we could export all symbols from libcommon
 # on multiple platforms

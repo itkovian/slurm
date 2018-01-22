@@ -6,7 +6,7 @@
  *  Written by Matthieu Hautreux <matthieu.hautreux@cea.fr>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -35,20 +35,21 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#if     HAVE_CONFIG_H
-#  include "config.h"
-#endif
+#include "config.h"
 
 #include <signal.h>
 #include <sys/types.h>
 
 #include "slurm/slurm_errno.h"
 #include "src/common/slurm_xlator.h"
-#include "src/slurmd/slurmstepd/slurmstepd_job.h"
-#include "src/slurmd/slurmd/slurmd.h"
-#include "src/common/xcgroup.h"
-#include "src/common/xstring.h"
 #include "src/common/xcgroup_read_config.h"
+#include "src/common/xstring.h"
+
+#include "src/slurmd/slurmstepd/slurmstepd_job.h"
+
+#include "src/slurmd/slurmd/slurmd.h"
+
+#include "src/slurmd/common/xcgroup.h"
 
 #include "task_cgroup.h"
 #include "task_cgroup_cpuset.h"
@@ -76,15 +77,12 @@
  * of how this plugin satisfies that application.  SLURM will only load
  * a task plugin if the plugin_type string has a prefix of "task/".
  *
- * plugin_version - an unsigned 32-bit integer giving the version number
- * of the plugin.  If major and minor revisions are desired, the major
- * version number may be multiplied by a suitable magnitude constant such
- * as 100 or 1000.  Various SLURM versions will likely require a certain
- * minimum versions for their plugins as this API matures.
+ * plugin_version - an unsigned 32-bit integer containing the Slurm version
+ * (major.minor.micro combined into a single number).
  */
 const char plugin_name[]        = "Tasks containment using linux cgroup";
 const char plugin_type[]        = "task/cgroup";
-const uint32_t plugin_version   = 100;
+const uint32_t plugin_version   = SLURM_VERSION_NUMBER;
 
 static bool use_cpuset  = false;
 static bool use_memory  = false;
@@ -134,7 +132,7 @@ extern int init (void)
 		      plugin_type);
 	}
 
-	verbose("%s: loaded", plugin_type);
+	debug("%s: loaded", plugin_type);
 	return SLURM_SUCCESS;
 }
 
@@ -244,7 +242,7 @@ extern int task_p_pre_setuid (stepd_step_rec_t *job)
  * task_p_pre_launch_priv() is called prior to exec of application task.
  * in privileged mode, just after slurm_spank_task_init_privileged
  */
-extern int task_p_pre_launch_priv (stepd_step_rec_t *job)
+extern int task_p_pre_launch_priv(stepd_step_rec_t *job, pid_t pid)
 {
 
 	if (use_cpuset) {
@@ -254,7 +252,7 @@ extern int task_p_pre_launch_priv (stepd_step_rec_t *job)
 
 	if (use_memory) {
 		/* attach the task to the memory cgroup */
-		task_cgroup_memory_attach_task(job);
+		task_cgroup_memory_attach_task(job, pid);
 	}
 
 	if (use_devices) {
@@ -290,15 +288,16 @@ extern int task_p_pre_launch (stepd_step_rec_t *job)
 extern int task_p_post_term (stepd_step_rec_t *job, stepd_step_task_info_t *task)
 {
 	static bool ran = false;
+	int rc = SLURM_SUCCESS;
 
 	/* Only run this on the first call since this will run for
 	 * every task on the node.
 	 */
 	if (use_memory && !ran) {
-		task_cgroup_memory_check_oom(job);
+		rc = task_cgroup_memory_check_oom(job);
 		ran = true;
 	}
-	return SLURM_SUCCESS;
+	return rc;
 }
 
 /*
@@ -326,16 +325,13 @@ extern char* task_cgroup_create_slurm_cg (xcgroup_ns_t* ns) {
 	}
 #endif
 
-	/* create slurm cgroup in the ns (it could already exist)
-	 * disable notify_on_release to avoid the removal/creation
-	 * of this cgroup for each last/first running job on the node */
+	/* create slurm cgroup in the ns (it could already exist) */
 	if (xcgroup_create(ns,&slurm_cg,pre,
 			   getuid(), getgid()) != XCGROUP_SUCCESS) {
 		xfree(pre);
 		return pre;
 	}
-	slurm_cg.notify = 0;
-	if (xcgroup_instanciate(&slurm_cg) != XCGROUP_SUCCESS) {
+	if (xcgroup_instantiate(&slurm_cg) != XCGROUP_SUCCESS) {
 		error("unable to build slurm cgroup for ns %s: %m",
 		      ns->subsystems);
 		xcgroup_destroy(&slurm_cg);
@@ -349,4 +345,24 @@ extern char* task_cgroup_create_slurm_cg (xcgroup_ns_t* ns) {
 	}
 
 	return pre;
+}
+
+/*
+ * Add pid to specific cgroup.
+ */
+extern int task_p_add_pid (pid_t pid)
+{
+	if (use_cpuset) {
+		task_cgroup_cpuset_add_pid(pid);
+	}
+
+	if (use_memory) {
+		task_cgroup_memory_add_pid(pid);
+	}
+
+	if (use_devices) {
+		task_cgroup_devices_add_pid(pid);
+	}
+
+	return SLURM_SUCCESS;
 }

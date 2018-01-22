@@ -8,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -37,50 +37,12 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#if HAVE_CONFIG_H
-#  include "config.h"
-
-#  if HAVE_DIRENT_H
-#    include <dirent.h>
-#    define NAMLEN(dirent) strlen((dirent)->d_name)
-#  else /* ! HAVE_DIRENT_H */
-#    define dirent direct
-#    define NAMLEN(dirent) (dirent)->d_namlen
-#  endif /* HAVE_DIRENT_H */
-
-#  if STDC_HEADERS
-#    include <string.h>
-#  else /* ! STDC_HEADERS */
-#    if !HAVE_STRCHR
-#      define strchr index
-#      define strrchr rindex
-char *strchr(), *strrchr();
-#    endif /* HAVE_STRCHR */
-#  endif /* STDC_HEADERS */
-
-#  if HAVE_UNISTD_H
-#    include <unistd.h>
-#  endif /* HAVE_UNISTD_H */
-#  if HAVE_SYS_TYPES_H
-#    include <sys/types.h>
-#  endif
-#  if HAVE_SYS_STAT_H
-#    include <sys/stat.h>
-#  endif
-
-#  if HAVE_STDLIB_H
-#    include <stdlib.h>
-#  endif
-
-#else /* ! HAVE_CONFIG_H */
-#  include <dirent.h>
-#  include <string.h>
-#  include <stdlib.h>
-#  include <unistd.h>
-#  include <dirent.h>
-#  include <sys/types.h>
-#  include <sys/stat.h>
-#endif /* HAVE_CONFIG_H */
+#include <dirent.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 #include "src/common/macros.h"
 #include "src/common/xassert.h"
@@ -226,10 +188,6 @@ plugrack_t plugrack_create( void )
 	rack->major_type   = NULL;
 	rack->uid          = PLUGRACK_UID_NOBODY;
 	rack->entries      = list_create( plugrack_entry_destructor );
-	if ( rack->entries == NULL ) {
-		xfree( rack );
-		return NULL;
-	}
 	return rack;
 }
 
@@ -259,7 +217,7 @@ plugrack_destroy( plugrack_t rack )
 	}
 	list_iterator_destroy( it );
 
-	list_destroy( rack->entries );
+	FREE_NULL_LIST( rack->entries );
 	xfree( rack->major_type );
 	xfree( rack );
 	return SLURM_SUCCESS;
@@ -424,7 +382,7 @@ _plugrack_read_single_dir( plugrack_t rack, char *dir )
 		strcpy( tail, e->d_name );
 
 		/* Check only regular files. */
-		if ( (strncmp(e->d_name, ".", 1) == 0) ||
+		if ( (xstrncmp(e->d_name, ".", 1) == 0) ||
 		     (stat( fq_path, &st ) < 0) ||
 		     (! S_ISREG(st.st_mode)) )
 			continue;
@@ -462,7 +420,7 @@ _plugrack_read_single_dir( plugrack_t rack, char *dir )
 		}
 
 		if (   rack->major_type &&
-		       ( strncmp( rack->major_type,
+		       ( xstrncmp(rack->major_type,
 				  plugin_type,
 				  strlen( rack->major_type ) ) != 0 ) ) {
 			continue;
@@ -478,7 +436,7 @@ _plugrack_read_single_dir( plugrack_t rack, char *dir )
 	return SLURM_SUCCESS;
 }
 
-/* Return TRUE if the specified pathname is recognized as that of a shared
+/* Return true if the specified pathname is recognized as that of a shared
  * object (i.e. containing ".so\0") */
 static bool
 _so_file ( char *file_name )
@@ -496,7 +454,7 @@ _so_file ( char *file_name )
 	return false;
 }
 
-/* Return TRUE of the specified major_type is a prefix of the shared object
+/* Return true of the specified major_type is a prefix of the shared object
  * pathname (i.e. either "<major_name>..." or "lib<major_name>...") */
 static bool
 _match_major ( const char *path_name, const char *major_type )
@@ -504,14 +462,14 @@ _match_major ( const char *path_name, const char *major_type )
 	char *head = (char *)path_name;
 
 	/* Special case for BlueGene systems */
-	if (strncmp(head, "libsched_if", 11) == 0)
-		return FALSE;
+	if (xstrncmp(head, "libsched_if", 11) == 0)
+		return false;
 
-	if (strncmp(head, "lib", 3) == 0)
+	if (xstrncmp(head, "lib", 3) == 0)
 		head += 3;
-	if (strncmp(head, major_type, strlen(major_type)))
-		return FALSE;
-	return TRUE;
+	if (xstrncmp(head, major_type, strlen(major_type)))
+		return false;
+	return true;
 }
 
 int
@@ -591,7 +549,7 @@ plugrack_use_by_type( plugrack_t rack,
 	while ((e = list_next(it))) {
 		plugin_err_t err;
 
-		if (strcmp(full_type, e->full_type) != 0)
+		if (xstrcmp(full_type, e->full_type) != 0)
 			continue;
 
 		/* See if plugin is loaded. */
@@ -645,17 +603,34 @@ plugrack_finished_with_plugin( plugrack_t rack, plugin_handle_t plug )
 	return SLURM_ERROR;
 }
 
-int
-plugrack_print_all_plugin(plugrack_t rack)
+extern int plugrack_print_all_plugin(plugrack_t rack)
 {
 	ListIterator itr;
 	plugrack_entry_t *e = NULL;
+	char *sep, tmp[64];
+	int i;
 
 	xassert(rack->entries);
 	itr = list_iterator_create(rack->entries);
 	info("MPI types are...");
-	while ((e = list_next(itr)) != NULL ) {
-		info("%s", e->full_type);
+	while ((e = list_next(itr)) != NULL) {
+		/*
+		 * Support symbolic links for various pmix plugins with names
+		 * that contain version numbers without listing duplicates
+		 */
+		sep = strstr(e->fq_path, "/mpi_");
+		if (sep) {
+			sep += 5;
+			i = snprintf(tmp, sizeof(tmp), "%s", sep);
+			if (i >= sizeof(tmp))
+				tmp[sizeof(tmp)-1] = '\0';
+			sep = strstr(tmp, ".so");
+			if (sep)
+				sep[0] = '\0';
+			sep = tmp;
+		} else
+			sep = (char *) e->full_type;	/* Remove "const" */
+		info("%s", sep);
 	}
 	list_iterator_destroy(itr);
 

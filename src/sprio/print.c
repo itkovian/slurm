@@ -1,13 +1,14 @@
 /*****************************************************************************\
  *  print.c - sprio print job functions
  *****************************************************************************
+ *  Portions Copyright (C) 2010-2017 SchedMD LLC <https://www.schedmd.com>.
  *  Copyright (C) 2009 Lawrence Livermore National Security.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Don Lipari <lipari1@llnl.gov>
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -35,10 +36,6 @@
  *  with SLURM; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
-
-#ifdef HAVE_CONFIG_H
-#  include "config.h"
-#endif /* HAVE_CONFIG_H */
 
 #include <stdio.h>
 #include <string.h>
@@ -71,21 +68,33 @@ int print_jobs_array(List jobs, List format)
 	}
 
 	/* Print the jobs of interest */
-	if (jobs)
+	if (jobs) {
 		list_for_each (jobs, (ListForF) print_job_from_format,
 			       (void *) format);
+	}
 
 	return SLURM_SUCCESS;
 }
 
 static double _get_priority(priority_factors_object_t *prio_factors)
 {
+	int i = 0;
 	double priority = prio_factors->priority_age
 		+ prio_factors->priority_fs
 		+ prio_factors->priority_js
 		+ prio_factors->priority_part
 		+ prio_factors->priority_qos
-		- (double)(prio_factors->nice - NICE_OFFSET);
+		- (double)((int64_t)prio_factors->nice - NICE_OFFSET);
+
+	for (i = 0; i < prio_factors->tres_cnt; i++) {
+		if (!prio_factors->priority_tres[i])
+			continue;
+		priority += prio_factors->priority_tres[i];
+	}
+
+	/* Priority 0 is reserved for held jobs */
+        if (priority < 1)
+                priority = 1;
 
 	return priority;
 }
@@ -240,6 +249,18 @@ int _print_age_priority_weighted(priority_factors_object_t * job, int width,
 	return SLURM_SUCCESS;
 }
 
+int _print_cluster_name(priority_factors_object_t *job, int width,
+			bool right, char *suffix)
+{
+	if (job == NULL)	/* Print the Header instead */
+		_print_str("CLUSTER", width, right, true);
+	else
+		_print_str(job->cluster_name, width, right, true);
+	if (suffix)
+		printf("%s", suffix);
+	return SLURM_SUCCESS;
+}
+
 int _print_fs_priority_normalized(priority_factors_object_t * job, int width,
 				  bool right, char* suffix)
 {
@@ -379,6 +400,20 @@ int _print_part_priority_weighted(priority_factors_object_t * job, int width,
 	return SLURM_SUCCESS;
 }
 
+int _print_partition(priority_factors_object_t *job, int width, bool right,
+		     char *suffix)
+{
+	if (job == NULL)	/* Print the Header instead */
+		_print_str("PARTITION", width, right, true);
+	else if (job == (priority_factors_object_t *) -1)
+		_print_str("", width, right, true);
+	else
+		_print_str(job->partition, width, right, true);
+	if (suffix)
+		printf("%s", suffix);
+	return SLURM_SUCCESS;
+}
+
 int _print_qos_priority_normalized(priority_factors_object_t * job, int width,
 				   bool right, char* suffix)
 {
@@ -420,7 +455,7 @@ int _print_job_nice(priority_factors_object_t * job, int width,
 	else if (job == (priority_factors_object_t *) -1)
 		_print_str("", width, right, true);
 	else
-		_print_int(job->nice - NICE_OFFSET, width, right, true);
+		_print_int((int64_t)job->nice - NICE_OFFSET, width, right, true);
 	if (suffix)
 		printf("%s", suffix);
 	return SLURM_SUCCESS;
@@ -434,9 +469,64 @@ int _print_job_user_name(priority_factors_object_t * job, int width,
 	else if (job == (priority_factors_object_t *) -1)
 		_print_str("", width, right, true);
 	else {
-		char *uname = uid_to_string((uid_t) job->user_id);
+		char *uname = uid_to_string_cached((uid_t) job->user_id);
 		_print_str(uname, width, right, true);
-		xfree(uname);
+	}
+	if (suffix)
+		printf("%s", suffix);
+	return SLURM_SUCCESS;
+}
+
+int _print_tres_normalized(priority_factors_object_t * job, int width,
+			   bool right, char* suffix)
+{
+	if (job == NULL) {	/* Print the Header instead */
+		_print_str("TRES", width, right, true);
+	} else if (job == (priority_factors_object_t *) -1)
+		_print_str("", width, right, true);
+	else {
+		char *values = xstrdup("");
+		int i = 0;
+
+		for (i = 0; i < job->tres_cnt; i++) {
+			if (!job->priority_tres[i])
+				continue;
+			if (values[0])
+				xstrcat(values, ",");
+			xstrfmtcat(values, "%s=%.2f", job->tres_names[i],
+				   job->priority_tres[i]/job->tres_weights[i]);
+		}
+
+		_print_str(values, width, right, true);
+		xfree(values);
+	}
+	if (suffix)
+		printf("%s", suffix);
+	return SLURM_SUCCESS;
+}
+
+int _print_tres_weighted(priority_factors_object_t * job, int width,
+			 bool right, char* suffix)
+{
+	if (job == NULL) {	/* Print the Header instead */
+		_print_str("TRES", width, right, true);
+	} else if (job == (priority_factors_object_t *) -1)
+		_print_str(weight_tres, width, right, true);
+	else {
+		char *values = xstrdup("");
+		int i = 0;
+
+		for (i = 0; i < job->tres_cnt; i++) {
+			if (!job->priority_tres[i])
+				continue;
+			if (values[0])
+				xstrcat(values, ",");
+			xstrfmtcat(values, "%s=%.0f", job->tres_names[i],
+				   job->priority_tres[i]);
+		}
+
+		_print_str(values, width, right, true);
+		xfree(values);
 	}
 	if (suffix)
 		printf("%s", suffix);

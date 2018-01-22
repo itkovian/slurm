@@ -10,7 +10,7 @@
  *  Copyright (C) 2005 Hewlett-Packard Development Company, L.P.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -47,23 +47,10 @@
  *       Morris Jette, et al.
 \*****************************************************************************/
 
-
 #ifndef __SLURM_JOBACCT_GATHER_H__
 #define __SLURM_JOBACCT_GATHER_H__
 
-#if HAVE_CONFIG_H
-#  include "config.h"
-#  if HAVE_INTTYPES_H
-#    include <inttypes.h>
-#  else
-#    if HAVE_STDINT_H
-#      include <stdint.h>
-#    endif
-#  endif			/* HAVE_INTTYPES_H */
-#else				/* !HAVE_CONFIG_H */
-#  include <inttypes.h>
-#endif				/*  HAVE_CONFIG_H */
-
+#include <inttypes.h>
 #include <sys/resource.h>
 #include <sys/types.h>
 #include <time.h>
@@ -115,11 +102,11 @@ struct jobacctinfo {
 			     (used to figure out ave later) */
 	uint32_t min_cpu; /* min cpu time */
 	jobacct_id_t min_cpu_id; /* contains which task it was on */
-	uint32_t tot_cpu; /* total cpu time(used to figure out ave later) */
+	double tot_cpu; /* total cpu time(used to figure out ave later) */
 	uint32_t act_cpufreq; /* actual cpu frequency */
 	acct_gather_energy_t energy;
-	uint32_t last_total_cputime;
-	uint32_t this_sampled_cputime;
+	double last_total_cputime;
+	double this_sampled_cputime;
 	uint32_t current_weighted_freq;
 	uint32_t current_weighted_power;
 	double max_disk_read; /* max disk read data */
@@ -128,6 +115,14 @@ struct jobacctinfo {
 	double max_disk_write; /* max disk write data */
 	jobacct_id_t max_disk_write_id; /* max disk write data task id */
 	double tot_disk_write; /* total local disk writes in megabytes */
+
+	jobacct_id_t id;
+	int dataset_id; /* dataset associated to this task when profiling */
+
+	double last_tot_disk_read;
+	double last_tot_disk_write;
+	time_t cur_time;
+	time_t last_time;
 };
 
 /* Define jobacctinfo_t below to avoid including extraneous slurm headers */
@@ -152,10 +147,11 @@ extern jobacctinfo_t *jobacct_gather_stat_task(pid_t pid);
 extern jobacctinfo_t *jobacct_gather_remove_task(pid_t pid);
 
 extern int jobacct_gather_set_proctrack_container_id(uint64_t id);
-extern int jobacct_gather_set_mem_limit(uint32_t job_id, uint32_t step_id,
-					uint32_t mem_limit);
-extern void jobacct_gather_handle_mem_limit(
-	uint64_t total_job_mem, uint64_t total_job_vsize);
+extern int jobacct_gather_set_mem_limit(uint32_t job_id,
+					uint32_t step_id,
+					uint64_t mem_limit);
+extern void jobacct_gather_handle_mem_limit(uint64_t total_job_mem,
+					    uint64_t total_job_vsize);
 
 extern jobacctinfo_t *jobacctinfo_create(jobacct_id_t *jobacct_id);
 extern void jobacctinfo_destroy(void *object);

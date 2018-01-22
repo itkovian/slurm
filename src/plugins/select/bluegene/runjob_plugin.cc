@@ -12,7 +12,7 @@
  *  Written by Danny Auble <da@schedmd.com> et. al.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -42,9 +42,8 @@
 \*****************************************************************************/
 
 extern "C" {
-#ifdef HAVE_CONFIG_H
-#  include "config.h"
-#endif
+#include "config.h"
+
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
 #include "src/common/list.h"
@@ -239,9 +238,36 @@ void Plugin::execute(bgsched::runjob::Verify& verify)
 			+ "."
 			+ boost::lexical_cast<std::string>(runjob_job->step_id);
 		goto deny_job;
-	}
+	} else if (step_resp->job_step_count > 1) {
+		uint32_t i;
 
-	step_ptr = &step_resp->job_steps[0];
+		found = 0;
+		for (i = 0, step_ptr = step_resp->job_steps;
+		     i < step_resp->job_step_count; i++, step_ptr++) {
+			if ((uint32_t)runjob_job->job_id == step_ptr->job_id) {
+				found = 1;
+				break;
+			}
+		}
+
+		if (!found) {
+			message = "Couldn't get job array task from response!";
+			goto deny_job;
+		}
+	} else
+		step_ptr = &step_resp->job_steps[0];
+
+	if ((uint32_t)runjob_job->job_id != step_ptr->job_id) {
+		message = "Step returned is for a different job "
+			+ boost::lexical_cast<std::string>(step_ptr->job_id)
+			+ "."
+			+ boost::lexical_cast<std::string>(step_ptr->step_id)
+			+ " != "
+			+ boost::lexical_cast<std::string>(runjob_job->job_id)
+			+ "."
+			+ boost::lexical_cast<std::string>(runjob_job->step_id);
+		goto deny_job;
+	}
 
 	/* A bit of verification to make sure this is the correct user
 	   supposed to be running.
@@ -318,7 +344,7 @@ void Plugin::execute(bgsched::runjob::Verify& verify)
 		   our uint16_t to the unsigned array
 		*/
 		for (dim=0; dim<Dimension::NodeDims; dim++) {
-			if (tmp_uint16[dim] == (uint16_t)NO_VAL)
+			if (tmp_uint16[dim] == NO_VAL16)
 				break;
 			geo[dim] = tmp_uint16[dim];
 		}
@@ -336,7 +362,7 @@ void Plugin::execute(bgsched::runjob::Verify& verify)
 			goto deny_job;
 		}
 		for (dim=0; dim<Dimension::NodeDims; dim++) {
-			if (tmp_uint16[dim] == (uint16_t)NO_VAL)
+			if (tmp_uint16[dim] == NO_VAL16)
 				break;
 			start_coords[dim] = tmp_uint16[dim];
 		}

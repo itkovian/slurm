@@ -1,4 +1,4 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Test of SLURM functionality
 #          Confirm that a job executes with the proper node count
@@ -16,7 +16,7 @@
 # CODE-OCEC-09-009. All rights reserved.
 #
 # This file is part of SLURM, a resource management program.
-# For details, see <http://slurm.schedmd.com/>.
+# For details, see <https://slurm.schedmd.com/>.
 # Please also read the included file: DISCLAIMER.
 #
 # SLURM is free software; you can redistribute it and/or modify it under
@@ -31,7 +31,7 @@
 #
 # You should have received a copy of the GNU General Public License along
 # with SLURM; if not, write to the Free Software Foundation, Inc.,
-# 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA.
+# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 ############################################################################
 source ./globals
 
@@ -74,7 +74,7 @@ expect {
 		if { [test_front_end] } {
 			send_user "\nWARNING: error expected, Testing is incompatible with front-end systems\n"
 		} else {
-			 send_user "\nWARNING: test not compatable with this configuration\n"
+			 send_user "\nWARNING: test not compatible with this configuration\n"
 		}
 		if {$job_id != 0} {
                         cancel_job $job_id
@@ -261,7 +261,18 @@ if {[string compare $host_0 $host_3] == 0} {
 }
 if {$dup_host == 1} {
 	send_user "\nFAILURE: Re-used a node in the allocation\n"
-	set exit_code   1
+	set exit_code 1
+}
+
+# find out if we have enough nodes to test functionality
+set partition [default_partition]
+set node_count [get_node_cnt_in_part $partition]
+if { $node_count < 2 } {
+	send_user "WARNING: Insufficient nodes in default partition to continue ($node_count < 2)\n"
+	if {$exit_code == 0} {
+		send_user "\nSUCCESS\n"
+	}
+	exit $exit_code
 }
 
 #
@@ -279,7 +290,7 @@ expect {
 		set job_id $expect_out(1,string)
 		exp_continue
 	}
-	-re "More processors requested than permitted|Node count specification invalid|configuration not available" {
+	-re "salloc: error" {
 		send_user "\nWARNING: can't test salloc task distribution\n"
 		if {$job_id != 0} {
 			cancel_job $job_id

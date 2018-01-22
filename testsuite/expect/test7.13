@@ -1,4 +1,4 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Verify the correct setting of a job's ExitCode.
 #
@@ -12,7 +12,7 @@
 # CODE-OCEC-09-009. All rights reserved.
 #
 # This file is part of SLURM, a resource management program.
-# For details, see <http://slurm.schedmd.com/>.
+# For details, see <https://slurm.schedmd.com/>.
 # Please also read the included file: DISCLAIMER.
 #
 # SLURM is free software; you can redistribute it and/or modify it under
@@ -27,7 +27,7 @@
 #
 # You should have received a copy of the GNU General Public License along
 # with SLURM; if not, write to the Free Software Foundation, Inc.,
-# 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA.
+# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 ############################################################################
 source ./globals
 
@@ -39,6 +39,11 @@ set file_prog2       "test$test_id.prog2"
 
 print_header $test_id
 
+if {![test_accting_steps]} {
+	send_user "\nWARNING: This test can not be run with nosteps or nojobs "
+	send_user "(AccoutingStorageEnforce)\n"
+	exit 0
+}
 if {[test_launch_poe]} {
 	send_user "\nWARNING: This test is incompatible with launch/poe systems\n"
 	exit 0
@@ -68,8 +73,8 @@ exec $bin_cc -O -o $file_prog2 ${file_prog2}.c
 
 make_bash_script $file_in "
   $bin_echo 'testing successful job return code'
-  $srun $file_prog1
-  $srun $file_prog2
+  $srun ./$file_prog1
+  $srun ./$file_prog2
   exit 0
 "
 
@@ -121,7 +126,7 @@ expect {
 }
 
 if {$matches != 2} {
-	send_user "\nFAILURE: Job ExitCode incorrect\n"
+	send_user "\nFAILURE: Job ExitCode incorrect ($matches != 2)\n"
 	exit 1
 }
 
@@ -129,22 +134,26 @@ if {$matches != 2} {
 # Confirm the job record in the db has the same exit codes
 #
 if { [test_account_storage] == 1 } {
+	sleep 2
 	set matches 0
-	spawn $sacct -n -P -j $job_id -o ExitCode,DerivedExitCode,Comment
+	spawn $sacct -n -P -j $job_id -o JobID,ExitCode,DerivedExitCode,Comment
 	expect {
-		-re "0:0\\|123:0\\|" {	# Job record
+		-re "$job_id\\|0:0\\|123:0\\|" {	# Job record
 			incr matches
 			exp_continue
 		}
-		-re "0:0\\|\\|" {	# Job.batch record
+		-re "$job_id.batch\\|0:0\\|\\|" {	# Batch script
 			incr matches
 			exp_continue
 		}
-		-re "0:0\\|\\|" {	# Step 0 record
+		-re "$job_id.extern\\|0:0\\|\\|" {	# Container, optional
+			exp_continue
+		}
+		-re "$job_id.($number)\\|0:0\\|\\|" {	# Step 0 record
 			incr matches
 			exp_continue
 		}
-		-re "123:0\\|\\|" {	# Step 1 record
+		-re "$job_id.($number)\\|123:0\\|\\|" {	# Step 1 record
 			incr matches
 			exp_continue
 		}
@@ -157,7 +166,7 @@ if { [test_account_storage] == 1 } {
 		}
 	}
 	if {$matches != 4} {
-		send_user "\nFAILURE: sacct of $job_id failed ($matches)\n"
+		send_user "\nFAILURE: sacct of $job_id failed ($matches != 4)\n"
 		exit 1
 	}
 }
@@ -174,8 +183,8 @@ if { [test_account_storage] == 1 } {
 exec $bin_rm -f $file_in
 make_bash_script $file_in "
   $bin_echo 'testing unsuccessful job return code'
-  $srun $file_prog1
-  $srun $file_prog1
+  $srun ./$file_prog1
+  $srun ./$file_prog1
   exit 33
 "
 
@@ -225,9 +234,8 @@ expect {
 		wait
 	}
 }
-
 if {$matches != 2} {
-	send_user "\nFAILURE: Job ExitCode incorrect\n"
+	send_user "\nFAILURE: Job ExitCode incorrect ($matches != 2)\n"
 	exit 1
 }
 
@@ -235,22 +243,26 @@ if {$matches != 2} {
 # Confirm the job record in the db has the same exit codes
 #
 if { [test_account_storage] == 1 } {
+	sleep 2
 	set matches 0
-	spawn $sacct -n -P -j $job_id -o ExitCode,DerivedExitCode,Comment
+	spawn $sacct -n -P -j $job_id -o JobID,ExitCode,DerivedExitCode,Comment
 	expect {
-		-re "33:0\\|0:0\\|" {	# Job record
+		-re "$job_id\\|33:0\\|0:0\\|" {		# Job record
 			incr matches
 			exp_continue
 		}
-		-re "33:0\\|\\|" {	# Job.batch record
+		-re "$job_id.batch\\|33:0\\|\\|" {	# Batch script
 			incr matches
 			exp_continue
 		}
-		-re "0:0\\|\\|" {	# Step 0 record
+		-re "$job_id.extern\\|0:0\\|\\|" {	# Container, optional
+			exp_continue
+		}
+		-re "$job_id.($number)\\|0:0\\|\\|" {	# Step 0 record
 			incr matches
 			exp_continue
 		}
-		-re "0:0\\|\\|" {	# Step 1 record
+		-re "$job_id.($number)\\|0:0\\|\\|" {	# Step 1 record
 			incr matches
 			exp_continue
 		}
@@ -263,7 +275,7 @@ if { [test_account_storage] == 1 } {
 		}
 	}
 	if {$matches != 4} {
-		send_user "\nFAILURE: sacct of $job_id failed ($matches)\n"
+		send_user "\nFAILURE: sacct of $job_id failed ($matches != 4)\n"
 		exit 1
 	}
 }

@@ -6,7 +6,7 @@
  *  Written by Danny Auble <da@schedmd.com>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -62,7 +62,7 @@ typedef struct {
 	char *(*give_geo)              (uint16_t *int_geo, int dims,
 					bool with_sep);
 	s_p_hashtbl_t *(*config_make_tbl)(char *filename);
-	void (*set_ba_debug_flags)     (uint32_t debug_flags);
+	void (*set_ba_debug_flags)     (uint64_t debug_flags);
 } bg_configure_api_ops_t;
 
 /*
@@ -280,7 +280,7 @@ extern s_p_hashtbl_t *bg_configure_config_make_tbl(char *filename)
 	return (*(ops.config_make_tbl))(filename);
 }
 
-extern void ba_configure_set_ba_debug_flags(uint32_t debug_flags)
+extern void ba_configure_set_ba_debug_flags(uint64_t debug_flags)
 {
 	if (bg_configure_init() < 0)
 		return;

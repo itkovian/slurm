@@ -1,33 +1,31 @@
 <!--#include virtual="header.txt"-->
 
-<h1>Resource Reservation Guide</h1>
+<h1>Advanced Resource Reservation Guide</h1>
 
-<p>SLURM has the ability to reserve resources for jobs
+<p>Slurm has the ability to reserve resources for jobs
 being executed by select users and/or select bank accounts.
 A resource reservation identifies the resources in that reservation
 and a time period during which the reservation is available.
-The resources which can be reserved include cores, nodes and/or licenses.
-Note that resource reservations are not compatible with SLURM's
+The resources which can be reserved include cores, nodes, licenses and/or
+burst buffers.
+Note that resource reservations are not compatible with Slurm's
 gang scheduler plugin since the termination time of running jobs
 cannot be accurately predicted.</p>
 
-<p>Note that reserved licenses are treated somewhat differently than reserved
-cores or nodes. When cores or nodes are reserved, then jobs using that
-reservation can use only those resources and no other jobs can use those
-resources. Reserved licenses can only
-be used by jobs associated with that reservation, but licenses not explicitly
-reserved are available to any job. This eliminates the need to explicitly
-put licenses into every advanced reservation created.</p>
+<p>Note that reserved burst buffers and licenses are treated somewhat
+differently than reserved cores or nodes.
+When cores or nodes are reserved, then jobs using that reservation can use only
+those resources and no other jobs can use those resources.
+Reserved burst buffers and licenses can only be used by jobs associated with
+that reservation, but licenses not explicitly reserved are available to any job.
+This eliminates the need to explicitly put licenses into every advanced
+reservation created.</p>
 
 <p>Reservations can be created, updated, or destroyed only by user root
 or the configured <i>SlurmUser</i> using the <i>scontrol</i> command.
 The <i>scontrol</i>, <i>smap</i> and <i>sview</i> commands can be used
 to view reservations.
 The man pages for the various commands contain details.</p>
-
-<p>Note for users of Maui or Moab schedulers: <br>
-Maui and Moab are not integrated with SLURM's resource reservation system,
-but should use their own advanced reservation system.</p>
 
 <h2>Reservation Creation</h2>
 
@@ -57,13 +55,14 @@ ReservationName=root_3 StartTime=2009-02-06T16:00:00
    Nodes=ALL NodeCnt=20
    Features=(null) PartitionName=(null)
    Flags=MAINT,SPEC_NODES,IGNORE_JOBS Licenses=(null)
+   BurstBuffers=(null)
    Users=root Accounts=(null)
 </pre>
 
 <p>A variation of this would be to configure license to represent system
 resources, such as a global file system.
 The system resource may not require an actual license for use, but
-SLURM licenses can be used to prevent jobs needed the resource from being
+Slurm licenses can be used to prevent jobs needed the resource from being
 started when that resource is unavailable.
 One could create a reservation for all of those licenses in order to perform
 maintenance on that resource.
@@ -74,7 +73,7 @@ this reservation will prevent any job specifying the need for needed a lustre
 license from being scheduled on this cluster during this reservation.</p>
 <pre>
 $ scontrol create reservation starttime=2009-04-06T16:00:00 \
-   duration=120 user=root flags=ignore_jobs \
+   duration=120 user=root flags=license_only \
    licenses=lustre:1000
 Reservation created: root_4
 
@@ -83,13 +82,14 @@ ReservationName=root_4 StartTime=2009-04-06T16:00:00
    EndTime=2009-04-06T18:00:00 Duration=120
    Nodes= NodeCnt=0
    Features=(null) PartitionName=(null)
-   Flags=IGNORE_JOBS Licenses=lustre*1000
+   Flags=LICENSE_ONLY Licenses=lustre*1000
+   BurstBuffers=(null)
    Users=root Accounts=(null)
 </pre>
 
 <p>Another mode of operation would be to reserve specific nodes
 for an indefinite period in order to study problems on those
-nodes. This could also be accomplished using a SLURM partition
+nodes. This could also be accomplished using a Slurm partition
 specifically for this purpose, but that would fail to capture
 the maintenance nature of their use.</p>
 <pre>
@@ -103,11 +103,12 @@ ReservationName=root_5 StartTime=2009-02-04T16:22:57
    Nodes=sun000 NodeCnt=1
    Features=(null) PartitionName=(null)
    Flags=MAINT,SPEC_NODES Licenses=(null)
+   BurstBuffers=(null)
    Users=root Accounts=(null)
 </pre>
 
 <p>Our next example is to reserve ten nodes in the default
-SLURM partition starting at noon and with a duration of 60
+Slurm partition starting at noon and with a duration of 60
 minutes occurring daily. The reservation will be available
 only to users "alan" and "brenda".</p>
 <pre>
@@ -120,7 +121,24 @@ ReservationName=alan_6 StartTime=2009-02-05T12:00:00
    EndTime=2009-02-05T13:00:00 Duration=60
    Nodes=sun[000-003,007,010-013,017] NodeCnt=10
    Features=(null) PartitionName=pdebug
-   Flags=DAILY Licenses=(null)
+   Flags=DAILY Licenses=(null) BurstBuffers=(null)
+   Users=alan,brenda Accounts=(null)
+</pre>
+
+<p>Our next example is to reserve 100GB of burst buffer space
+starting at noon today and with a duration of 60 minutes.
+The reservation will be available only to users "alan" and "brenda".</p>
+<pre>
+$ scontrol create reservation user=alan,brenda \
+   starttime=noon duration=60 flags=any_nodes burstbuffer=100GB
+Reservation created: alan_7
+
+$ scontrol show res
+ReservationName=alan_7 StartTime=2009-02-05T12:00:00
+   EndTime=2009-02-05T13:00:00 Duration=60
+   Nodes= NodeCnt=0
+   Features=(null) PartitionName=(null)
+   Flags=ANY_NODES Licenses=(null) BurstBuffer=100GB
    Users=alan,brenda Accounts=(null)
 </pre>
 
@@ -128,7 +146,7 @@ ReservationName=alan_6 StartTime=2009-02-05T12:00:00
 reservation request includes information about the sizes of jobs to be created.
 This is especially important for BlueGene systems due to restrictive rules
 about the topology of created blocks (due to hardware constraints and/or
-SLURM's configuration). To take advantage of this optimization, specify the
+Slurm's configuration). To take advantage of this optimization, specify the
 sizes of jobs of to be concurrently executed. The example below creates a
 reservation containing 4096 c-nodes on a BlueGene system so that two 2048
 c-node jobs can execute simultaneously.</p>
@@ -143,7 +161,7 @@ ReservationName=alan_8 StartTime=2011-12-05T12:00:00
    EndTime=2011-12-05T13:00:00 Duration=60
    Nodes=bgp[000x011,210x311] NodeCnt=4096
    Features=(null) PartitionName=pdebug
-   Flags= Licenses=(null)
+   Flags= Licenses=(null) BurstBuffers=(null)
    Users=alan,brenda Accounts=(null)
 </pre>
 
@@ -155,9 +173,9 @@ identify the partition from which to select the nodes or _one_
 feature that every selected node must contain.</p>
 
 <p>On a smaller system, one might want to reserve cores rather than
-whole nodes. Slurm provides a core reservation capability in version 2.6.
+whole nodes.
 This capability permits the administrator to identify the core count to be
-reserved on each node as snown in the examples below.<br>
+reserved on each node as shown in the examples below.<br>
 <b>NOTE:</b> Core reservations are not available on IBM BlueGene or
 Cray/ALPS systems, nor when the system is configured to use the select/linear
 or select/serial plugins.</p>
@@ -189,14 +207,14 @@ ReservationName=alan_9 StartTime=2011-12-05T13:00:00
    EndTime=2011-12-05T14:00:00 Duration=60
    Nodes=bgp[000x011,210x311] NodeCnt=4096
    Features=(null) PartitionName=pdebug
-   Flags= Licenses=(null)
+   Flags= Licenses=(null) BurstBuffers=(null)
    Users=-alan Accounts=foo
 </pre>
 
 <h2>Reservation Use</h2>
 
 <p>The reservation create response includes the reservation's name.
-This name is automatically generated by SLURM based upon the first
+This name is automatically generated by Slurm based upon the first
 user or account name and a numeric suffix. In order to use the
 reservation, the job submit request must explicitly specify that
 reservation name. The job must be contained completely within the
@@ -212,7 +230,7 @@ sbatch: Submitted batch job 65540
 <p>Note that use of a reservation does not alter a job's priority, but it
 does act as an enhancement to the job's priority.
 Any job with a reservation is considered for scheduling to resources 
-before any other job in the same SLURM partition (queue) not associated
+before any other job in the same Slurm partition (queue) not associated
 with a reservation.</p>
 
 <h2>Reservation Modification</h2>
@@ -229,7 +247,8 @@ bash-3.00$ scontrol show ReservationName=root_3
 ReservationName=root_3 StartTime=2009-02-06T16:00:00
    EndTime=2009-02-06T18:30:00 Duration=150
    Nodes=ALL NodeCnt=20 Features=(null)
-   PartitionName=(null) Flags=MAINT,SPEC_NODES Licenses=(null)
+   PartitionName=(null) Flags=MAINT,SPEC_NODES
+   Licenses=(null) BurstBuffers=(null)
    Users=admin Accounts=(null)
 </pre>
 
@@ -242,13 +261,20 @@ jobs running in it.</p>
 <pre>
 $ scontrol delete ReservationName=alan_6
 </pre>
+<p>
+
+<b>NOTE:</b> By default, when a reservation ends the reservation request will be
+removed from any pending jobs submitted to the reservation and will be put into
+a held state.  Use the NO_HOLD_JOBS_AFTER_END reservation flag to let jobs run
+outside of the reservation after the reservation is gone.
+</p>
 
 <h2>Overlapping Reservations</h2>
 
 <p>By default, reservations must not overlap. They must either include
 different nodes or operate at different times. If specific nodes
-are not specified when a reservation is created, SLURM will
-automatically select nodes to avoid overlap and insure that
+are not specified when a reservation is created, Slurm will
+automatically select nodes to avoid overlap and ensure that
 the selected nodes are available when the reservation begins.</p>
 
 <p>There is very limited support for overlapping reservations
@@ -271,7 +297,7 @@ reservation except that is it not logged in the accounting system as nodes
 reserved for maintenance.
 It requires the use of the "overlap" flag when creating the second
 reservation.
-This might be used to insure availability of resources for a specific
+This might be used to ensure availability of resources for a specific
 user within a group having a reservation.
 Using the previous example of alan and brenda having a 10 node reservation
 for 60 minutes, we might want to reserve 4 nodes of that for for brenda
@@ -295,6 +321,95 @@ Note a reservation having a "maint" or "overlap" flag will not have
 resources removed from it by a subsequent reservation also having a
 "maint" or "overlap" flag, so nesting of reservations only works to a
 depth of two.</p>
+
+<h2>Reservations Floating Through Time</h2>
+
+<p>Slurm can be used to create an advanced reservation with a start time that
+remains a fixed period of time in the future.
+These reservation are not intended to run jobs, but to prevent long running
+jobs from being initiated on specific nodes.
+That node might be placed in a DRAINING state to prevent <b>any</b> new jobs
+from being started there.
+Alternately, an advanced reservation might be placed on the node to prevent
+jobs exceeding some specific time limit from being started.
+Attempts by users to make use of a reservation with a floating start time will
+be rejected.
+When ready to perform the maintenance, place the node in DRAINING state and
+delete the previously created advanced reservation.</p>
+
+<p>Create the reservation by using the flag value of <b>TIME_FLOAT</b> and a
+start time that is relative to the current time (use the keyword <b>now</b>).
+The reservation duration should generally be a value which is large relative
+to typical job run times in order to not adversely impact backfill scheduling
+decisions.
+Alternately the reservation can have a specific end time, in which case the
+reservation's start time will increase through time until the reservation's
+end time is reached.
+When the current time passes the reservation end time then the reservation will
+be purged.
+In the example below, node tux8 is prevented from starting any jobs exceeding
+a 60 minute time limit.
+The duration of this reservation is 100 (minutes).</p>
+<pre>
+$ scontrol create reservation user=operator nodes=tux8 \
+  starttime=now+60minutes duration=100 flags=time_float
+</pre>
+
+<h2>Reservations that Replace Allocated Resources</h2>
+
+<p>Slurm can create an advanced reservation for which nodes which are allocated
+to jobs are automatically replaced with new idle nodes.
+The effect of this is to always maintain a constant size pool of resources.
+This is accomplished by using a "replace" flag as shown in the example below.
+This option is not supported on IBM Bluegene systems or for reservations
+of individual cores which span more than one node rather than full nodes 
+(e.g. a 1 core reservation on node "tux1" will be moved if node "tux1" goes
+down, but a reservation containing 2 cores on node "tux1" and 3 cores on "tux2"
+will not be moved node "tux1" goes down).</p>
+<pre>
+$ scontrol create reservation starttime=now duration=60 \
+  users=foo nodecnt=2 flags=replace
+Reservation created: foo_82
+
+$ scontrol show res
+ReservationName=foo_82 StartTime=2014-11-20T16:21:11
+   EndTime=2014-11-20T17:21:11 Duration=01:00:00
+   Nodes=tux[0-1] NodeCnt=2 CoreCnt=12 Features=(null)
+   PartitionName=debug Flags=REPLACE
+   Users=jette Accounts=(null) Licenses=(null) State=ACTIVE
+
+$ sbatch -n4 --reservation=foo_82 tmp
+Submitted batch job 97
+
+$ scontrol show res
+ReservationName=foo_82 StartTime=2014-11-20T16:21:11
+   EndTime=2014-11-20T17:21:11 Duration=01:00:00
+   Nodes=tux[1-2] NodeCnt=2 CoreCnt=12 Features=(null)
+   PartitionName=debug Flags=REPLACE
+   Users=jette Accounts=(null) Licenses=(null) State=ACTIVE
+
+$ sbatch -n4 --reservation=foo_82 tmp
+Submitted batch job 98
+
+$ scontrol show res
+ReservationName=foo_82 StartTime=2014-11-20T16:21:11
+   EndTime=2014-11-20T17:21:11 Duration=01:00:00
+   Nodes=tux[2-3] NodeCnt=2 CoreCnt=12 Features=(null)
+   PartitionName=debug Flags=REPLACE
+   Users=jette Accounts=(null) Licenses=(null) State=ACTIVE
+
+$ squeue
+JOBID PARTITION  NAME  USER ST  TIME  NODES NODELIST(REASON)
+   97     debug   tmp   foo  R  0:09      1 tux0
+   98     debug   tmp   foo  R  0:07      1 tux1
+</pre>
+
+<h2>Reservation Purging After Last Job</h2>
+
+<p>A reservation may be automatically purged after the last associated job
+completes. This is accomplished by using a "purge_comp" flag.
+Once the reservation has been created, it must be populated within 5 minutes
+of its start time or it will be purged before any jobs have been run.</p>
 
 <h2>Reservation Accounting</h2>
 
@@ -321,7 +436,7 @@ considering the initiation of jobs.
 This will prevent the initiation of some jobs which would complete execution
 before a reservation given fewer jobs to time-slice with.</p>
 
-<p style="text-align: center;">Last modified 29 July 2014</p>
+<p style="text-align: center;">Last modified 15 December 2016</p>
 
 <!--#include virtual="footer.txt"-->
 

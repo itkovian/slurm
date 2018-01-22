@@ -1,7 +1,9 @@
-.TH "Slurm API" "3" "January 2013" "Morris Jette" "Slurm job information reporting functions"
+.TH "Slurm API" "3" "Slurm job information reporting functions" "April 2015" "Slurm job information reporting functions"
+
 .SH "NAME"
-slurm_free_job_alloc_info_response_msg, slurm_free_job_info_msg,
 slurm_get_end_time, slurm_get_rem_time, slurm_get_select_jobinfo,
+slurm_job_cpus_allocated_on_node, slurm_job_cpus_allocated_on_node_id,
+slurm_job_cpus_allocated_str_on_node, slurm_job_cpus_allocated_str_on_node_id,
 slurm_load_jobs, slurm_load_job_user, slurm_pid2jobid,
 slurm_print_job_info, slurm_print_job_info_msg
 \- Slurm job information reporting functions
@@ -18,12 +20,6 @@ ISLURM_GET_REM_TIME, ISLURM_GET_REM_TIME2
 #include <slurm/slurm.h>
 .br
 #include <sys/types.h>
-.LP
-void \fBslurm_free_job_alloc_info_response_msg\fR (
-.br
-	job_alloc_info_response_msg_t *\fIjob_alloc_info_msg_ptr\fP
-.br
-);
 .LP
 void \fBslurm_free_job_info_msg\fR (
 .br
@@ -135,6 +131,30 @@ int \fBslurm_job_cpus_allocated_on_node\fR (
 	const char *\fInode_name\fP
 .br
 );
+.LP
+int \fBslurm_job_cpus_allocated_str_on_node_id\fR (
+.br
+	char *\fIcpus\fP,
+.br
+	size_t \fIcpus_len\fP,
+.br
+	job_resources_t *\fIjob_resrcs_ptr\fP,
+.br
+	int \fInode_id\fP
+.br
+);
+.LP
+int \fBslurm_job_cpus_allocated_str_on_node\fR (
+.br
+	char *\fIcpus\fP,
+.br
+	size_t \fIcpus_len\fP,
+.br
+	job_resources_t *\fIjob_resrcs_ptr\fP,
+.br
+	const char *\fInode_name\fP
+.br
+);
 
 .SH "FORTRAN EXTENSION"
 .LP
@@ -146,11 +166,18 @@ REM_TIME = ISLURM_GET_REM_TIME2()
 .LP
 ISLURM_GET_REM_TIME2() is equivalent to ISLURM_GET_REM_TIME() except
 that the JOBID is taken from the SLURM_JOB_ID environment variable,
-which is set by SLURM for tasks which it launches.
+which is set by Slurm for tasks which it launches.
 Both functions return the number of seconds remaining before the job
 reaches the end of it's allocated time.
 
 .SH "ARGUMENTS"
+.TP
+\fIcpus\fP
+Specifies a pointer to allocated memory into which the string representing the
+list of allocated CPUs on the node is placed.
+.TP
+\fIcpus_len\fP
+The size in bytes of the allocated memory space pointed by \fIcpus\fP.
 .TP
 \fIdata_type\fP
 Identifies the type of data to retrieve \fIjobinfo\fP. Note that different types of
@@ -222,10 +249,24 @@ Job filtering flags, may be ORed.
 Information about jobs in partitions that are configured as
 hidden and partitions that the user's group is unable to utilize
 are not reported by default.
-The \fBSHOW_ALL\fP flag will cause information about jobs in all
-partitions to be displayed.
-The \fBSHOW_DETAIL\fP flag will cause detailed resource allocation information
-to be reported (e.g. the could of CPUs allocated to a job on each node).
+.RS
+.TP 13
+\fBSHOW_ALL\fP
+Report information about jobs in all partitions, even partitions to which the
+user lacks access (this access can be blocked by system administers).
+.TP
+\fBSHOW_DETAIL\fP
+Report detailed resource allocation information (e.g. identification of the
+specific CPUs allocated to a job on each node).
+.TP
+\fBSHOW_LOCAL\fP
+Report information only about jobs on the local cluster, even if the cluster
+is part of a federation.
+.TP
+\fBSHOW_SIBLING\fP
+Report information about all sibling jobs on a federated cluster.
+.RE
+
 .TP
 \fIupdate_time\fP
 For all of the following informational calls, if update_time is equal to or
@@ -245,18 +286,22 @@ allocation response message.
 \fBslurm_load_jobs\fR function.
 .LP
 \fBslurm_get_end_time\fR Returns the expected termination time of a specified
-SLURM job. The time corresponds to the exhaustion of the job\'s or partition\'s
+Slurm job. The time corresponds to the exhaustion of the job\'s or partition\'s
 time limit. NOTE: The data is cached locally and only retrieved from the
-SLURM controller once per minute.
+Slurm controller once per minute.
 .LP
 \fBslurm_get_rem_time\fR Returns the number of seconds remaining before the
-expected termination time of a specified SLURM job id. The time corresponds
+expected termination time of a specified Slurm job id. The time corresponds
 to the exhaustion of the job\'s or partition\'s time limit. NOTE: The data is
-cached locally and only retrieved from the SLURM controller once per minute.
+cached locally and only retrieved from the Slurm controller once per minute.
 .LP
-\fBslurm_job_cpus_allocated_on_node\fR and 
-\fBslurm_job_cpus_allocated_on_node_id\fR return the number of CPUs allocated
-to a job on a specific node allocated to a job.
+\fBslurm_job_cpus_allocated_on_node\fR and
+\fBslurm_job_cpus_allocated_on_node_id\fR
+return the number of CPUs allocated to a job on a specific node allocated to a job.
+.LP
+\fBslurm_job_cpus_allocated_str_on_node\fR and
+\fBslurm_job_cpus_allocated_str_on_node_id\fR return a string representing the
+list of CPUs allocated to a job on a specific node allocated to a job.
 .LP
 \fBslurm_load_job\fR Returns a job_info_msg_t that contains an update time,
 record count, and array of job_table records for some specific job ID.
@@ -271,7 +316,7 @@ with a specific user ID.
 \fBslurm_load_job_user\fR issues RPC to get slurm information about all jobs to
 be run as the specified user.
 .LP
-\fBslurm_notify_job\fR Sends the specified message to standard output of 
+\fBslurm_notify_job\fR Sends the specified message to standard output of
 the specified job ID.
 .LP
 \fBslurm_pid2jobid\fR Returns a Slurm job id corresponding to the supplied
@@ -301,7 +346,7 @@ your code.
 \fBESLURM_INVALID_JOB_ID\fR Request for information about a non\-existent job.
 .LP
 \fBSLURM_PROTOCOL_SOCKET_IMPL_TIMEOUT\fR Timeout in communicating with
-SLURM controller.
+Slurm controller.
 .LP
 \fBINVAL\fR Invalid function argument.
 
@@ -420,7 +465,7 @@ Some data structures contain index values to cross\-reference each other.
 If the \fIshow_flags\fP argument is not set to SHOW_ALL when getting this
 data, these index values will be invalid.
 .LP
-The \fBslurm_hostlist_\fR functions can be used to convert SLURM node list
+The \fBslurm_hostlist_\fR functions can be used to convert Slurm node list
 expressions into a collection of individual node names.
 
 .SH "COPYING"
@@ -429,15 +474,15 @@ Copyright (C) 2008\-2010 Lawrence Livermore National Security.
 Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
 CODE\-OCEC\-09\-009. All rights reserved.
 .LP
-This file is part of SLURM, a resource management program.
-For details, see <http://slurm.schedmd.com/>.
+This file is part of Slurm, a resource management program.
+For details, see <https://slurm.schedmd.com/>.
 .LP
-SLURM is free software; you can redistribute it and/or modify it under
+Slurm is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free
 Software Foundation; either version 2 of the License, or (at your option)
 any later version.
 .LP
-SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
 WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
 FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
 details.

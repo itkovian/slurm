@@ -7,7 +7,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -36,31 +36,11 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#if HAVE_CONFIG_H
-#  include "config.h"
-#  if STDC_HEADERS
-#    include <string.h>
-#  endif
-#  if HAVE_SYS_TYPES_H
-#    include <sys/types.h>
-#  endif /* HAVE_SYS_TYPES_H */
-#  if HAVE_UNISTD_H
-#    include <unistd.h>
-#  endif
-#  if HAVE_INTTYPES_H
-#    include <inttypes.h>
-#  else /* ! HAVE_INTTYPES_H */
-#    if HAVE_STDINT_H
-#      include <stdint.h>
-#    endif
-#  endif /* HAVE_INTTYPES_H */
-#else /* ! HAVE_CONFIG_H */
-#  include <sys/types.h>
-#  include <unistd.h>
-#  include <stdint.h>
-#  include <string.h>
-#endif /* HAVE_CONFIG_H */
+#include <inttypes.h>
 #include <stdio.h>
+#include <string.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 #include "slurm/slurm.h"
 #include "slurm/slurm_errno.h"
@@ -128,7 +108,7 @@ extern int job_submit_plugin_init(void)
 			 (sizeof(slurm_submit_ops_t) * (g_context_cnt + 1)));
 		xrealloc(g_context,
 			 (sizeof(plugin_context_t *) * (g_context_cnt + 1)));
-		if (strncmp(type, "job_submit/", 11) == 0)
+		if (xstrncmp(type, "job_submit/", 11) == 0)
 			type += 11; /* backward compatibility */
 		type = xstrdup_printf("job_submit/%s", type);
 		g_context[g_context_cnt] = plugin_context_create(
@@ -144,7 +124,7 @@ extern int job_submit_plugin_init(void)
 
 		xfree(type);
 		g_context_cnt++;
-		names = NULL; /* for next iteration */
+		names = NULL; /* for next strtok_r() iteration */
 	}
 	init_run = true;
 
@@ -207,7 +187,7 @@ extern int job_submit_plugin_reconfig(void)
 
 	slurm_mutex_lock(&g_context_lock);
 	if (plugin_names && submit_plugin_list &&
-	    strcmp(plugin_names, submit_plugin_list))
+	    xstrcmp(plugin_names, submit_plugin_list))
 		plugin_change = true;
 	else
 		plugin_change = false;
@@ -241,7 +221,11 @@ extern int job_submit_plugin_submit(struct job_descriptor *job_desc,
 	START_TIMER;
 	rc = job_submit_plugin_init();
 	slurm_mutex_lock(&g_context_lock);
-	for (i=0; ((i < g_context_cnt) && (rc == SLURM_SUCCESS)); i++)
+	/* NOTE: On function entry read locks are set on config, job, node and
+	 * partition structures. Do not attempt to unlock them and then
+	 * lock again (say with a write lock) since doing so will trigger
+	 * a deadlock with the g_context_lock above. */
+	for (i = 0; ((i < g_context_cnt) && (rc == SLURM_SUCCESS)); i++)
 		rc = (*(ops[i].submit))(job_desc, submit_uid, err_msg);
 	slurm_mutex_unlock(&g_context_lock);
 	END_TIMER2("job_submit_plugin_submit");
@@ -264,7 +248,7 @@ extern int job_submit_plugin_modify(struct job_descriptor *job_desc,
 	START_TIMER;
 	rc = job_submit_plugin_init();
 	slurm_mutex_lock(&g_context_lock);
-	for (i=0; ((i < g_context_cnt) && (rc == SLURM_SUCCESS)); i++)
+	for (i = 0; ((i < g_context_cnt) && (rc == SLURM_SUCCESS)); i++)
 		rc = (*(ops[i].modify))(job_desc, job_ptr, submit_uid);
 	slurm_mutex_unlock(&g_context_lock);
 	END_TIMER2("job_submit_plugin_modify");

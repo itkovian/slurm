@@ -12,7 +12,7 @@
 #  Additions by Troy Baer <tbaer@utk.edu>
 #
 #  This file is part of SLURM, a resource management program.
-#  For details, see <http://slurm.schedmd.com/>.
+#  For details, see <https://slurm.schedmd.com/>.
 #  Please also read the included file: DISCLAIMER.
 #
 #  SLURM is free software; you can redistribute it and/or modify it under
@@ -91,7 +91,9 @@ Main:
     # Use sole remaining argument as nodeIds
     my @nodeIds = @ARGV;
     my $slurm = Slurm::new();
-
+    if (!$slurm) {
+        die "Problem loading slurm.\n";
+    }
 
     # handle all of the node update operations
     if ( defined $clear || defined $offline || defined $reset ) {
@@ -123,6 +125,8 @@ Main:
     my $update = $resp->{last_update};
     foreach my $node (@{$resp->{node_array}}) {
             #print STDERR join(",",keys($node))."\n";
+	    next unless (defined $node);
+	    next unless (keys %{$node});
 	    my $nodeId    = $node->{'name'};
 	    my $rCProc    = $node->{'cpus'};
 	    my $rBoards   = $node->{'boards'};
@@ -136,6 +140,9 @@ Main:
 	    my $state     = lc(Slurm->node_state_string($node->{'node_state'}));
             my $reason    = $node->{'reason'};
 	    my $gres      = $node->{'gres'};
+	    if ( !defined $node->{'os'} ) {
+		$node->{'os'} = "unknown";
+	    }
 	    my $os        = lc($node->{'os'});
 	    my $arch      = $node->{'arch'};
 	    my $disksize  = $node->{'tmp_disk'};
@@ -148,10 +155,10 @@ Main:
                   foreach my $grestype ( @gres ) {
                           my @elt = split(/:/,$grestype);
 			  if ( $#elt>0 && $elt[0] eq "gpu" ) {
-			          $gpus = int($elt[1]);
+			          $gpus = int($elt[-1]);
 			  }
 			  if ( $#elt>0 && $elt[0] eq "mic" ) {
-			          $mics = int($elt[1]);
+			          $mics = int($elt[-1]);
 			  }
 		  }
 	    }

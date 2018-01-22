@@ -9,7 +9,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -44,13 +44,13 @@
 #include "accounting_storage_mysql.h"
 
 extern int as_mysql_acct_no_assocs(mysql_conn_t *mysql_conn,
-				slurmdb_association_cond_t *assoc_cond,
+				slurmdb_assoc_cond_t *assoc_cond,
 				List ret_list);
 extern int as_mysql_acct_no_users(mysql_conn_t *mysql_conn,
-			       slurmdb_association_cond_t *assoc_cond,
+			       slurmdb_assoc_cond_t *assoc_cond,
 			       List ret_list);
 extern int as_mysql_user_no_assocs_or_no_uid(
-	mysql_conn_t *mysql_conn, slurmdb_association_cond_t *assoc_cond,
+	mysql_conn_t *mysql_conn, slurmdb_assoc_cond_t *assoc_cond,
 	List ret_list);
 
 #endif

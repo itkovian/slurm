@@ -1,6 +1,5 @@
 /*****************************************************************************\
  *  opt.h - definitions for sattach option processing
- *  $Id$
  *****************************************************************************
  *  Copyright (C) 2002-2006 The Regents of the University of California.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -9,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -24,15 +23,11 @@
  *
  *  You should have received a copy of the GNU General Public License along
  *  with SLURM; if not, write to the Free Software Foundation, Inc.,
- *  59 Temple Place, Suite 330, Boston, MA  02111-1307  USA.
+ *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
 #ifndef _HAVE_OPT_H
 #define _HAVE_OPT_H
-
-#if HAVE_CONFIG_H
-#  include "config.h"
-#endif
 
 #include <time.h>
 #include <sys/types.h>
@@ -84,7 +79,7 @@ extern int error_exit;
  * 3. update options with commandline args
  * 4. perform some verification that options are reasonable
  */
-int initialize_and_process_args(int argc, char *argv[]);
+int initialize_and_process_args(int argc, char **argv);
 
 /* set options based upon commandline args */
 void set_options(const int argc, char **argv);

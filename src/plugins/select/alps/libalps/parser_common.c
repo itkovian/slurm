@@ -326,7 +326,7 @@ void eh_mem(struct ud *ud, const XML_Char **attrs)
 	    memory.page_size_kb < 1)
 		fatal("illegal page_size_kb = %s", attribs[1]);
 
-	if (atou32(attribs[2], &memory.page_count) < 0 ||
+	if (atou64(attribs[2], &memory.page_count) < 0 ||
 	    memory.page_count < 1)
 		fatal("illegal page_count = %s", attribs[2]);
 
@@ -360,7 +360,7 @@ void eh_mem_alloc(struct ud *ud, const XML_Char **attrs)
 	if (atou32(attribs[0], &memalloc.rsvn_id) < 0)
 		fatal("illegal reservation_id = %s", attribs[0]);
 
-	if (atou32(attribs[1], &memalloc.page_count) < 0)
+	if (atou64(attribs[1], &memalloc.page_count) < 0)
 		fatal("illegal page_count = %s", attribs[1]);
 
 	ud->current_node.reserved = true;
@@ -489,7 +489,7 @@ void eh_command(struct ud *ud, const XML_Char **attrs)
 			fatal("invalid depth '%s'", attribs[1]);
 		else if (atou32(attribs[2], &new->nppn) < 0)
 			fatal("invalid nppn '%s'", attribs[2]);
-		else if (atou32(attribs[3], &new->memory) < 0)
+		else if (atou64(attribs[3], &new->memory) < 0)
 			fatal("invalid memory '%s'", attribs[3]);
 		for (new->arch = BNA_X2; new->arch < BNA_MAX; new->arch += 1)
 			if (strcmp(attribs[4], nam_arch[new->arch]) == 0)
@@ -515,7 +515,8 @@ static const struct element_handler *basil_tables[BV_MAX] = {
 	[BV_4_1] = basil_4_0_elements,
 	[BV_5_0] = basil_4_0_elements,
 	[BV_5_1] = basil_5_1_elements,
-	[BV_5_2] = basil_5_2_elements
+	[BV_5_2] = basil_5_2_elements,
+	[BV_5_2_3] = basil_5_2_elements
 };
 
 /**
@@ -570,16 +571,16 @@ static void _start_handler(void *user_data,
 				*/
 				if (ud->bp->method == BM_switch) {
 					if (!strcmp(table[tag].tag,
-						    "ReservationArray"))
+						     "ReservationArray"))
 						tag = BT_SWITCHRESARRAY;
 					else if (!strcmp(table[tag].tag,
-							 "Reservation"))
+							  "Reservation"))
 						tag = BT_SWITCHRES;
 					else if (!strcmp(table[tag].tag,
-							 "ApplicationArray"))
+							  "ApplicationArray"))
 						tag = BT_SWITCHAPPARRAY;
 					else if (!strcmp(table[tag].tag,
-							 "Application"))
+							  "Application"))
 						tag = BT_SWITCHAPP;
 				}
 				break;
@@ -636,16 +637,16 @@ static void _end_handler(void *user_data, const XML_Char *el)
 				*/
 				if (ud->bp->method == BM_switch) {
 					if (!strcmp(table[end_tag].tag,
-						    "ReservationArray"))
+						     "ReservationArray"))
 						end_tag = BT_SWITCHRESARRAY;
 					else if (!strcmp(table[end_tag].tag,
-							 "Reservation"))
+							  "Reservation"))
 						end_tag = BT_SWITCHRES;
 					else if (!strcmp(table[end_tag].tag,
-							 "ApplicationArray"))
+							  "ApplicationArray"))
 						end_tag = BT_SWITCHAPPARRAY;
 					else if (!strcmp(table[end_tag].tag,
-							 "Application"))
+							  "Application"))
 						end_tag = BT_SWITCHAPP;
 				}
 				break;

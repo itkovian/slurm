@@ -8,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -37,10 +37,6 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#ifdef HAVE_CONFIG_H
-#  include "config.h"
-#endif
-
 #include "slurm/slurm.h"
 #include "slurm/slurm_errno.h"
 #include "slurm/slurmdb.h"
@@ -52,9 +48,12 @@
  * IN:  qos_list List of char *
  * RET: SLURM_SUCCESS on success SLURM_ERROR else
  */
-extern int slurmdb_qos_add(void *db_conn, uint32_t uid, List qos_list)
+extern int slurmdb_qos_add(void *db_conn, List qos_list)
 {
-	return acct_storage_g_add_qos(db_conn, getuid(), qos_list);
+	if (db_api_uid == -1)
+		db_api_uid = getuid();
+
+	return acct_storage_g_add_qos(db_conn, db_api_uid, qos_list);
 }
 
 /*
@@ -65,7 +64,10 @@ extern int slurmdb_qos_add(void *db_conn, uint32_t uid, List qos_list)
  */
 extern List slurmdb_qos_get(void *db_conn, slurmdb_qos_cond_t *qos_cond)
 {
-	return acct_storage_g_get_qos(db_conn, getuid(), qos_cond);
+	if (db_api_uid == -1)
+		db_api_uid = getuid();
+
+	return acct_storage_g_get_qos(db_conn, db_api_uid, qos_cond);
 }
 
 /*
@@ -79,8 +81,10 @@ extern List slurmdb_qos_modify(void *db_conn,
 			       slurmdb_qos_cond_t *qos_cond,
 			       slurmdb_qos_rec_t *qos)
 {
-	return acct_storage_g_modify_qos(db_conn, getuid(),
-					 qos_cond, qos);
+	if (db_api_uid == -1)
+		db_api_uid = getuid();
+
+	return acct_storage_g_modify_qos(db_conn, db_api_uid, qos_cond, qos);
 }
 
 /*
@@ -91,6 +95,9 @@ extern List slurmdb_qos_modify(void *db_conn,
  */
 extern List slurmdb_qos_remove(void *db_conn, slurmdb_qos_cond_t *qos_cond)
 {
-	return acct_storage_g_remove_qos(db_conn, getuid(), qos_cond);
+	if (db_api_uid == -1)
+		db_api_uid = getuid();
+
+	return acct_storage_g_remove_qos(db_conn, db_api_uid, qos_cond);
 }
 

@@ -8,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -37,16 +37,11 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#ifdef HAVE_CONFIG_H
-#  include "config.h"
-#endif
+#include "config.h"
+
 /* needed for getgrent_r */
-#ifndef   _GNU_SOURCE
-#  define _GNU_SOURCE
-#endif
-#ifndef   __USE_GNU
-#  define   __USE_GNU
-#endif
+#define _GNU_SOURCE
+#define   __USE_GNU
 
 #include <grp.h>
 #include <pthread.h>
@@ -93,9 +88,7 @@ extern uid_t *get_group_members(char *group_name)
 	uid_t *group_uids = NULL, my_uid;
 	gid_t my_gid;
 	int buflen = PW_BUF_SIZE, i, j, res, uid_cnt;
-#ifdef HAVE_AIX
-	FILE *fp = NULL;
-#elif defined (__APPLE__) || defined (__CYGWIN__)
+#if defined (__APPLE__)
 #else
 	char pw_buffer[PW_BUF_SIZE];
 	struct passwd pw;
@@ -138,21 +131,32 @@ extern uid_t *get_group_members(char *group_name)
 
 	j = 0;
 	uid_cnt = 0;
-#ifdef HAVE_AIX
-	setgrent_r(&fp);
-	while (1) {
-		slurm_seterrno(0);
-		res = getgrent_r(&grp, grp_buffer, buflen, &fp);
-		if (res != 0) {
-			if (errno == ERANGE) {
-				buflen *= 2;
-				xrealloc(grp_buffer, buflen);
-				continue;
-			}
-			break;
+
+	/* Get the members from the getgrnam_r() call.
+	 */
+	for (i = 0; grp_result->gr_mem[i]; i++) {
+
+		if (uid_from_string(grp_result->gr_mem[i],
+				    &my_uid) < 0) {
+			continue;
 		}
-		grp_result = &grp;
-#elif defined (__APPLE__) || defined (__CYGWIN__)
+		if (my_uid == 0)
+			continue;
+		if (j + 1 >= uid_cnt) {
+			uid_cnt += 100;
+			xrealloc(group_uids,
+				 (sizeof(uid_t) * uid_cnt));
+		}
+
+		group_uids[j++] = my_uid;
+	}
+
+	/* Note that in environments where user/group enumeration has
+	 * been disabled (typically necessary for large user/group
+	 * databases), the rest of this function essentially does
+	 * nothing.  */
+
+#if defined (__APPLE__)
 	setgrent();
 	while (1) {
 		if ((grp_result = getgrent()) == NULL)
@@ -160,6 +164,9 @@ extern uid_t *get_group_members(char *group_name)
 #else
 	setgrent();
 	while (1) {
+		/* MH-CEA workaround to handle different group entries with
+		 * the same gid
+		 */
 		slurm_seterrno(0);
 		res = getgrent_r(&grp, grp_buffer, buflen, &grp_result);
 		if (res != 0 || grp_result == NULL) {
@@ -175,7 +182,7 @@ extern uid_t *get_group_members(char *group_name)
 		}
 #endif
 	        if (grp_result->gr_gid == my_gid) {
-			if (strcmp(grp_result->gr_name, group_name)) {
+			if (xstrcmp(grp_result->gr_name, group_name)) {
 				debug("including members of group '%s' as it "
 				      "corresponds to the same gid as group"
 				      " '%s'",grp_result->gr_name,group_name);
@@ -198,21 +205,12 @@ extern uid_t *get_group_members(char *group_name)
 			}
 		}
 	}
-#ifdef HAVE_AIX
-	endgrent_r(&fp);
-	setpwent_r(&fp);
-	while (!getpwent_r(&pw, pw_buffer, PW_BUF_SIZE, &fp)) {
-		pwd_result = &pw;
-#else
 	endgrent();
 	setpwent();
-#if defined (__sun)
-	while ((pwd_result = getpwent_r(&pw, pw_buffer, PW_BUF_SIZE)) != NULL) {
-#elif defined (__APPLE__) || defined (__CYGWIN__)
+#if defined (__APPLE__)
 	while ((pwd_result = getpwent()) != NULL) {
 #else
 	while (!getpwent_r(&pw, pw_buffer, PW_BUF_SIZE, &pwd_result)) {
-#endif
 #endif
 		/* At eof FreeBSD returns 0 unlike Linux
 		 * which returns ENOENT.
@@ -227,11 +225,7 @@ extern uid_t *get_group_members(char *group_name)
 		}
 		group_uids[j++] = pwd_result->pw_uid;
 	}
-#ifdef HAVE_AIX
-	endpwent_r(&fp);
-#else
 	endpwent();
-#endif
 	xfree(grp_buffer);
 	_put_group_cache(group_name, group_uids, j);
 	_log_group_members(group_name, group_uids);
@@ -241,12 +235,9 @@ extern uid_t *get_group_members(char *group_name)
 /* Delete our group/uid cache */
 extern void clear_group_cache(void)
 {
-	pthread_mutex_lock(&group_cache_mutex);
-	if (group_cache_list) {
-		list_destroy(group_cache_list);
-		group_cache_list = NULL;
-	}
-	pthread_mutex_unlock(&group_cache_mutex);
+	slurm_mutex_lock(&group_cache_mutex);
+	FREE_NULL_LIST(group_cache_list);
+	slurm_mutex_unlock(&group_cache_mutex);
 }
 
 /* Get a record from our group/uid cache.
@@ -258,15 +249,15 @@ static uid_t *_get_group_cache(char *group_name)
 	uid_t *group_uids = NULL;
 	int sz;
 
-	pthread_mutex_lock(&group_cache_mutex);
+	slurm_mutex_lock(&group_cache_mutex);
 	if (!group_cache_list) {
-		pthread_mutex_unlock(&group_cache_mutex);
+		slurm_mutex_unlock(&group_cache_mutex);
 		return NULL;
 	}
 
 	iter = list_iterator_create(group_cache_list);
 	while ((cache_rec = (struct group_cache_rec *) list_next(iter))) {
-		if (strcmp(group_name, cache_rec->group_name))
+		if (xstrcmp(group_name, cache_rec->group_name))
 			continue;
 		sz = sizeof(uid_t) * (cache_rec->uid_cnt + 1);
 		group_uids = (uid_t *) xmalloc(sz);
@@ -274,7 +265,7 @@ static uid_t *_get_group_cache(char *group_name)
 		break;
 	}
 	list_iterator_destroy(iter);
-	pthread_mutex_unlock(&group_cache_mutex);
+	slurm_mutex_unlock(&group_cache_mutex);
 	return group_uids;
 }
 
@@ -295,7 +286,7 @@ static void _put_group_cache(char *group_name, void *group_uids, int uid_cnt)
 	struct group_cache_rec *cache_rec;
 	int sz;
 
-	pthread_mutex_lock(&group_cache_mutex);
+	slurm_mutex_lock(&group_cache_mutex);
 	if (!group_cache_list) {
 		group_cache_list = list_create(_cache_del_func);
 	}
@@ -308,7 +299,7 @@ static void _put_group_cache(char *group_name, void *group_uids, int uid_cnt)
 	if (uid_cnt > 0)
 		memcpy(cache_rec->group_uids, group_uids, sz);
 	list_append(group_cache_list, cache_rec);
-	pthread_mutex_unlock(&group_cache_mutex);
+	slurm_mutex_unlock(&group_cache_mutex);
 }
 
 static void _log_group_members(char *group_name, uid_t *group_uids)

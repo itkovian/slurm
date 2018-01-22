@@ -22,9 +22,9 @@ inline static int av_store_uint16_t(AV* av, int index, uint16_t val)
 	/* Perl has a hard time figuring out the an unsigned int is
 	   equal to INFINITE or NO_VAL since they are treated as
 	   signed ints so we will handle this here. */
-	if(val == (uint16_t)INFINITE)
+	if(val == INFINITE16)
 		sv = newSViv(INFINITE);
-	else if(val == (uint16_t)NO_VAL)
+	else if(val == NO_VAL16)
 		sv = newSViv(NO_VAL);
 	else
 		sv = newSViv(val);
@@ -47,7 +47,7 @@ inline static int av_store_uint32_t(AV* av, int index, uint32_t val)
 	   signed ints so we will handle this here. */
 	if(val == (uint32_t)INFINITE)
 		sv = newSViv(INFINITE);
-	else if(val == (uint32_t)NO_VAL)
+	else if(val == NO_VAL)
 		sv = newSViv(NO_VAL);
 	else
 		sv = newSViv(val);
@@ -133,7 +133,7 @@ inline static int hv_store_uint32_t(HV* hv, const char *key, uint32_t val)
 	   signed ints so we will handle this here. */
 	if(val == (uint32_t)INFINITE)
 		sv = newSViv(INFINITE);
-	else if(val == (uint32_t)NO_VAL)
+	else if(val == NO_VAL)
 		sv = newSViv(NO_VAL);
 	else
 		sv = newSVuv(val);
@@ -154,9 +154,9 @@ inline static int hv_store_uint16_t(HV* hv, const char *key, uint16_t val)
 	/* Perl has a hard time figuring out the an unsigned int is
 	   equal to INFINITE or NO_VAL since they are treated as
 	   signed ints so we will handle this here. */
-	if(val == (uint16_t)INFINITE)
+	if(val == INFINITE16)
 		sv = newSViv(INFINITE);
-	else if(val == (uint16_t)NO_VAL)
+	else if(val == NO_VAL16)
 		sv = newSViv(NO_VAL);
 	else
 		sv = newSVuv(val);
@@ -177,9 +177,9 @@ inline static int hv_store_uint8_t(HV* hv, const char *key, uint8_t val)
 	/* Perl has a hard time figuring out the an unsigned int is
 	   equal to INFINITE or NO_VAL since they are treated as
 	   signed ints so we will handle this here. */
-	if(val == (uint8_t)INFINITE)
+	if(val == INFINITE8)
 		sv = newSViv(INFINITE);
-	else if(val == (uint8_t)NO_VAL)
+	else if(val == NO_VAL8)
 		sv = newSViv(NO_VAL);
 	else
 		sv = newSVuv(val);
@@ -211,6 +211,20 @@ inline static int hv_store_uid_t(HV* hv, const char *key, uid_t val)
 inline static int hv_store_int(HV* hv, const char *key, int val)
 {
 	SV* sv = newSViv(val);
+
+	if (!key || hv_store(hv, key, (I32)strlen(key), sv, 0) == NULL) {
+		SvREFCNT_dec(sv);
+		return -1;
+	}
+	return 0;
+}
+
+/*
+ * store a double
+ */
+inline static int hv_store_double(HV* hv, const char *key, double val)
+{
+	SV* sv = newSVnv(val);
 
 	if (!key || hv_store(hv, key, (I32)strlen(key), sv, 0) == NULL) {
 		SvREFCNT_dec(sv);
@@ -289,6 +303,7 @@ inline static int hv_store_ptr(HV* hv, const char *key, void* ptr, const char *c
 
 #define SV2int(sv)      SvIV(sv)
 #define SV2int32_t(sv)  SvIV(sv)
+#define SV2uint64_t(sv) SvUV(sv)
 #define SV2uint32_t(sv) SvUV(sv)
 #define SV2uint16_t(sv) SvUV(sv)
 #define SV2uint8_t(sv)  SvUV(sv)

@@ -8,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -47,6 +47,19 @@
  */
 extern void allocate_nodes(struct job_record *job_ptr);
 
+/* For a given job, if the available nodes differ from those with currently
+ *	active features, return a bitmap of nodes with the job's required
+ *	features currently active
+ * IN job_ptr - job requesting resource allocation
+ * IN avail_bitmap - nodes currently available for this job
+ * OUT active_bitmap - nodes with job's features currently active, NULL if
+ *	identical to avail_bitmap
+ * NOTE: Currently supports only simple AND of features
+ */
+extern void build_active_feature_bitmap(struct job_record *job_ptr,
+					bitstr_t *avail_bitmap,
+					bitstr_t **active_bitmap);
+
 /*
  * build_node_details - sets addresses for allocated nodes
  * IN job_ptr - pointer to a job record
@@ -61,12 +74,28 @@ extern void build_node_details(struct job_record *job_ptr, bool new_alloc);
  * IN job_ptr - pointer to terminating job (already in some COMPLETING state)
  * IN timeout - true if job exhausted time limit, send REQUEST_KILL_TIMELIMIT
  *	RPC instead of REQUEST_TERMINATE_JOB
- * IN suspended - true if job was already suspended (node's job_run_cnt
+ * IN suspended - true if job was already suspended (node's run_job_cnt
  *	already decremented);
  * IN preempted - true if job is being preempted
  */
 extern void deallocate_nodes(struct job_record *job_ptr, bool timeout,
 		bool suspended, bool preempted);
+
+/* Remove nodes from consideration for allocation based upon "mcs" by
+ * other users
+ * job_ptr IN - Job to be scheduled
+ * usable_node_mask IN/OUT - Nodes available for use by this job's mcs
+ */
+extern void filter_by_node_mcs(struct job_record *job_ptr, int mcs_select,
+			       bitstr_t *usable_node_mask);
+
+/* Remove nodes from consideration for allocation based upon "ownership" by
+ * other users
+ * job_ptr IN - Job to be scheduled
+ * usable_node_mask IN/OUT - Nodes available for use by this job's user
+ */
+extern void filter_by_node_owner(struct job_record *job_ptr,
+				 bitstr_t *usable_node_mask);
 
 /*
  * re_kill_job - for a given job, deallocate its nodes for a second time,
@@ -85,6 +114,8 @@ extern void re_kill_job(struct job_record *job_ptr);
  * IN select_node_bitmap - bitmap of nodes to be used for the
  *	job's resource allocation (not returned if NULL), caller
  *	must free
+ * IN unavail_node_str - Nodes which are currently unavailable.
+ * OUT err_msg - if not NULL set to error message for job, caller must xfree
  * RET 0 on success, ESLURM code from slurm_errno.h otherwise
  * globals: list_part - global list of partition info
  *	default_part_loc - pointer to default partition
@@ -98,6 +129,29 @@ extern void re_kill_job(struct job_record *job_ptr);
  *	3) Call allocate_nodes() to perform the actual allocation
  */
 extern int select_nodes(struct job_record *job_ptr, bool test_only,
-		bitstr_t **select_node_bitmap);
+			bitstr_t **select_node_bitmap, char *unavail_node_str,
+			char **err_msg);
+
+/*
+ * get_node_cnts - determine the number of nodes for the requested job.
+ * IN job_ptr - pointer to the job record.
+ * IN qos_flags - Flags of the job_ptr's qos.  This is so we don't have to send
+ *                in a pointer or lock the qos read lock before calling.
+ * IN part_ptr - pointer to the job's partition.
+ * OUT min_nodes - The minimum number of nodes for the job.
+ * OUT req_nodes - The number of node the select plugin should target.
+ * OUT max_nodes - The max number of nodes for the job.
+ * RET SLURM_SUCCESS on success, ESLURM code from slurm_errno.h otherwise.
+ */
+extern int get_node_cnts(struct job_record *job_ptr,
+			 uint32_t qos_flags,
+			 struct part_record *part_ptr,
+			 uint32_t *min_nodes,
+			 uint32_t *req_nodes, uint32_t *max_nodes);
+
+/* launch_prolog - launch job prolog script by slurmd on allocated nodes
+ * IN job_ptr - pointer to the job record
+ */
+extern void launch_prolog(struct job_record *job_ptr);
 
 #endif /* !_HAVE_NODE_SCHEDULER_H */

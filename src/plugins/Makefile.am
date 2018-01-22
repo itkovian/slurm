@@ -2,9 +2,10 @@ SUBDIRS = \
 	accounting_storage	\
 	acct_gather_energy	\
 	acct_gather_profile	\
-	acct_gather_infiniband  \
+	acct_gather_interconnect\
 	acct_gather_filesystem  \
 	auth			\
+	burst_buffer		\
 	checkpoint		\
 	core_spec		\
 	crypto			\
@@ -15,14 +16,17 @@ SUBDIRS = \
 	job_container		\
 	job_submit		\
 	launch			\
+	mcs			\
 	mpi			\
+	node_features		\
+	power			\
 	preempt			\
 	priority		\
 	proctrack		\
+	route			\
 	sched			\
 	select			\
 	slurmctld		\
-	slurmd		\
 	switch			\
 	task			\
 	topology

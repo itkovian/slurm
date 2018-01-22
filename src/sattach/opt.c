@@ -1,6 +1,5 @@
 /*****************************************************************************\
  *  opt.c - options processing for sattach
- *  $Id$
  *****************************************************************************
  *  Copyright (C) 2002-2006 The Regents of the University of California.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -8,7 +7,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -23,59 +22,40 @@
  *
  *  You should have received a copy of the GNU General Public License along
  *  with SLURM; if not, write to the Free Software Foundation, Inc.,
- *  59 Temple Place, Suite 330, Boston, MA  02111-1307  USA.
+ *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#if HAVE_CONFIG_H
-#  include "config.h"
-#endif
+#include "config.h"
 
-#include <string.h>		/* strcpy, strncasecmp */
+#define _GNU_SOURCE
 
-#ifdef HAVE_STRINGS_H
-#  include <strings.h>
-#endif
-
-#ifndef _GNU_SOURCE
-#  define _GNU_SOURCE
-#endif
-
-#if HAVE_GETOPT_H
-#  include <getopt.h>
-#else
-#  include "src/common/getopt.h"
-#endif
-
-#ifdef HAVE_LIMITS_H
-#  include <limits.h>
-#endif
-
+#include <ctype.h>		/* isdigit    */
 #include <fcntl.h>
+#include <getopt.h>
+#include <limits.h>
 #include <stdarg.h>		/* va_start   */
 #include <stdio.h>
 #include <stdlib.h>		/* getenv     */
-#include <ctype.h>		/* isdigit    */
+#include <string.h>		/* strcpy     */
 #include <sys/param.h>		/* MAXPATHLEN */
-#include <sys/stat.h>
-#include <unistd.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/utsname.h>
+#include <unistd.h>
 
 #include "src/common/list.h"
 #include "src/common/log.h"
 #include "src/common/parse_time.h"
+#include "src/common/proc_args.h"
+#include "src/common/read_config.h" /* contains getnodename() */
+#include "src/common/slurm_mpi.h"
 #include "src/common/slurm_protocol_api.h"
+#include "src/common/slurm_rlimits_info.h"
 #include "src/common/uid.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
-#include "src/common/slurm_rlimits_info.h"
-#include "src/common/read_config.h" /* contains getnodename() */
-#include "src/common/proc_args.h"
 
 #include "src/sattach/opt.h"
-
-#include "src/common/mpi.h"
 
 /* generic getopt_long flags, integers and *not* valid characters */
 #define LONG_OPT_LAYOUT_ONLY   0x100
@@ -118,7 +98,7 @@ static void  _usage(void);
 
 /*---[ end forward declarations of static functions ]---------------------*/
 
-int initialize_and_process_args(int argc, char *argv[])
+int initialize_and_process_args(int argc, char **argv)
 {
 	/* initialize option defaults */
 	_opt_default();
@@ -193,7 +173,7 @@ static void _opt_default()
 	uid_t uid = getuid();
 
 	opt.user = uid_to_string(uid);
-	if (strcmp(opt.user, "nobody") == 0)
+	if (xstrcmp(opt.user, "nobody") == 0)
 		fatal("Invalid user id: %u", uid);
 
 	opt.uid = uid;
@@ -332,21 +312,21 @@ void set_options(const int argc, char **argv)
 			exit(0);
 			break;
 		case LONG_OPT_IN_FILTER:
-			if (strcmp(optarg, "-") != 0) {
+			if (xstrcmp(optarg, "-") != 0) {
 				opt.input_filter = (uint32_t)
 					_get_pos_int(optarg, "input-filter");
 			}
 			opt.input_filter_set = true;
 			break;
 		case LONG_OPT_OUT_FILTER:
-			if (strcmp(optarg, "-") != 0) {
+			if (xstrcmp(optarg, "-") != 0) {
 				opt.output_filter = (uint32_t)
 					_get_pos_int(optarg, "output-filter");
 			}
 			opt.output_filter_set = true;
 			break;
 		case LONG_OPT_ERR_FILTER:
-			if (strcmp(optarg, "-") != 0) {
+			if (xstrcmp(optarg, "-") != 0) {
 				opt.error_filter = (uint32_t)
 					_get_pos_int(optarg, "error-filter");
 			}
@@ -381,7 +361,7 @@ static void _parse_jobid_stepid(char *jobid_str)
 
 	verbose("jobid/stepid string = %s\n", jobid_str);
 	job = xstrdup(jobid_str);
-	ptr = index(job, '.');
+	ptr = xstrchr(job, '.');
 	if (ptr == NULL) {
 		error("Did not find a period in the step ID string");
 		_usage();
@@ -460,11 +440,11 @@ static bool _opt_verify(void)
 	 */
 	if ((opt.input_filter_set || opt.output_filter_set ||
 	     opt.error_filter_set) && opt.pty) {
-		error("don't specifiy both --pty and I/O filtering");
+		error("don't specify both --pty and I/O filtering");
 		verified = false;
 	}
 	if (opt.input_filter_set)
-		opt.fds.in.taskid = opt.input_filter;
+		opt.fds.input.taskid = opt.input_filter;
 	if (opt.output_filter_set)
 		opt.fds.out.taskid = opt.output_filter;
 	if (opt.error_filter_set) {

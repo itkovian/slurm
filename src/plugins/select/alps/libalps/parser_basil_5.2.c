@@ -6,7 +6,7 @@
  */
 #include "parser_internal.h"
 
-const struct element_handler basil_5_2_elements[] = {
+struct element_handler basil_5_2_elements[] = {
 	[BT_MESSAGE]	= {
 			.tag	= "Message",
 			.depth	= 0xff,	/* unused, can appear at any depth */

@@ -16,7 +16,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -45,12 +45,8 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#ifdef HAVE_CONFIG_H
-#  include "config.h"
-#endif
-
-#include <pthread.h>
 #include <dirent.h>
+#include <pthread.h>
 
 #include "other_select.h"
 #include "src/common/plugin.h"
@@ -58,6 +54,8 @@
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/xstring.h"
 #include "src/common/node_select.h"
+
+uint16_t other_select_type_param = 0;
 
 /*
  * Must be synchronized with slurm_select_ops_t in node_select.h.
@@ -77,6 +75,7 @@ const char *node_select_syms[] = {
 	"select_p_job_expand",
 	"select_p_job_resized",
 	"select_p_job_signal",
+	"select_p_job_mem_confirm",
 	"select_p_job_fini",
 	"select_p_job_suspend",
 	"select_p_job_resume",
@@ -112,6 +111,7 @@ const char *node_select_syms[] = {
 	"select_p_ba_init",
 	"select_p_ba_fini",
 	"select_p_ba_get_dims",
+	"select_p_ba_cnodelist2bitmap",
 };
 
 static slurm_select_ops_t ops;
@@ -137,7 +137,10 @@ extern int other_select_init(void)
 	if (g_context)
 		goto done;
 
-	if (slurmctld_conf.select_type_param & CR_OTHER_CONS_RES)
+	if (!other_select_type_param)
+		other_select_type_param = slurm_get_select_type_param();
+
+	if (other_select_type_param & CR_OTHER_CONS_RES)
 		type = "select/cons_res";
 	else
 		type = "select/linear";
@@ -349,15 +352,27 @@ extern int other_job_resized(struct job_record *job_ptr,
 
 /*
  * Pass job-step signal to other plugin.
- * IN job_ptr - job to be signalled
+ * IN job_ptr - job to be signaled
  * IN signal  - signal(7) number
  */
 extern int other_job_signal(struct job_record *job_ptr, int signal)
 {
 	if (other_select_init() < 0)
-		return -1;
+		return SLURM_ERROR;
 
 	return (*(ops.job_signal))(job_ptr, signal);
+}
+
+/*
+ * Pass job memory allocation confirmation request to other plugin.
+ * IN job_ptr - job to be signaled
+ */
+extern int other_job_mem_confirm(struct job_record *job_ptr)
+{
+	if (other_select_init() < 0)
+		return SLURM_ERROR;
+
+	return (*(ops.job_mem_confirm))(job_ptr);
 }
 
 /*
@@ -440,14 +455,16 @@ extern int other_step_start(struct step_record *step_ptr)
 /*
  * clear what happened in select_g_step_pick_nodes
  * IN/OUT step_ptr - Flush the resources from the job and step.
+ * IN killing_step - if true then we are just starting to kill the step
+ *                   if false, the step is completely terminated
  */
-extern int other_step_finish(struct step_record *step_ptr)
+extern int other_step_finish(struct step_record *step_ptr, bool killing_step)
 {
 	if (other_select_init() < 0)
 		return SLURM_ERROR;
 
 	return (*(ops.step_finish))
-		(step_ptr);
+		(step_ptr, killing_step);
 }
 
 extern int other_pack_select_info(time_t last_query_time, uint16_t show_flags,
@@ -746,27 +763,16 @@ extern int other_reconfigure (void)
 	return (*(ops.reconfigure))();
 }
 
-/*
- * other_resv_test - Identify the nodes which "best" satisfy a reservation
- *	request. "best" is defined as either single set of consecutive nodes
- *	satisfying the request and leaving the minimum number of unused nodes
- *	OR the fewest number of consecutive node sets
- * IN avail_bitmap - nodes available for the reservation
- * IN node_cnt - count of required nodes
- * IN core_cnt - count of required cores per node
- * IN core_bitmap - cores to be excluded for this reservation
- * IN flags - reservation request flags
- * RET - nodes selected for use by the reservation
- */
-extern bitstr_t * other_resv_test(bitstr_t *avail_bitmap, uint32_t node_cnt,
-				  uint32_t *core_cnt, bitstr_t **core_bitmap,
-				  uint32_t flags)
+extern bitstr_t * other_resv_test(resv_desc_msg_t *resv_desc_ptr,
+				  uint32_t node_cnt,
+				  bitstr_t *avail_bitmap,
+				  bitstr_t **core_bitmap)
 {
 	if (other_select_init() < 0)
 		return NULL;
 
-	return (*(ops.resv_test))(avail_bitmap, node_cnt, core_cnt,
-				  core_bitmap, flags);
+	return (*(ops.resv_test))(resv_desc_ptr, node_cnt,
+				  avail_bitmap, core_bitmap);
 }
 
 extern void other_ba_init(node_info_msg_t *node_info_ptr, bool sanity_check)
@@ -791,4 +797,12 @@ extern int *other_ba_get_dims(void)
 		return NULL;
 
 	return (*(ops.ba_get_dims))();
+}
+
+extern bitstr_t *other_ba_cnodelist2bitmap(char *cnodelist)
+{
+	if (other_select_init() < 0)
+		return NULL;
+
+	return (*(ops.ba_cnodelist2bitmap))(cnodelist);
 }

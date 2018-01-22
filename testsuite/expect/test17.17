@@ -1,8 +1,8 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Test of SLURM functionality
 #          Confirm that node sharing flags are respected  (--nodelist and
-#          --share options).
+#          --oversubscribe options).
 #
 # Output:  "TEST: #.#" followed by "SUCCESS" if test was successful, OR
 #          "WARNING: ..." with an explanation of why the test can't be made, OR
@@ -15,7 +15,7 @@
 # CODE-OCEC-09-009. All rights reserved.
 #
 # This file is part of SLURM, a resource management program.
-# For details, see <http://slurm.schedmd.com/>.
+# For details, see <https://slurm.schedmd.com/>.
 # Please also read the included file: DISCLAIMER.
 #
 # SLURM is free software; you can redistribute it and/or modify it under
@@ -30,7 +30,7 @@
 #
 # You should have received a copy of the GNU General Public License along
 # with SLURM; if not, write to the Free Software Foundation, Inc.,
-# 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA.
+# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 ############################################################################
 source ./globals
 
@@ -92,7 +92,7 @@ make_bash_script $file_in "$srun $bin_sleep 5"
 
 #
 # Submit two jobs to the same node, one with no sharing, the other
-# with sharing permitted. Insure the first job completes before the
+# with sharing permitted. Ensure the first job completes before the
 # second job is started.
 #
 set sbatch_pid [spawn $sbatch -N1 --exclusive --nodelist=$nodelist_name -t1 --output=$file_out --error=$file_err  $file_in]
@@ -118,7 +118,7 @@ if {$job_id1 == 0} {
 set partition "dummy"
 set waited 1
 set timeout [expr $max_job_delay + 5]
-set srun_pid [spawn $srun -N1 --nodelist=$nodelist_name -t1 --share $scontrol -o show job $job_id1]
+set srun_pid [spawn $srun -N1 --nodelist=$nodelist_name -t1 --oversubscribe $scontrol -o show job $job_id1]
 expect {
 	-re "JobState=RUN" {
 		set waited 0
@@ -141,8 +141,8 @@ expect {
 if {$waited == 0} {
 	spawn $scontrol show partition
 	expect {
-		-re "Shared=FORCE" {
-			send_user "\nWARNING: Test incompatible with Shared=FORCE\n"
+		-re "OverSubscribe=FORCE" {
+			send_user "\nWARNING: Test incompatible with OverSubscribe=FORCE\n"
 			set waited 1
 			exp_continue
 		}

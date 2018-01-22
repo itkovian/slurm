@@ -7,7 +7,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -47,7 +47,7 @@
 #define OFFSET_1  1234
 #define OFFSET_2  5678
 
-main (int argc, char **argv)
+int main (int argc, char **argv)
 {
 	int i, j, rc;
 	int nprocs, procid;

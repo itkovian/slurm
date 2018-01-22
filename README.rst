@@ -4,9 +4,9 @@ Slurm Workload Manager
 This is the Slurm Workload Manager. Slurm
 is an open-source cluster resource management and job scheduling system
 that strives to be simple, scalable, portable, fault-tolerant, and
-interconnect agnostic. SLURM currently has been tested only under Linux.
+interconnect agnostic. Slurm currently has been tested only under Linux.
 
-As a cluster resource manager, SLURM provides three key functions. First,
+As a cluster resource manager, Slurm provides three key functions. First,
 it allocates exclusive and/or non-exclusive access to resources
 (compute nodes) to users for some duration of time so they can perform
 work. Second, it provides a framework for starting, executing, and
@@ -14,13 +14,15 @@ monitoring work (normally a parallel job) on the set of allocated
 nodes. Finally, it arbitrates conflicting requests for resources by
 managing a queue of pending work.
 
-Slurm is provided "as is" and with no warranty. This software is
-distributed under the GNU General Public License, please see the files
-COPYING, DISCLAIMER, and LICENSE.OpenSSL for details.
+NOTES FOR GITHUB DEVELOPERS
+---------------------------
 
-This README presents an introduction to compiling, installing, and
-using Slurm.
+The official issue tracker for Slurm is at
+  https://bugs.schedmd.com/
 
+We welcome code contributions and patches, but **we do not accept Pull Requests
+through Github at this time.** Please submit patches as attachments to new
+bugs under "Contributions" category.
 
 SOURCE DISTRIBUTION HIERARCHY
 -----------------------------
@@ -66,12 +68,19 @@ COMPILING AND INSTALLING THE DISTRIBUTION
 -----------------------------------------
 
 Please see the instructions at
-  http://slurm.schedmd.com/quickstart_admin.html
+  https://slurm.schedmd.com/quickstart_admin.html
 Extensive documentation is available from our home page at
-  http://slurm.schedmd.com/slurm.html
+  https://slurm.schedmd.com/slurm.html
 
 PROBLEMS
 --------
 
 If you experience problems compiling, installing, or running Slurm, see
-   http://slurm.schedmd.com/help.html
+   https://slurm.schedmd.com/help.html
+
+LEGAL
+-----
+
+Slurm is provided "as is" and with no warranty. This software is
+distributed under the GNU General Public License, please see the files
+COPYING, DISCLAIMER, and LICENSE.OpenSSL for details.

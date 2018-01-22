@@ -3,15 +3,6 @@
 /* Define if building universal (internal helper macro) */
 #undef AC_APPLE_UNIVERSAL_BUILD
 
-/* Define the BG_BRIDGE_SO value */
-#undef BG_BRIDGE_SO
-
-/* Define the BG_DB2_SO value */
-#undef BG_DB2_SO
-
-/* Define the BG_SERIAL value */
-#undef BG_SERIAL
-
 /* Define BLCR installation home */
 #undef BLCR_HOME
 
@@ -23,9 +14,6 @@
 
 /* Define to 1 if using glib-2.32.0 or higher */
 #undef GLIB_NEW_THREADS
-
-/* Define to 1 if licensed under terms of the GNU General Public License. */
-#undef GPL_LICENSED
 
 /* Define to 1 if using gtk+-2.14.0 or higher */
 #undef GTK2_USE_GET_FOCUS
@@ -42,12 +30,6 @@
 /* Define to 1 if 3-dimensional architecture */
 #undef HAVE_3D
 
-/* Define to 1 if 4-dimensional architecture */
-#undef HAVE_4D
-
-/* Define to 1 for AIX operating system */
-#undef HAVE_AIX
-
 /* Define to 1 for Cray XT/XE systems using ALPS */
 #undef HAVE_ALPS_CRAY
 
@@ -60,12 +42,6 @@
 /* Define to 1 if emulating or running on Blue Gene system */
 #undef HAVE_BG
 
-/* Define to 1 if emulating or running on Blue Gene/L system */
-#undef HAVE_BGL
-
-/* Define to 1 if emulating or running on Blue Gene/P system */
-#undef HAVE_BGP
-
 /* Define to 1 if emulating or running on Blue Gene/Q system */
 #undef HAVE_BGQ
 
@@ -75,17 +51,20 @@
 /* Define to 1 if using code where blocks have actions */
 #undef HAVE_BG_GET_ACTION
 
-/* Define to 1 if emulating or running on Blue Gene/L or P system */
-#undef HAVE_BG_L_P
-
 /* Define to 1 if using code with new iocheck */
 #undef HAVE_BG_NEW_IO_CHECK
 
 /* Define to 1 if you have the `cfmakeraw' function. */
 #undef HAVE_CFMAKERAW
 
+/* Define to 1 for systems with a Cray network */
+#undef HAVE_CRAY_NETWORK
+
 /* Define to 1 if you have the <curses.h> header file. */
 #undef HAVE_CURSES_H
+
+/* Define to 1 if DataWarp library found */
+#undef HAVE_DATAWARP
 
 /* Define to 1 if you have the declaration of `hstrerror', and to 0 if you
    don't. */
@@ -109,11 +88,14 @@
 /* Define to 1 if you have the <dlfcn.h> header file. */
 #undef HAVE_DLFCN_H
 
+/* Define to 1 if you have the `eaccess' function. */
+#undef HAVE_EACCESS
+
 /* Define to 1 if you have the <errno.h> header file. */
 #undef HAVE_ERRNO_H
 
-/* Define to 1 if function EVP_MD_CTX_cleanup exists. */
-#undef HAVE_EVP_MD_CTX_CLEANUP
+/* Define to 1 if you have the `faccessat' function. */
+#undef HAVE_FACCESSAT
 
 /* Define to 1 if you have the `fdatasync' function. */
 #undef HAVE_FDATASYNC
@@ -127,6 +109,9 @@
 /* Define to 1 if running slurmd on front-end only */
 #undef HAVE_FRONT_END
 
+/* Define to 1 if you have the `get_current_dir_name' function. */
+#undef HAVE_GET_CURRENT_DIR_NAME
+
 /* Defined if you have HDF5 support */
 #undef HAVE_HDF5
 
@@ -135,9 +120,6 @@
 
 /* Define to 1 if hwloc library found */
 #undef HAVE_HWLOC
-
-/* Define to 1 if hwloc library supports PCI devices */
-#undef HAVE_HWLOC_PCI
 
 /* Define to 1 if you have the `inet_aton' function. */
 #undef HAVE_INET_ATON
@@ -151,20 +133,38 @@
 /* Define to 1 if you have the <inttypes.h> header file. */
 #undef HAVE_INTTYPES_H
 
+/* Define if you are compiling with json. */
+#undef HAVE_JSON
+
+/* Define if headers in include/json-c. */
+#undef HAVE_JSON_C_INC
+
+/* Define if headers in include/json. */
+#undef HAVE_JSON_INC
+
 /* Define to 1 if you have the <kstat.h> header file. */
 #undef HAVE_KSTAT_H
 
-/* Define to 1 if you have the `expat' library (-lexpat). */
-#undef HAVE_LIBEXPAT
+/* Define to 1 if you have a functional curl library. */
+#undef HAVE_LIBCURL
 
-/* Define to 1 if you have the `job' library (-ljob). */
-#undef HAVE_LIBJOB
+/* Define to 1 if you have the `ucp' library (-lucp). */
+#undef HAVE_LIBUCP
+
+/* Define to 1 if you have `z' library (-lz) */
+#undef HAVE_LIBZ
 
 /* Define to 1 if you have the <limits.h> header file. */
 #undef HAVE_LIMITS_H
 
 /* Define to 1 if you have the <linux/sched.h> header file. */
 #undef HAVE_LINUX_SCHED_H
+
+/* Define to 1 if we have the Lua library */
+#undef HAVE_LUA
+
+/* Define to 1 if you have 'lz4' library (-llz4) */
+#undef HAVE_LZ4
 
 /* Define to 1 if your system has a GNU libc compatible `malloc' function, and
    to 0 otherwise. */
@@ -194,6 +194,12 @@
 /* Define to 1 if you have the <netdb.h> header file. */
 #undef HAVE_NETDB_H
 
+/* Define to 1 if netloc library found */
+#undef HAVE_NETLOC
+
+/* Define to 1 if netloc includes use underscore not subdirectory */
+#undef HAVE_NETLOC_NOSUB
+
 /* define if you have nrt.h */
 #undef HAVE_NRT_H
 
@@ -218,14 +224,8 @@
 /* Define to 1 if you have the <paths.h> header file. */
 #undef HAVE_PATHS_H
 
-/* define if you have permapi_h */
-#undef HAVE_PERMAPI_H
-
-/* Define if you have Posix semaphores. */
-#undef HAVE_POSIX_SEMS
-
-/* Define to 1 if you have the <proctrack.h> header file. */
-#undef HAVE_PROCTRACK_H
+/* Define to 1 if pmix library found */
+#undef HAVE_PMIX
 
 /* Define if libc sets program_invocation_name */
 #undef HAVE_PROGRAM_INVOCATION_NAME
@@ -266,6 +266,15 @@
 /* Define to 1 if you have the <socket.h> header file. */
 #undef HAVE_SOCKET_H
 
+/* Define to 1 if libssh2 found */
+#undef HAVE_SSH2
+
+/* Define to 1 if you have the `statfs' function. */
+#undef HAVE_STATFS
+
+/* Define to 1 if you have the `statvfs' function. */
+#undef HAVE_STATVFS
+
 /* Define to 1 if you have the <stdbool.h> header file. */
 #undef HAVE_STDBOOL_H
 
@@ -296,14 +305,14 @@
 /* Define to 1 if you have the `strsignal' function. */
 #undef HAVE_STRSIGNAL
 
-/* define if Sun Constellation system */
-#undef HAVE_SUN_CONST
-
 /* Define to 1 if you have the `sysctlbyname' function. */
 #undef HAVE_SYSCTLBYNAME
 
 /* Define to 1 if you have the <sysint.h> header file. */
 #undef HAVE_SYSINT_H
+
+/* Define systemd presence */
+#undef HAVE_SYSTEMD
 
 /* Define to 1 if you have the <sys/dr.h> header file. */
 #undef HAVE_SYS_DR_H
@@ -329,6 +338,9 @@
 /* Define to 1 if you have the <sys/statfs.h> header file. */
 #undef HAVE_SYS_STATFS_H
 
+/* Define to 1 if you have the <sys/statvfs.h> header file. */
+#undef HAVE_SYS_STATVFS_H
+
 /* Define to 1 if you have the <sys/stat.h> header file. */
 #undef HAVE_SYS_STAT_H
 
@@ -340,9 +352,6 @@
 
 /* Define to 1 if you have the <sys/systemcfg.h> header file. */
 #undef HAVE_SYS_SYSTEMCFG_H
-
-/* Define to 1 if you have the <sys/termios.h> header file. */
-#undef HAVE_SYS_TERMIOS_H
 
 /* Define to 1 if you have the <sys/types.h> header file. */
 #undef HAVE_SYS_TYPES_H
@@ -356,20 +365,17 @@
 /* Define to 1 if you have the <termcap.h> header file. */
 #undef HAVE_TERMCAP_H
 
+/* Define to 1 if ucx library found */
+#undef HAVE_UCX
+
 /* Define to 1 if you have the <unistd.h> header file. */
 #undef HAVE_UNISTD_H
-
-/* Define to 1 if you have the `unsetenv' function. */
-#undef HAVE_UNSETENV
 
 /* Define to 1 if you have the <utmp.h> header file. */
 #undef HAVE_UTMP_H
 
 /* Define to 1 if you have the <values.h> header file. */
 #undef HAVE_VALUES_H
-
-/* Define to 1 if using XCPU for job launch */
-#undef HAVE_XCPU
 
 /* Define if you have __progname. */
 #undef HAVE__PROGNAME
@@ -378,24 +384,101 @@
    member named physmem. */
 #undef HAVE__SYSTEM_CONFIGURATION
 
+/* Define to 1 if the system has the `__builtin_clzll' built-in function */
+#undef HAVE___BUILTIN_CLZLL
+
+/* Define to 1 if the system has the `__builtin_ctzll' built-in function */
+#undef HAVE___BUILTIN_CTZLL
+
+/* Define to 1 if the system has the `__builtin_popcountll' built-in function
+   */
+#undef HAVE___BUILTIN_POPCOUNTLL
+
+/* Defined if libcurl supports AsynchDNS */
+#undef LIBCURL_FEATURE_ASYNCHDNS
+
+/* Defined if libcurl supports IDN */
+#undef LIBCURL_FEATURE_IDN
+
+/* Defined if libcurl supports IPv6 */
+#undef LIBCURL_FEATURE_IPV6
+
+/* Defined if libcurl supports KRB4 */
+#undef LIBCURL_FEATURE_KRB4
+
+/* Defined if libcurl supports libz */
+#undef LIBCURL_FEATURE_LIBZ
+
+/* Defined if libcurl supports NTLM */
+#undef LIBCURL_FEATURE_NTLM
+
+/* Defined if libcurl supports SSL */
+#undef LIBCURL_FEATURE_SSL
+
+/* Defined if libcurl supports SSPI */
+#undef LIBCURL_FEATURE_SSPI
+
+/* Defined if libcurl supports DICT */
+#undef LIBCURL_PROTOCOL_DICT
+
+/* Defined if libcurl supports FILE */
+#undef LIBCURL_PROTOCOL_FILE
+
+/* Defined if libcurl supports FTP */
+#undef LIBCURL_PROTOCOL_FTP
+
+/* Defined if libcurl supports FTPS */
+#undef LIBCURL_PROTOCOL_FTPS
+
+/* Defined if libcurl supports HTTP */
+#undef LIBCURL_PROTOCOL_HTTP
+
+/* Defined if libcurl supports HTTPS */
+#undef LIBCURL_PROTOCOL_HTTPS
+
+/* Defined if libcurl supports IMAP */
+#undef LIBCURL_PROTOCOL_IMAP
+
+/* Defined if libcurl supports LDAP */
+#undef LIBCURL_PROTOCOL_LDAP
+
+/* Defined if libcurl supports POP3 */
+#undef LIBCURL_PROTOCOL_POP3
+
+/* Defined if libcurl supports RTSP */
+#undef LIBCURL_PROTOCOL_RTSP
+
+/* Defined if libcurl supports SMTP */
+#undef LIBCURL_PROTOCOL_SMTP
+
+/* Defined if libcurl supports TELNET */
+#undef LIBCURL_PROTOCOL_TELNET
+
+/* Defined if libcurl supports TFTP */
+#undef LIBCURL_PROTOCOL_TFTP
+
 /* Define the libnrt.so location */
 #undef LIBNRT_SO
 
 /* Define to 1 for --get-user-env to load user environment without .login */
 #undef LOAD_ENV_NO_LOGIN
 
-/* Define to the sub-directory in which libtool stores uninstalled libraries.
-   */
+/* Define to the sub-directory where libtool stores uninstalled libraries. */
 #undef LT_OBJDIR
+
+/* Define to 1 if `major', `minor', and `makedev' are declared in <mkdev.h>.
+   */
+#undef MAJOR_IN_MKDEV
+
+/* Define to 1 if `major', `minor', and `makedev' are declared in
+   <sysmacros.h>. */
+#undef MAJOR_IN_SYSMACROS
 
 /* Define to 1 for memory leak debugging. */
 #undef MEMORY_LEAK_DEBUG
 
 /* Enable multiple slurmd on one node */
 #undef MULTIPLE_SLURMD
-
-/* Define to 1 if with non thread-safe code */
-#undef MYSQL_NOT_THREAD_SAFE
 
 /* Define to 1 if you are building a production release. */
 #undef NDEBUG
@@ -446,14 +529,14 @@
 /* Define to 1 if sched_getaffinity takes two arguments. */
 #undef SCHED_GETAFFINITY_TWO_ARGS
 
-/* Define to 1 if setpgrp takes two arguments. */
-#undef SETPGRP_TWO_ARGS
-
 /* Define if you need setproctitle padding */
 #undef SETPROCTITLE_PS_PADDING
 
 /* Define to the setproctitle() emulation type */
 #undef SETPROCTITLE_STRATEGY
+
+/* Define path to sleep command */
+#undef SLEEP_CMD
 
 /* Define the default port number for slurmctld */
 #undef SLURMCTLD_PORT
@@ -497,9 +580,6 @@
 /* Define Slurm installation prefix */
 #undef SLURM_PREFIX
 
-/* Define to 1 if running slurm simulator */
-#undef SLURM_SIMULATOR
-
 /* SLURM Version Number */
 #undef SLURM_VERSION_NUMBER
 
@@ -511,6 +591,9 @@
 
 /* Define to 1 if strerror_r returns char *. */
 #undef STRERROR_R_CHAR_P
+
+/* Define path to su command */
+#undef SUCMD
 
 /* 3-dimensional architecture */
 #undef SYSTEM_DIMENSIONS
@@ -527,8 +610,8 @@
 /* Define the project's version. */
 #undef VERSION
 
-/* Define if you have pthreads. */
-#undef WITH_PTHREADS
+/* Using internal Slurm X11 support */
+#undef WITH_SLURM_X11
 
 /* Define WORDS_BIGENDIAN to 1 if your processor stores words with the most
    significant byte first (like Motorola and SPARC, unlike Intel). */
@@ -542,19 +625,8 @@
 # endif
 #endif
 
-/* Define location of XCPU directory */
-#undef XCPU_DIR
-
-/* Enable large inode numbers on Mac OS X 10.5.  */
-#ifndef _DARWIN_USE_64_BIT_INODE
-# define _DARWIN_USE_64_BIT_INODE 1
-#endif
-
-/* Number of bits in a file offset, on hosts where this is settable. */
-#undef _FILE_OFFSET_BITS
-
-/* Define for large files, on AIX-style hosts. */
-#undef _LARGE_FILES
+/* Define curl_free() as free() if our version of curl lacks curl_free. */
+#undef curl_free
 
 /* Define to rpl_malloc if the replacement function should be used. */
 #undef malloc

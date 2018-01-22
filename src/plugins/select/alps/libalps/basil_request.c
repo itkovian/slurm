@@ -2,7 +2,7 @@
  * Fork apbasil process as co-process, parse output.
  *
  * Copyright (c) 2009-2011 Centro Svizzero di Calcolo Scientifico (CSCS)
- * Portions Copyright (C) 2011 SchedMD <http://www.schedmd.com>.
+ * Portions Copyright (C) 2011 SchedMD <https://www.schedmd.com>.
  * Licensed under the GPLv2.
  */
 #include "../basil_interface.h"
@@ -77,7 +77,7 @@ static void _init_log_config(void)
 	else
 		log_sel = 0;
 	xml_log_loc = getenv("XML_LOG_LOC");
-	if (xml_log_loc && strcmp(xml_log_loc, "SLURM") &&
+	if (xml_log_loc && xstrcmp(xml_log_loc, "SLURM") &&
 	    (strlen(xml_log_loc) < sizeof(xml_log_file_name))) {
 		strcpy(xml_log_file_name, xml_log_loc);
 	} else {
@@ -124,7 +124,7 @@ static void _rsvn_write_reserve_xml(FILE *fp, struct basil_reservation *r,
 			_write_xml(fp, "   <MemoryParamArray>\n");
 			for (mem = param->memory; mem; mem = mem->next) {
 				_write_xml(fp, "    <MemoryParam type=\"%s\""
-					   " size_mb=\"%u\"/>\n",
+					   " size_mb=\"%"PRIu64"\"/>\n",
 					   nam_memtype[mem->type],
 					   mem->size_mb ? : 1);
 			}
@@ -173,7 +173,7 @@ static void _rsvn_write_reserve_xml(FILE *fp, struct basil_reservation *r,
 					   nam_acceltype[accel->type]);
 
 				if (accel->memory_mb)
-					_write_xml(fp, " memory_mb=\"%u\"",
+					_write_xml(fp, " memory_mb=\"%"PRIu64"\"",
 						   accel->memory_mb);
 				_write_xml(fp, "/>\n");
 			}
@@ -191,22 +191,23 @@ static void *_timer_func(void *raw_data)
 	pid_t child = *(pid_t *)raw_data;
 	int time_out;
 	struct timespec ts;
+	struct timeval now;
 
 	time_out = cray_conf->apbasil_timeout;
 	debug2("This is a timer thread for process: %d (slurmctld)--"
 	       "timeout: %d, apbasil pid: %d\n", getpid(), time_out, child);
 
-	pthread_mutex_lock(&timer_lock);
-	ts.tv_sec  = time(NULL);
-	ts.tv_nsec = 0;
-	ts.tv_sec += time_out;
+	slurm_mutex_lock(&timer_lock);
+	gettimeofday(&now, NULL);
+	ts.tv_sec = now.tv_sec + time_out;
+	ts.tv_nsec = now.tv_usec * 1000;
 	if (pthread_cond_timedwait(&timer_cond, &timer_lock, &ts) == ETIMEDOUT){
 		info("Apbasil taking too long--terminating apbasil pid: %d",
 		     child);
 		kill(child, SIGKILL);
 		debug2("Exiting timer thread, apbasil pid had been: %d", child);
 	}
-	pthread_mutex_unlock(&timer_lock);
+	slurm_mutex_unlock(&timer_lock);
 	pthread_exit(NULL);
 }
 
@@ -236,7 +237,7 @@ int basil_request(struct basil_parse_data *bp)
 	}
 
 	if ((cray_conf->apbasil_timeout == 0) ||
-	    (cray_conf->apbasil_timeout == (uint16_t) NO_VAL)) {
+	    (cray_conf->apbasil_timeout == NO_VAL16)) {
 		debug2("No ApbasilTimeout configured (%u)",
 		       cray_conf->apbasil_timeout);
 		time_it_out = 0;
@@ -273,10 +274,10 @@ int basil_request(struct basil_parse_data *bp)
 
 	switch (bp->method) {
 	case BM_engine:
-		_write_xml(apbasil, "type=\"ENGINE\"/>");
+		_write_xml(apbasil, "type=\"ENGINE\"/>\n");
 		break;
 	case BM_inventory:
-		_write_xml(apbasil, "type=\"INVENTORY\"/>");
+		_write_xml(apbasil, "type=\"INVENTORY\"/>\n");
 		break;
 	case BM_reserve:
 		_write_xml(apbasil, ">\n");
@@ -320,9 +321,9 @@ int basil_request(struct basil_parse_data *bp)
 	if (time_it_out) {
 		slurm_attr_destroy(&attr);
 		debug2("Killing the timer thread.");
-		pthread_mutex_lock(&timer_lock);
+		slurm_mutex_lock(&timer_lock);
 		pthread_cond_broadcast(&timer_cond);
-		pthread_mutex_unlock(&timer_lock);
+		slurm_mutex_unlock(&timer_lock);
 	}
 
 	END_TIMER;

@@ -8,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -40,18 +40,7 @@
 #ifndef _SLURM_PROTOCOL_PACK_H
 #define _SLURM_PROTOCOL_PACK_H
 
-#if HAVE_CONFIG_H
-#  include "config.h"
-#  if HAVE_INTTYPES_H
-#    include <inttypes.h>
-#  else
-#    if HAVE_STDINT_H
-#      include <stdint.h>
-#    endif
-#  endif  /* HAVE_INTTYPES_H */
-#else   /* !HAVE_CONFIG_H */
-#  include <inttypes.h>
-#endif  /*  HAVE_CONFIG_H */
+#include <inttypes.h>
 
 #include "src/common/pack.h"
 #include "src/common/slurm_protocol_defs.h"
@@ -166,4 +155,15 @@ extern int slurm_unpack_block_info_members(block_info_t *block_info, Buf buffer,
 extern int slurm_unpack_block_info_msg(
 	block_info_msg_t **block_info_msg_pptr, Buf buffer,
 	uint16_t protocol_version);
+
+/* Translate memory limits from old format to new */
+/* Remove when version 16.05 support is no longer required. */
+extern uint32_t xlate_mem_new2old(uint64_t new_mem);
+extern uint64_t xlate_mem_old2new(uint32_t old_mem);
+extern uint16_t xlate_group_info_new2old(uint16_t group_time,
+					 uint16_t group_force);
+extern void xlate_group_info_old2new(uint16_t group_info,
+				     uint16_t *group_time_ptr,
+				     uint16_t *group_force_ptr);
+
 #endif

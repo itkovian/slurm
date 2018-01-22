@@ -1,4 +1,4 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Test for accounting records of specific jobs on specific nodes
 # This is a sub-test of test12.3
@@ -7,7 +7,7 @@
 # Written by Nathan Yee <nyee32@schedmd.com>
 #
 # This file is part of SLURM, a resource management program.
-# For details, see <http://slurm.schedmd.com/>.
+# For details, see <https://slurm.schedmd.com/>.
 # Please also read the included file: DISCLAIMER.
 #
 # SLURM is free software; you can redistribute it and/or modify it under
@@ -35,7 +35,7 @@ proc inc12_3_2 {job_id_1 job_id_2 job_id_3 job_name_1 job_name_2 test_acct job_1
 	send_user "\nSearch for jobs $job_id_1 and $job_id_3 on node: $job_1_node_0 (Within: inc12.3.2)\n"
 	set job_1_match 0
 	set job_2_match 0
-	spawn $sacct -A '$test_acct' -N$job_1_node_0 -p -o jobid,jobname
+	spawn $sacct -A '$test_acct' -N$job_1_node_0 -X -p -o jobid,jobname
 	expect {
 		-re "$job_id_1" {
 			incr job_1_match
@@ -66,7 +66,7 @@ proc inc12_3_2 {job_id_1 job_id_2 job_id_3 job_name_1 job_name_2 test_acct job_1
 	send_user "\nSearch for jobs $job_id_1 and $job_id_2 on node: $job_1_node_2 (Within: inc12.3.2))\n"
 	set job_1_match 0
 	set job_2_match 0
-	spawn $sacct -A '$test_acct' -N$job_1_node_2 -p -o jobid,jobname
+	spawn $sacct -A '$test_acct' -N$job_1_node_2 -X -p -o jobid,jobname
 	expect {
 		-re "$job_id_1" {
 			incr job_1_match
@@ -93,7 +93,7 @@ proc inc12_3_2 {job_id_1 job_id_2 job_id_3 job_name_1 job_name_2 test_acct job_1
 	send_user "\nSearch for jobs $job_id_1 and $job_id_2 on node: $job_2_node_0 (Within: inc12.3.2)\n"
 	set job_1_match 0
 	set job_2_match 0
-	spawn $sacct -A '$test_acct' -N$job_2_node_0 -p -o jobid,jobname
+	spawn $sacct -A '$test_acct' -N$job_2_node_0 -X -p -o jobid,jobname
 	expect {
 		-re "$job_id_1" {
 			incr job_1_match
@@ -112,7 +112,7 @@ proc inc12_3_2 {job_id_1 job_id_2 job_id_3 job_name_1 job_name_2 test_acct job_1
 		}
 	}
 	if {$job_2_match != 1} {
-		send_user "\nFAILURE:sacct was unable to find the job $job_id_2 on node $job_2_node_0 ($job_2_match != 1) (Within: inc12.3.2)\n"
+		send_user "\nFAILURE:sacct was unable to find the job $job_id_2 on node $job_2_node_0 ($job_2_match != 1, Within: inc12.3.2)\n"
 		set exit_code 1
 	}
 
@@ -120,7 +120,7 @@ proc inc12_3_2 {job_id_1 job_id_2 job_id_3 job_name_1 job_name_2 test_acct job_1
 	send_user "\nSearch for jobs $job_id_2 and $job_id_3 on node: $job_2_node_1 (Within: inc12.3.2)\n"
 	set job_1_match 0
 	set job_2_match 0
-	spawn $sacct -A '$test_acct' -N$job_2_node_1 -p -o jobid,jobname
+	spawn $sacct -A '$test_acct' -N$job_2_node_1 -X -p -o jobid,jobname
 	expect {
 		-re "$job_id_1" {
 			incr job_1_match
@@ -139,7 +139,7 @@ proc inc12_3_2 {job_id_1 job_id_2 job_id_3 job_name_1 job_name_2 test_acct job_1
 		}
 	}
 	if {$job_2_match != 1} {
-		send_user "\nFAILURE: sacct was unable to find the job $job_id_2 on node $job_2_node_1 ($job_2_match != 1) (Within: inc12.3.2)\n"
+		send_user "\nFAILURE: sacct was unable to find the job $job_id_2 on node $job_2_node_1 ($job_2_match != 1, Within: inc12.3.2)\n"
 		set exit_code 1
 	}
 }

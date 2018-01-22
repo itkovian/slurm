@@ -35,10 +35,7 @@
  *  Refer to "util-net.h" for documentation on public functions.
 \*****************************************************************************/
 
-
-#ifdef HAVE_CONFIG_H
-#  include "config.h"
-#endif /* HAVE_CONFIG_H */
+#include "config.h"
 
 #ifndef   _GNU_SOURCE
 #  define _GNU_SOURCE
@@ -47,6 +44,7 @@
 #include <arpa/inet.h>
 #include <assert.h>
 #include <errno.h>
+#include <limits.h>	/* for PATH_MAX */
 #include <netdb.h>
 #include <netinet/in.h>
 #include <pthread.h>
@@ -58,6 +56,7 @@
 #include "src/common/strlcpy.h"
 #include "src/common/util-net.h"
 #include "src/common/macros.h"
+#include "src/common/xstring.h"
 
 
 #ifndef INET_ADDRSTRLEN
@@ -88,6 +87,12 @@ struct hostent * get_host_by_name(const char *name,
 	assert(buf != NULL);
 
 	slurm_mutex_lock(&hostentLock);
+	/* It appears gethostbyname leaks memory once.  Under the covers it
+	 * calls gethostbyname_r (at least on Ubuntu 16.10).  This leak doesn't
+	 * appear to get worst, meaning it only happens once, so we should be
+	 * ok.  Though gethostbyname is obsolete now we can't really change
+	 * since aliases don't work we can't change.
+	 */
 	if ((hptr = gethostbyname(name)))
 		n = copy_hostent(hptr, buf, buflen);
 	if (h_err)
@@ -140,75 +145,6 @@ const char * host_strerror(int h_err)
 	else if ((h_err == NO_ADDRESS) || (h_err == NO_DATA))
 		return("No address associated with name");
 	return("Unknown error");
-}
-
-
-int host_name_to_addr4(const char *name, struct in_addr *addr)
-{
-	struct hostent *hptr;
-	unsigned char buf[HOSTENT_SIZE];
-
-	assert(name != NULL);
-	assert(addr != NULL);
-
-	if (!(hptr = get_host_by_name(name, buf, sizeof(buf), NULL)))
-		return(-1);
-	if (hptr->h_length > 4) {
-		errno = ERANGE;
-		return(-1);
-	}
-	memcpy(addr, hptr->h_addr_list[0], hptr->h_length);
-	return(0);
-}
-
-
-char * host_addr4_to_name(const struct in_addr *addr, char *dst, int dstlen)
-{
-	struct hostent *hptr;
-	unsigned char buf[HOSTENT_SIZE];
-
-	assert(addr != NULL);
-	assert(dst != NULL);
-
-	if (!(hptr = get_host_by_addr((char *) addr, 4, AF_INET,
-				      buf, sizeof(buf), NULL)))
-		return(NULL);
-	if (strlen(hptr->h_name) >= dstlen) {
-		errno = ERANGE;
-		return(NULL);
-	}
-	strcpy(dst, hptr->h_name);
-	return(dst);
-}
-
-
-char * host_name_to_cname(const char *src, char *dst, int dstlen)
-{
-	struct hostent *hptr;
-	unsigned char buf[HOSTENT_SIZE];
-	struct in_addr addr;
-
-	assert(src != NULL);
-	assert(dst != NULL);
-
-	if (!(hptr = get_host_by_name(src, buf, sizeof(buf), NULL)))
-		return(NULL);
-	/*
-	 *  If 'src' is an ip-addr string, it will simply be copied to h_name.
-	 *    So, we need to perform a reverse query based on the in_addr
-	 *    in order to obtain the canonical name of the host.
-	 *  Besides, this additional query helps protect against DNS spoofing.
-	 */
-	memcpy(&addr, hptr->h_addr_list[0], hptr->h_length);
-	if (!(hptr = get_host_by_addr((char *) &addr, 4, AF_INET,
-				      buf, sizeof(buf), NULL)))
-		return(NULL);
-	if (strlen(hptr->h_name) >= dstlen) {
-		errno = ERANGE;
-		return(NULL);
-	}
-	strcpy(dst, hptr->h_name);
-	return(dst);
 }
 
 
@@ -284,6 +220,7 @@ static int copy_hostent(const struct hostent *src, char *buf, int len)
 		return(-1);
 
 	assert(validate_hostent_copy(src, dst) >= 0);
+	assert(buf != NULL);	/* Used only to eliminate CLANG error */
 	return(0);
 }
 
@@ -304,14 +241,14 @@ static int validate_hostent_copy(
 		return(-1);
 	if (src->h_name == dst->h_name)
 		return(-1);
-	if (strcmp(src->h_name, dst->h_name))
+	if (xstrcmp(src->h_name, dst->h_name))
 		return(-1);
 	if (src->h_addrtype != dst->h_addrtype)
 		return(-1);
 	if (src->h_length != dst->h_length)
 		return(-1);
 	for (p=src->h_aliases, q=dst->h_aliases; *p; p++, q++)
-		if ((!q) || (p == q) || (strcmp(*p, *q)))
+		if ((!q) || (p == q) || (xstrcmp(*p, *q)))
 			return(-1);
 	for (p=src->h_addr_list, q=dst->h_addr_list; *p; p++, q++)
 		if ((!q) || (p == q) || (memcmp(*p, *q, src->h_length)))
@@ -319,56 +256,6 @@ static int validate_hostent_copy(
 	return(0);
 }
 #endif /* !NDEBUG */
-
-
-#ifndef HAVE_INET_PTON
-int inet_pton(int family, const char *str, void *addr)
-{
-/*  cf. Stevens UNPv1 p72.
- */
-	struct in_addr tmpaddr;
-
-	if (family != AF_INET) {
-		errno = EAFNOSUPPORT;
-		return(-1);
-	}
-#ifdef HAVE_INET_ATON
-	if (!inet_aton(str, &tmpaddr))
-		return(0);
-#else /* !HAVE_INET_ATON */
-	if ((tmpaddr.s_addr = inet_addr(str)) == -1)
-		return(0);
-#endif /* !HAVE_INET_ATON */
-
-	memcpy(addr, &tmpaddr, sizeof(struct in_addr));
-	return(1);
-}
-#endif /* !HAVE_INET_PTON */
-
-
-#ifndef HAVE_INET_NTOP
-const char * inet_ntop(int family, const void *addr, char *str, size_t len)
-{
-/*  cf. Stevens UNPv1 p72.
- */
-	const unsigned char *p = (const unsigned char *) addr;
-	char tmpstr[INET_ADDRSTRLEN];
-
-	assert(str != NULL);
-
-	if (family != AF_INET) {
-		errno = EAFNOSUPPORT;
-		return(NULL);
-	}
-	snprintf(tmpstr, sizeof(tmpstr), "%d.%d.%d.%d", p[0], p[1], p[2], p[3]);
-	if (strlen(tmpstr) >= len) {
-		errno = ENOSPC;
-		return(NULL);
-	}
-	strcpy(str, tmpstr);
-	return(str);
-}
-#endif /* !HAVE_INET_NTOP */
 
 /* is_full_path()
  *
@@ -394,7 +281,12 @@ extern char *make_full_path(char *rpath)
 	char *cwd2;
 	int len;
 
-	cwd =  get_current_dir_name();
+#ifdef HAVE_GET_CURRENT_DIR_NAME
+	cwd = get_current_dir_name();
+#else
+	cwd = malloc(PATH_MAX);
+	cwd = getcwd(cwd, PATH_MAX);
+#endif
 	/* 2 = / + 0
 	 */
 	len = strlen(cwd) + strlen(rpath) + 2;
@@ -405,3 +297,54 @@ extern char *make_full_path(char *rpath)
 	return cwd2;
 }
 
+struct addrinfo *
+get_addr_info(const char *hostname)
+{
+	struct addrinfo* result = NULL;
+	struct addrinfo hints;
+	int err;
+
+	if (hostname == NULL)
+		return NULL;
+
+	memset(&hints, 0, sizeof(struct addrinfo));
+	hints.ai_family = AF_UNSPEC;
+	hints.ai_flags = AI_CANONNAME;
+
+	err = getaddrinfo(hostname, NULL, &hints, &result);
+	if (err == EAI_SYSTEM) {
+		error("%s: getaddrinfo() failed: %s: %m", __func__,
+		      gai_strerror(err));
+		return NULL;
+	} else if (err != 0) {
+		error("%s: getaddrinfo() failed: %s", __func__,
+		      gai_strerror(err));
+		return NULL;
+	}
+
+	return result;
+}
+
+int
+get_name_info(struct sockaddr *sa, socklen_t len, char *host)
+{
+	int err;
+
+        err = getnameinfo(sa, len, host, NI_MAXHOST, NULL, 0, 0);
+	if (err != 0) {
+		error("%s: getaddrinfo() failed: %s", __func__,
+		      gai_strerror(err));
+		return -1;
+	}
+
+	return 0;
+}
+
+void
+free_addr_info(struct addrinfo *info)
+{
+	if (info == NULL)
+		return;
+
+	freeaddrinfo(info);
+}

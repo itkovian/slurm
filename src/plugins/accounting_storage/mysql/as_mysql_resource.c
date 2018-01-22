@@ -1,14 +1,13 @@
 /*****************************************************************************\
  *  as_mysql_resource.c - functions dealing with resources.
  *****************************************************************************
- *
  *  Copyright (C) 2013 Bull S. A. S.
  *		Bull, Rue Jean Jaures, B.P.68, 78340, Les Clayes-sous-Bois.
  *
  *  Written by Bill Brophy <bill.brophy@bull.com>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://www.schedmd.com/slurmdocs/>.
+ *  For details, see <https://slurm.schedmd.com>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -303,8 +302,8 @@ static uint32_t _get_res_used(mysql_conn_t *mysql_conn, uint32_t res_id,
 	if (extra)
 		xstrfmtcat(query, " && !(%s)", extra);
 
-	debug3("%d(%s:%d) query\n%s",
-	       mysql_conn->conn, THIS_FILE, __LINE__, query);
+	if (debug_flags & DEBUG_FLAG_DB_RES)
+		DB_DEBUG(mysql_conn->conn, "query\n%s", query);
 	if (!(result = mysql_db_query_ret(mysql_conn, query, 0))) {
 		xfree(query);
 		return percent_used;
@@ -313,6 +312,7 @@ static uint32_t _get_res_used(mysql_conn_t *mysql_conn, uint32_t res_id,
 
 	if (!(row = mysql_fetch_row(result))) {
 		error("Resource id %u is not known on the system", res_id);
+		mysql_free_result(result);
 		return percent_used;
 	}
 
@@ -367,14 +367,15 @@ static int _fill_in_res_rec(mysql_conn_t *mysql_conn, slurmdb_res_rec_t *res)
 
 	query = xstrdup_printf("select distinct %s from %s as t1 "
 			       "left outer join "
-			       "%s as t2 on (res_id=id) where id=%u "
-			       "&& (t2.deleted=0) group by id",
+			       "%s as t2 on (res_id=id && "
+			       "t2.deleted=0) "
+			       "where id=%u group by id",
 			       tmp, res_table, clus_res_table, res->id);
 
 	xfree(tmp);
 
-	debug3("%d(%s:%d) query\n%s",
-	       mysql_conn->conn, THIS_FILE, __LINE__, query);
+	if (debug_flags & DEBUG_FLAG_DB_RES)
+		DB_DEBUG(mysql_conn->conn, "query\n%s", query);
 	if (!(result = mysql_db_query_ret(mysql_conn, query, 0))) {
 		xfree(query);
 		return SLURM_ERROR;
@@ -383,6 +384,7 @@ static int _fill_in_res_rec(mysql_conn_t *mysql_conn, slurmdb_res_rec_t *res)
 
 	if (!(row = mysql_fetch_row(result))) {
 		error("Resource id %u is not known on the system", res->id);
+		mysql_free_result(result);
 		return SLURM_ERROR;
 	}
 
@@ -405,6 +407,8 @@ static int _fill_in_res_rec(mysql_conn_t *mysql_conn, slurmdb_res_rec_t *res)
 		res->type = slurm_atoul(row[RES_REQ_TYPE]);
 	if (row[RES_REQ_PU] && row[RES_REQ_PU][0])
 		res->percent_used = slurm_atoul(row[RES_REQ_PU]);
+	else
+		res->percent_used = 0;
 
 	mysql_free_result(result);
 
@@ -443,9 +447,9 @@ static int _add_res(mysql_conn_t *mysql_conn, slurmdb_res_rec_t *object,
 		   res_table, cols, vals, extra);
 
 
-	debug3("%d(%s:%d) query\n%s",
-	       mysql_conn->conn, THIS_FILE, __LINE__, query);
-	object->id = mysql_db_insert_ret_id(mysql_conn, query);
+	if (debug_flags & DEBUG_FLAG_DB_RES)
+		DB_DEBUG(mysql_conn->conn, "query\n%s", query);
+	object->id = (uint32_t)mysql_db_insert_ret_id(mysql_conn, query);
 	xfree(query);
 	if (!object->id) {
 		error("Couldn't add server resource %s", object->name);
@@ -480,8 +484,8 @@ static int _add_res(mysql_conn_t *mysql_conn, slurmdb_res_rec_t *object,
 	xfree(cols);
 	xfree(extra);
 	xfree(vals);
-	debug3("%d(%s:%d) query\n%s",
-	       mysql_conn->conn, THIS_FILE, __LINE__, query);
+	if (debug_flags & DEBUG_FLAG_DB_RES)
+		DB_DEBUG(mysql_conn->conn, "query\n%s", query);
 	rc = mysql_db_query(mysql_conn, query);
 	xfree(query);
 	if (rc != SLURM_SUCCESS)
@@ -521,13 +525,17 @@ static int _add_clus_res(mysql_conn_t *mysql_conn, slurmdb_res_rec_t *res,
 		res->percent_used += object->percent_allowed;
 		if (res->percent_used > 100) {
 			rc = ESLURM_OVER_ALLOCATE;
-			debug3("Adding a new cluster with %u%% allowed to "
-			       "resource %s@%s would put the usage at %u%%, "
-			       "(which is over 100%%).  Please redo your math "
-			       "and resubmit.",
-			       object->percent_allowed,
-			       res->name, res->server,
-			       res->percent_used);
+			if (debug_flags & DEBUG_FLAG_DB_RES)
+				DB_DEBUG(mysql_conn->conn,
+					 "Adding a new cluster with %u%% "
+					 "allowed to "
+					 "resource %s@%s would put the usage "
+					 "at %u%%, (which is over 100%%).  "
+					 "Please redo your math "
+					 "and resubmit.",
+					 object->percent_allowed,
+					 res->name, res->server,
+					 res->percent_used);
 			break;
 		}
 		xfree(extra);
@@ -539,8 +547,8 @@ static int _add_clus_res(mysql_conn_t *mysql_conn, slurmdb_res_rec_t *res,
 			   clus_res_table, cols, vals,
 			   object->cluster, object->percent_allowed, extra);
 
-		debug3("%d(%s:%d) query\n%s",
-		       mysql_conn->conn, THIS_FILE, __LINE__, query);
+		if (debug_flags & DEBUG_FLAG_DB_RES)
+			DB_DEBUG(mysql_conn->conn, "query\n%s", query);
 		rc = mysql_db_query(mysql_conn, query);
 		xfree(query);
 		if (rc != SLURM_SUCCESS) {
@@ -564,8 +572,8 @@ static int _add_clus_res(mysql_conn_t *mysql_conn, slurmdb_res_rec_t *res,
 		xfree(name);
 		xfree(tmp_extra);
 		xfree(extra);
-		debug3("%d(%s:%d) query\n%s",
-		       mysql_conn->conn, THIS_FILE, __LINE__, query);
+		if (debug_flags & DEBUG_FLAG_DB_RES)
+			DB_DEBUG(mysql_conn->conn, "query\n%s", query);
 		rc = mysql_db_query(mysql_conn, query);
 		xfree(query);
 		if (rc != SLURM_SUCCESS)
@@ -632,24 +640,25 @@ static List _get_clus_res(mysql_conn_t *mysql_conn, uint32_t res_id,
 		"select %s from %s as t2 where %s && (res_id=%u);",
 		tmp, clus_res_table, extra, res_id);
 	xfree(tmp);
-	debug3("%d(%s:%d) query\n%s",
-	       mysql_conn->conn, THIS_FILE, __LINE__, query);
+	if (debug_flags & DEBUG_FLAG_DB_RES)
+		DB_DEBUG(mysql_conn->conn, "query\n%s", query);
 	if (!(result = mysql_db_query_ret(mysql_conn, query, 0))) {
 		xfree(query);
 		return NULL;
 	}
 	xfree(query);
 
-	ret_list = list_create(slurmdb_destroy_clus_res_rec);
-
 	if (!mysql_num_rows(result)) {
 		mysql_free_result(result);
-		return ret_list;
+		return NULL;
 	}
+
+	ret_list = list_create(slurmdb_destroy_clus_res_rec);
 
 	while ((row = mysql_fetch_row(result))) {
 		slurmdb_clus_res_rec_t *clus_res_rec =
 			xmalloc(sizeof(slurmdb_clus_res_rec_t));
+
 		list_append(ret_list, clus_res_rec);
 
 		if (row[0] && row[0][0])
@@ -673,6 +682,9 @@ extern int as_mysql_add_res(mysql_conn_t *mysql_conn, uint32_t uid,
 
 	if (check_connection(mysql_conn) != SLURM_SUCCESS)
 		return ESLURM_DB_CONNECTION;
+
+	if (!is_user_min_admin_level(mysql_conn, uid, SLURMDB_ADMIN_SUPER_USER))
+		return ESLURM_ACCESS_DENIED;
 
 	user_name = uid_to_string((uid_t) uid);
 	itr = list_iterator_create(res_list);
@@ -768,14 +780,17 @@ extern List as_mysql_get_res(mysql_conn_t *mysql_conn, uid_t uid,
 
 	query = xstrdup_printf("select distinct %s from %s as t1 "
 			       "left outer join "
-			       "%s as t2 on (res_id=id) %s group by "
+			       "%s as t2 on (res_id=id%s) %s group by "
 			       "id",
-			       tmp, res_table, clus_res_table, extra);
+			       tmp, res_table, clus_res_table,
+			       (!res_cond || !res_cond->with_deleted) ?
+			       " && t2.deleted=0" : "",
+			       extra);
 	xfree(tmp);
 	xfree(extra);
 
-	debug3("%d(%s:%d) query\n%s",
-	       mysql_conn->conn, THIS_FILE, __LINE__, query);
+	if (debug_flags & DEBUG_FLAG_DB_RES)
+		DB_DEBUG(mysql_conn->conn, "query\n%s", query);
 	if (!(result = mysql_db_query_ret(mysql_conn, query, 0))) {
 		xfree(query);
 		return NULL;
@@ -787,10 +802,35 @@ extern List as_mysql_get_res(mysql_conn_t *mysql_conn, uid_t uid,
 
 	res_list = list_create(slurmdb_destroy_res_rec);
 	while ((row = mysql_fetch_row(result))) {
-		slurmdb_res_rec_t *res = xmalloc(sizeof(slurmdb_res_rec_t));
+		uint32_t id = 0;
+		List clus_res_list = NULL;
+		slurmdb_res_rec_t *res;
+
+		if (row[RES_REQ_ID] && row[RES_REQ_ID][0])
+			id = slurm_atoul(row[RES_REQ_ID]);
+		else {
+			error("as_mysql_get_res: no id? this "
+			      "should never happen");
+			continue;
+		}
+
+		if (res_cond && res_cond->with_clusters) {
+			clus_res_list =	_get_clus_res(
+				mysql_conn, id, clus_extra);
+			/* This means the clusters requested don't have
+			   claim to this resource, so continue. */
+			if (!clus_res_list && (res_cond->with_clusters == 1))
+				continue;
+		}
+
+		res = xmalloc(sizeof(slurmdb_res_rec_t));
 		list_append(res_list, res);
 
 		slurmdb_init_res_rec(res, 0);
+
+		res->id = id;
+		res->clus_res_list = clus_res_list;
+		clus_res_list = NULL;
 
 		if (row[RES_REQ_COUNT] && row[RES_REQ_COUNT][0])
 			res->count = slurm_atoul(row[RES_REQ_COUNT]);
@@ -798,8 +838,6 @@ extern List as_mysql_get_res(mysql_conn_t *mysql_conn, uid_t uid,
 			res->description = xstrdup(row[RES_REQ_DESC]);
 		if (row[RES_REQ_FLAGS] && row[RES_REQ_FLAGS][0])
 			res->flags = slurm_atoul(row[RES_REQ_FLAGS]);
-		if (row[RES_REQ_ID] && row[RES_REQ_ID][0])
-			res->id = slurm_atoul(row[RES_REQ_ID]);
 		if (row[RES_REQ_MANAGER] && row[RES_REQ_MANAGER][0])
 			res->manager = xstrdup(row[RES_REQ_MANAGER]);
 		if (row[RES_REQ_NAME] && row[RES_REQ_NAME][0])
@@ -808,11 +846,11 @@ extern List as_mysql_get_res(mysql_conn_t *mysql_conn, uid_t uid,
 			res->server = xstrdup(row[RES_REQ_SERVER]);
 		if (row[RES_REQ_TYPE] && row[RES_REQ_TYPE][0])
 			res->type = slurm_atoul(row[RES_REQ_TYPE]);
+
 		if (row[RES_REQ_PU] && row[RES_REQ_PU][0])
 			res->percent_used = slurm_atoul(row[RES_REQ_PU]);
-		if (res_cond && res_cond->with_clusters)
-			res->clus_res_list =
-				_get_clus_res(mysql_conn, res->id, clus_extra);
+		else
+			res->percent_used = 0;
 	}
 	mysql_free_result(result);
 	xfree(clus_extra);
@@ -843,6 +881,11 @@ extern List as_mysql_remove_res(mysql_conn_t *mysql_conn, uint32_t uid,
 	if (check_connection(mysql_conn) != SLURM_SUCCESS)
 		return NULL;
 
+	if (!is_user_min_admin_level(
+		    mysql_conn, uid, SLURMDB_ADMIN_SUPER_USER)) {
+		errno = ESLURM_ACCESS_DENIED;
+		return NULL;
+	}
 	/* force to only do non-deleted server resources */
 	res_cond->with_deleted = 0;
 
@@ -851,12 +894,15 @@ extern List as_mysql_remove_res(mysql_conn_t *mysql_conn, uint32_t uid,
 
 	query = xstrdup_printf("select id, name, server, cluster "
 			       "from %s as t1 left outer join "
-			       "%s as t2 on (res_id = id) %s && %s;",
-			       res_table, clus_res_table, extra, clus_extra);
+			       "%s as t2 on (res_id = id%s) %s && %s;",
+			       res_table, clus_res_table,
+			       (!res_cond || !res_cond->with_deleted) ?
+			       " && t2.deleted=0" : "",
+			       extra, clus_extra);
 	xfree(clus_extra);
 
-	debug3("%d(%s:%d) query\n%s",
-	       mysql_conn->conn, THIS_FILE, __LINE__, query);
+	if (debug_flags & DEBUG_FLAG_DB_RES)
+		DB_DEBUG(mysql_conn->conn, "query\n%s", query);
 	if (!(result = mysql_db_query_ret(mysql_conn, query, 0))) {
 		xfree(query);
 		return NULL;
@@ -869,8 +915,8 @@ extern List as_mysql_remove_res(mysql_conn_t *mysql_conn, uint32_t uid,
 		query = xstrdup_printf("select id, name, server "
 				       "from %s as t1 %s;",
 				       res_table, extra);
-		debug3("%d(%s:%d) query\n%s",
-		       mysql_conn->conn, THIS_FILE, __LINE__, query);
+		if (debug_flags & DEBUG_FLAG_DB_RES)
+			DB_DEBUG(mysql_conn->conn, "query\n%s", query);
 		if (!(result = mysql_db_query_ret(mysql_conn, query, 0))) {
 			xfree(query);
 			xfree(extra);
@@ -934,7 +980,9 @@ extern List as_mysql_remove_res(mysql_conn_t *mysql_conn, uint32_t uid,
 
 	if (!list_count(ret_list)) {
 		errno = SLURM_NO_CHANGE_IN_DATA;
-		debug3("didn't effect anything\n%s", query);
+		if (debug_flags & DEBUG_FLAG_DB_RES)
+			DB_DEBUG(mysql_conn->conn,
+				 "didn't effect anything\n%s", query);
 		xfree(query);
 		xfree(name_char);
 		xfree(clus_extra);
@@ -978,7 +1026,6 @@ extern List as_mysql_modify_res(mysql_conn_t *mysql_conn, uint32_t uid,
 	char *clus_extra = NULL;
 	MYSQL_RES *result = NULL;
 	MYSQL_ROW row;
-	int rc = SLURM_SUCCESS;
 	int query_clusters = 0;
 	bool send_update = 0;
 	bool res_added = 0;
@@ -1000,7 +1047,7 @@ extern List as_mysql_modify_res(mysql_conn_t *mysql_conn, uint32_t uid,
 	xfree(tmp);
 
 	/* overloaded for easibility */
-	if (res->percent_used != (uint16_t)NO_VAL) {
+	if (res->percent_used != NO_VAL16) {
 		xstrfmtcat(clus_vals, ", percent_allowed=%u",
 			   res->percent_used);
 		send_update = 1;
@@ -1017,19 +1064,22 @@ extern List as_mysql_modify_res(mysql_conn_t *mysql_conn, uint32_t uid,
 	res_cond->with_deleted = 0;
 	_setup_res_cond(res_cond, &extra);
 	query_clusters += _setup_clus_res_cond(res_cond, &clus_extra);
+
 	if (query_clusters || send_update)
 		query = xstrdup_printf("select id, name, server, cluster "
 				       "from %s as t1 left outer join "
-				       "%s as t2 on (res_id = id) %s && %s;",
+				       "%s as t2 on (res_id = id%s) %s && %s;",
 				       res_table, clus_res_table,
+				       (!res_cond || !res_cond->with_deleted) ?
+				       " && t2.deleted=0" : "",
 				       extra, clus_extra);
 	else
 		query = xstrdup_printf("select id, name, server "
 				       "from %s as t1 %s;",
 				       res_table, extra);
 
-	debug3("%d(%s:%d) query\n%s",
-	       mysql_conn->conn, THIS_FILE, __LINE__, query);
+	if (debug_flags & DEBUG_FLAG_DB_RES)
+		DB_DEBUG(mysql_conn->conn, "query\n%s", query);
 	if (!(result = mysql_db_query_ret(mysql_conn, query, 0))) {
 		xfree(extra);
 		xfree(vals);
@@ -1052,6 +1102,8 @@ extern List as_mysql_modify_res(mysql_conn_t *mysql_conn, uint32_t uid,
 
 	if (!query_clusters && !vals) {
 		xfree(clus_vals);
+		if (result)
+			mysql_free_result(result);
 		errno = SLURM_NO_CHANGE_IN_DATA;
 		error("Nothing to change");
 		return NULL;
@@ -1061,8 +1113,8 @@ extern List as_mysql_modify_res(mysql_conn_t *mysql_conn, uint32_t uid,
 		query = xstrdup_printf("select id, name, server "
 				       "from %s as t1 %s;",
 				       res_table, extra);
-		debug3("%d(%s:%d) query\n%s",
-		       mysql_conn->conn, THIS_FILE, __LINE__, query);
+		if (debug_flags & DEBUG_FLAG_DB_RES)
+			DB_DEBUG(mysql_conn->conn, "query\n%s", query);
 		if (!(result = mysql_db_query_ret(mysql_conn, query, 0))) {
 			xfree(extra);
 			xfree(vals);
@@ -1086,7 +1138,7 @@ extern List as_mysql_modify_res(mysql_conn_t *mysql_conn, uint32_t uid,
 			last_res = curr_res;
 
 			if (have_clusters &&
-			    (res->percent_used != (uint16_t)NO_VAL)) {
+			    (res->percent_used != NO_VAL16)) {
 				percent_used = _get_res_used(
 					mysql_conn, curr_res, clus_extra);
 
@@ -1114,17 +1166,20 @@ extern List as_mysql_modify_res(mysql_conn_t *mysql_conn, uint32_t uid,
 		if (have_clusters && row[3] && row[3][0]) {
 			slurmdb_res_rec_t *res_rec;
 
-			if (res->percent_used != (uint16_t)NO_VAL)
+			if (res->percent_used != NO_VAL16)
 				percent_used += res->percent_used;
 			if (percent_used > 100) {
-				debug3("Modifing resource %s@%s with %u%% "
-				       "allowed to each cluster "
-				       "would put the usage "
-				       "at %u%%, (which is over 100%%).  "
-				       "Please redo your math and resubmit.",
-				       row[1], row[2],
-				       res->percent_used,
-				       percent_used);
+				if (debug_flags & DEBUG_FLAG_DB_RES)
+					DB_DEBUG(mysql_conn->conn,
+						 "Modifying resource %s@%s "
+						 "with %u%% allowed to each "
+						 "cluster would put the usage "
+						 "at %u%%, (which is "
+						 "over 100%%).  Please redo "
+						 "your math and resubmit.",
+						 row[1], row[2],
+						 res->percent_used,
+						 percent_used);
 
 				mysql_free_result(result);
 				xfree(clus_extra);
@@ -1169,7 +1224,9 @@ extern List as_mysql_modify_res(mysql_conn_t *mysql_conn, uint32_t uid,
 
 	if (!list_count(ret_list)) {
 		errno = SLURM_NO_CHANGE_IN_DATA;
-		debug3("didn't effect anything\n%s", query);
+		if (debug_flags & DEBUG_FLAG_DB_RES)
+			DB_DEBUG(mysql_conn->conn,
+				 "didn't effect anything\n%s", query);
 		xfree(query);
 		xfree(vals);
 		xfree(name_char);
@@ -1200,12 +1257,6 @@ extern List as_mysql_modify_res(mysql_conn_t *mysql_conn, uint32_t uid,
 	xfree(clus_char);
 	xfree(name_char);
 	xfree(user_name);
-
-	if (rc != SLURM_SUCCESS) {
-		error("Couldn't modify Resource");
-		FREE_NULL_LIST(ret_list);
-		errno = SLURM_ERROR;
-	}
 
 	return ret_list;
 }

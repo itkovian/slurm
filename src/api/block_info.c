@@ -1,7 +1,5 @@
 /*****************************************************************************\
  *  node_select_info.c - get the node select plugin state information of slurm
- *
- *  $Id$
  *****************************************************************************
  *  Copyright (C) 2005 The Regents of the University of California.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -9,7 +7,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -38,21 +36,13 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#ifdef HAVE_CONFIG_H
-#  include "config.h"
-#endif
-
-#ifdef HAVE_SYS_SYSLOG_H
-#  include <sys/syslog.h>
-#endif
-
+#include <arpa/inet.h>
 #include <errno.h>
+#include <netinet/in.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
 #include <unistd.h>
 
 #include "slurm/slurm.h"
@@ -125,10 +115,11 @@ char *slurm_sprint_block_info(
 
 	/****** Line 1 ******/
 	convert_num_unit((float)block_ptr->cnode_cnt, tmp1, sizeof(tmp1),
-			 UNIT_NONE);
+			 UNIT_NONE, NO_VAL, CONVERT_NUM_UNIT_EXACT);
 	if (cluster_flags & CLUSTER_FLAG_BGQ) {
 		convert_num_unit((float)block_ptr->cnode_err_cnt, tmp2,
-				 sizeof(tmp2), UNIT_NONE);
+				 sizeof(tmp2), UNIT_NONE, NO_VAL,
+				 CONVERT_NUM_UNIT_EXACT);
 		tmp_char = xstrdup_printf("%s/%s", tmp1, tmp2);
 	} else
 		tmp_char = tmp1;
@@ -155,9 +146,6 @@ char *slurm_sprint_block_info(
 	tmp_char = conn_type_string_full(block_ptr->conn_type);
 	xstrfmtcat(out, "ConnType=%s", tmp_char);
 	xfree(tmp_char);
-	if (cluster_flags & CLUSTER_FLAG_BGL)
-		xstrfmtcat(out, " NodeUse=%s",
-			   node_use_string(block_ptr->node_use));
 
 	xstrcat(out, line_end);
 
@@ -181,23 +169,6 @@ char *slurm_sprint_block_info(
 	/****** Line 4 ******/
 	xstrfmtcat(out, "MloaderImage=%s%s",
 		   block_ptr->mloaderimage, line_end);
-
-	if (cluster_flags & CLUSTER_FLAG_BGL) {
-		/****** Line 5 ******/
-		xstrfmtcat(out, "BlrtsImage=%s%s", block_ptr->blrtsimage,
-			   line_end);
-		/****** Line 6 ******/
-		xstrfmtcat(out, "LinuxImage=%s%s", block_ptr->linuximage,
-			   line_end);
-		/****** Line 7 ******/
-		xstrfmtcat(out, "RamdiskImage=%s", block_ptr->ramdiskimage);
-	} else if (cluster_flags & CLUSTER_FLAG_BGP) {
-		/****** Line 5 ******/
-		xstrfmtcat(out, "CnloadImage=%s%s", block_ptr->linuximage,
-			   line_end);
-		/****** Line 6 ******/
-		xstrfmtcat(out, "IoloadImage=%s", block_ptr->ramdiskimage);
-	}
 
 	if (block_ptr->reason)
 		xstrfmtcat(out, "Reason=%s%s",
@@ -238,7 +209,8 @@ extern int slurm_load_block_info (time_t update_time,
         req_msg.msg_type = REQUEST_BLOCK_INFO;
         req_msg.data     = &req;
 
-	if (slurm_send_recv_controller_msg(&req_msg, &resp_msg) < 0)
+	if (slurm_send_recv_controller_msg(&req_msg, &resp_msg,
+					   working_cluster_rec) < 0)
 		return SLURM_ERROR;
 
 	switch (resp_msg.msg_type) {

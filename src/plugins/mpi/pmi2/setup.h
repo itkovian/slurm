@@ -4,9 +4,12 @@
  *  Copyright (C) 2011-2012 National University of Defense Technology.
  *  Written by Hongjia Cao <hjcao@nudt.edu.cn>.
  *  All rights reserved.
+ *  Portions copyright (C) 2015 Mellanox Technologies Inc.
+ *  Written by Artem Y. Polyakov <artemp@mellanox.com>.
+ *  All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -38,27 +41,16 @@
 #ifndef _SETUP_H
 #define _SETUP_H
 
-#if HAVE_CONFIG_H
-#  include "config.h"
-#  if HAVE_INTTYPES_H
-#    include <inttypes.h>
-#  else
-#    if HAVE_STDINT_H
-#      include <stdint.h>
-#    endif
-#  endif  /* HAVE_INTTYPES_H */
-#else   /* !HAVE_CONFIG_H */
-#  include <inttypes.h>
-#endif  /*  HAVE_CONFIG_H */
+#include <inttypes.h>
 
-#include <slurm/slurm_errno.h>
+#include "slurm/slurm_errno.h"
+
 #include "src/common/slurm_xlator.h"
-#include "src/common/xstring.h"
 #include "src/common/pack.h"
-#include "src/common/mpi.h"
-
+#include "src/common/slurm_opt.h"
+#include "src/common/slurm_mpi.h"
+#include "src/common/xstring.h"
 #include "src/slurmd/slurmstepd/slurmstepd_job.h"
-
 #include "src/srun/libsrun/debugger.h"
 #include "src/srun/libsrun/opt.h"
 
@@ -82,8 +74,7 @@ typedef struct pmi2_job_info {
 	char **job_env;	     /* environment of job. use in stepd */
 
 	MPIR_PROCDESC *MPIR_proctable;	/* used only in srun */
-	opt_t      *srun_opt;	/* used only in srun */
-	switch_jobinfo_t *switch_job; /* switch-specific job information */
+	slurm_opt_t *srun_opt;		/* used only in srun */
 	char *resv_ports; /* MPI reserved ports */
 } pmi2_job_info_t;
 
@@ -111,5 +102,6 @@ extern int *task_socks;
 extern bool in_stepd(void);
 extern int  pmi2_setup_stepd(const stepd_step_rec_t *job, char ***env);
 extern int  pmi2_setup_srun(const mpi_plugin_client_info_t *job, char ***env);
+extern void pmi2_cleanup_stepd(void);
 
 #endif	/* _SETUP_H */

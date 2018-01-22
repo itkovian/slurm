@@ -1,5 +1,5 @@
 /*****************************************************************************\
- *  $Id$
+ *  pam_slurm.c
  *****************************************************************************
  *  Copyright (C) 2002-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2009 Lawrence Livermore National Security.
@@ -27,7 +27,7 @@
  *
  *  You should have received a copy of the GNU General Public License along
  *  with pam_slurm; if not, write to the Free Software Foundation, Inc.,
- *  59 Temple Place, Suite 330, Boston, MA  02111-1307  USA.
+ *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
 #if HAVE_CONFIG_H
@@ -341,6 +341,20 @@ _slurm_match_allocation(uid_t uid)
 				     uid, nodename, j->job_id);
 				authorized = 1;
 				break;
+			} else {
+				char *nodename;
+				nodename = slurm_conf_get_nodename(hostname);
+				if (nodename) {
+					if (_hostrange_member(nodename,
+							      j->nodes)) {
+						DBG ("user %ld allocated node %s in job %ld",
+						     uid, nodename, j->job_id);
+						authorized = 1;
+						xfree(nodename);
+						break;
+					}
+					xfree(nodename);
+				}
 			}
 		}
 	}
@@ -382,7 +396,7 @@ _send_denial_msg(pam_handle_t *pamh, struct _options *opts,
 	/*  Construct msg to send to app.
 	 */
 	n = snprintf(str, sizeof(str),
-		     "%sAccess denied: user %s (uid=%d) has no active jobs.%s",
+		     "%sAccess denied: user %s (uid=%d) has no active jobs on this node.%s",
 		     opts->msg_prefix, user, uid, opts->msg_suffix);
 	if ((n < 0) || (n >= sizeof(str)))
 		_log_msg(LOG_ERR, "exceeded buffer for pam_conv message");

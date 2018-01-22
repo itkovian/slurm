@@ -2,7 +2,6 @@
  *  xmalloc.c - enhanced malloc routines
  *  Started with Jim Garlick's xmalloc and tied into slurm log facility.
  *  Also added ability to print file, line, and function of caller.
- *  $Id$
  *****************************************************************************
  *  Copyright (C) 2002 The Regents of the University of California.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -11,7 +10,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -40,69 +39,60 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#if HAVE_CONFIG_H
-#  include "config.h"
-#endif
+#include "config.h"
 
-#include <stdlib.h>
 #include <errno.h>
-#include <string.h>
+#include <pthread.h>
 #include <stdio.h>
-#include <limits.h>	/* for INT_MAX */
+#include <stdlib.h>
+#include <string.h>
 
-#include "src/common/xmalloc.h"
 #include "src/common/log.h"
 #include "src/common/macros.h"
-
-#if	HAVE_UNSAFE_MALLOC
-#  include <pthread.h>
-   static pthread_mutex_t malloc_lock = PTHREAD_MUTEX_INITIALIZER;
-#  define MALLOC_LOCK()		pthread_mutex_lock(&malloc_lock)
-#  define MALLOC_UNLOCK()	pthread_mutex_unlock(&malloc_lock)
-#else
-#  define MALLOC_LOCK()
-#  define MALLOC_UNLOCK()
-#endif
-
+#include "src/common/xmalloc.h"
 
 #if NDEBUG
 #  define xmalloc_assert(expr)  ((void) (0))
 #else
 static void malloc_assert_failed(char *, const char *, int,
                                  const char *, const char *);
-#  define xmalloc_assert(expr)  _STMT_START {                                 \
+#  define xmalloc_assert(expr)  do {                                          \
           (expr) ? ((void)(0)) :                                              \
           malloc_assert_failed(__STRING(expr), file, line, func,              \
-                               __CURRENT_FUNC__);                             \
-          } _STMT_END
+                               __func__);                             \
+          } while (0)
 #endif /* NDEBUG */
 
 
 /*
  * "Safe" version of malloc().
  *   size (IN)	number of bytes to malloc
+ *   clear (IN) initialize to zero
  *   RETURN	pointer to allocate heap space
  */
-void *slurm_xmalloc(size_t size, const char *file, int line, const char *func)
+void *slurm_xmalloc(size_t size, bool clear,
+		    const char *file, int line, const char *func)
 {
 	void *new;
-	int *p;
+	size_t *p;
+	size_t total_size = size + 2 * sizeof(size_t);
 
+	if (size <= 0)
+		return NULL;
 
-	xmalloc_assert(size >= 0 && size <= INT_MAX);
-	MALLOC_LOCK();
-	p = (int *)malloc(size + 2*sizeof(int));
-	MALLOC_UNLOCK();
+	if (clear)
+		p = calloc(1, total_size);
+	else
+		p = malloc(total_size);
 	if (!p) {
 		/* out of memory */
 		log_oom(file, line, func);
 		abort();
 	}
 	p[0] = XMALLOC_MAGIC;	/* add "secret" magic cookie */
-	p[1] = (int)size;	/* store size in buffer */
+	p[1] = size;		/* store size in buffer */
 
 	new = &p[2];
-	memset(new, 0, size);
 	return new;
 }
 
@@ -113,20 +103,20 @@ void *slurm_try_xmalloc(size_t size, const char *file, int line,
                         const char *func)
 {
 	void *new;
-	int *p;
+	size_t *p;
+	size_t total_size = size + 2 * sizeof(size_t);
 
-	xmalloc_assert(size >= 0 && size <= INT_MAX);
-	MALLOC_LOCK();
-	p = (int *)malloc(size + 2*sizeof(int));
-	MALLOC_UNLOCK();
+	if (size <= 0)
+		return NULL;
+
+	p = calloc(1, total_size);
 	if (!p) {
 		return NULL;
 	}
 	p[0] = XMALLOC_MAGIC;	/* add "secret" magic cookie */
-	p[1] = (int)size;	/* store size in buffer */
+	p[1] = size;		/* store size in buffer */
 
 	new = &p[2];
-	memset(new, 0, size);
 	return new;
 }
 
@@ -135,50 +125,45 @@ void *slurm_try_xmalloc(size_t size, const char *file, int line,
  * the object to be realloced instead of the object itself.
  *   item (IN/OUT)	double-pointer to allocated space
  *   newsize (IN)	requested size
+ *   clear (IN)		initialize to zero
  */
-void * slurm_xrealloc(void **item, size_t newsize,
-	              const char *file, int line, const char *func)
+extern void * slurm_xrealloc(void **item, size_t newsize, bool clear,
+			     const char *file, int line, const char *func)
 {
-	int *p = NULL;
-
-	/* xmalloc_assert(*item != NULL, file, line, func); */
-	xmalloc_assert(newsize >= 0 && (int)newsize <= INT_MAX);
+	size_t *p = NULL;
 
 	if (*item != NULL) {
-		int old_size;
-		p = (int *)*item - 2;
+		size_t old_size;
+		p = (size_t *)*item - 2;
 
 		/* magic cookie still there? */
 		xmalloc_assert(p[0] == XMALLOC_MAGIC);
 		old_size = p[1];
 
-		MALLOC_LOCK();
-		p = (int *)realloc(p, newsize + 2*sizeof(int));
-		MALLOC_UNLOCK();
-
+		p = realloc(p, newsize + 2*sizeof(size_t));
 		if (p == NULL)
 			goto error;
 
 		if (old_size < newsize) {
 			char *p_new = (char *)(&p[2]) + old_size;
-			memset(p_new, 0, (int)(newsize-old_size));
+			if (clear)
+				memset(p_new, 0, (newsize-old_size));
 		}
 		xmalloc_assert(p[0] == XMALLOC_MAGIC);
 
 	} else {
+		size_t total_size = newsize + 2 * sizeof(size_t);
 		/* Initalize new memory */
-		MALLOC_LOCK();
-		p = (int *)malloc(newsize + 2*sizeof(int));
-		MALLOC_UNLOCK();
-
+		if (clear)
+			p = calloc(1, total_size);
+		else
+			p = malloc(total_size);
 		if (p == NULL)
 			goto error;
-
-		memset(&p[2], 0, newsize);
 		p[0] = XMALLOC_MAGIC;
 	}
 
-	p[1] = (int)newsize;
+	p[1] = newsize;
 	*item = &p[2];
 	return *item;
 
@@ -194,42 +179,32 @@ void * slurm_xrealloc(void **item, size_t newsize,
 int slurm_try_xrealloc(void **item, size_t newsize,
 	               const char *file, int line, const char *func)
 {
-	int *p = NULL;
-
-	/* xmalloc_assert(*item != NULL, file, line, func); */
-	xmalloc_assert(newsize >= 0 && (int)newsize <= INT_MAX);
+	size_t *p = NULL;
 
 	if (*item != NULL) {
-		int old_size;
-		p = (int *)*item - 2;
+		size_t old_size;
+		p = (size_t *)*item - 2;
 
 		/* magic cookie still there? */
 		xmalloc_assert(p[0] == XMALLOC_MAGIC);
 		old_size = p[1];
 
-		MALLOC_LOCK();
-		p = (int *)realloc(p, newsize + 2*sizeof(int));
-		MALLOC_UNLOCK();
-
+		p = realloc(p, newsize + 2*sizeof(size_t));
 		if (p == NULL)
 			return 0;
 
 		if (old_size < newsize) {
 			char *p_new = (char *)(&p[2]) + old_size;
-			memset(p_new, 0, (int)(newsize-old_size));
+			memset(p_new, 0, (newsize-old_size));
 		}
 		xmalloc_assert(p[0] == XMALLOC_MAGIC);
 
 	} else {
+		size_t total_size = newsize + 2 * sizeof(size_t);
 		/* Initalize new memory */
-		MALLOC_LOCK();
-		p = (int *)malloc(newsize + 2*sizeof(int));
-		MALLOC_UNLOCK();
-
+		p = calloc(1, total_size);
 		if (p == NULL)
 			return 0;
-
-		memset(&p[2], 0, newsize);
 		p[0] = XMALLOC_MAGIC;
 	}
 
@@ -243,9 +218,9 @@ int slurm_try_xrealloc(void **item, size_t newsize,
  * Return the size of a buffer.
  *   item (IN)		pointer to allocated space
  */
-int slurm_xsize(void *item, const char *file, int line, const char *func)
+size_t slurm_xsize(void *item, const char *file, int line, const char *func)
 {
-	int *p = (int *)item - 2;
+	size_t *p = (size_t *)item - 2;
 	xmalloc_assert(item != NULL);
 	xmalloc_assert(p[0] == XMALLOC_MAGIC); /* CLANG false positive here */
 	return p[1];
@@ -259,13 +234,11 @@ int slurm_xsize(void *item, const char *file, int line, const char *func)
 void slurm_xfree(void **item, const char *file, int line, const char *func)
 {
 	if (*item != NULL) {
-		int *p = (int *)*item - 2;
+		size_t *p = (size_t *)*item - 2;
 		/* magic cookie still there? */
 		xmalloc_assert(p[0] == XMALLOC_MAGIC);
 		p[0] = 0;	/* make sure xfree isn't called twice */
-		MALLOC_LOCK();
 		free(p);
-		MALLOC_UNLOCK();
 		*item = NULL;
 	}
 }

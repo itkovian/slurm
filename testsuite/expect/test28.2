@@ -1,7 +1,7 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Test of SLURM functionality
-#          checks that the --array environment varibles are correct, and
+#          checks that the --array environment variables are correct, and
 #          checks that the --output and --error files were created and
 #          contain the correct information.
 #
@@ -13,7 +13,7 @@
 # Written by Nathan Yee <nyee32@schedmd.com>
 #
 # This file is part of SLURM, a resource management program.
-# For details, see <http://slurm.schedmd.com/>.
+# For details, see <https://slurm.schedmd.com/>.
 # Please also read the included file: DISCLAIMER.
 #
 # SLURM is free software; you can redistribute it and/or modify it under
@@ -44,6 +44,8 @@ set array_in     ""
 set array_var    ""
 set exit_code    0
 
+print_header $test_id
+
 if {[get_array_config] < [expr $array_end + 1]} {
 	send_user "\nWARNING: MaxArraySize is too small\n"
 	exit 0
@@ -67,7 +69,11 @@ delete_file
 
 make_bash_script $file_script "
 $bin_echo array_id=\$SLURM_ARRAY_JOB_ID
+$bin_echo task_count=\$SLURM_ARRAY_TASK_COUNT
 $bin_echo task_id=\$SLURM_ARRAY_TASK_ID
+$bin_echo task_min=\$SLURM_ARRAY_TASK_MIN
+$bin_echo task_max=\$SLURM_ARRAY_TASK_MAX
+$bin_echo task_step=\$SLURM_ARRAY_TASK_STEP
 $bin_sleep aaaa
 exit 0
 "
@@ -152,6 +158,7 @@ for {set cnt 0} {$cnt<$array_end} {incr cnt} {
 }
 send_user "\nchecking environment variables\n"
 # Checks that the array job ids are correct
+set max_inx [expr $array_end - 1]
 for {set index 0} {$index < $array_end} {incr index} {
 	set env_cnt 0
 	spawn $bin_cat test$test_id-$job_id\_$index\.output
@@ -160,7 +167,23 @@ for {set index 0} {$index < $array_end} {incr index} {
 			incr env_cnt
 			exp_continue
 		}
+		-re "task_count=$array_end" {
+			incr env_cnt
+			exp_continue
+		}
 		-re "task_id=$index" {
+			incr env_cnt
+			exp_continue
+		}
+		-re "task_min=0" {
+			incr env_cnt
+			exp_continue
+		}
+		-re "task_max=$max_inx" {
+			incr env_cnt
+			exp_continue
+		}
+		-re "task_step=1" {
 			incr env_cnt
 			exp_continue
 		}
@@ -168,8 +191,8 @@ for {set index 0} {$index < $array_end} {incr index} {
 			wait
 		}
 	}
-	if {$env_cnt != 2} {
-		send_user "\nFAILURE: Missing environment variables in file test$test_id-$job_id\_$index\.output\n"
+	if {$env_cnt != 6} {
+		send_user "\nFAILURE: Missing environment variables in file test$test_id-$job_id\_$index\.output ($env_cnt != 6)\n"
 		set exit_code 1
 	}
 }
@@ -179,7 +202,7 @@ for {set index 0} {$index < $array_end} {incr index} {
 	set err_match 0
 	spawn $bin_cat test$test_id-$job_id\_$index\.error
 	expect {
-		-re "invalid time" {
+		-re "$sleep_error_message" {
 			send_user "\nDo not worry this error is expected\n"
 			incr err_match
 		}
@@ -195,8 +218,8 @@ for {set index 0} {$index < $array_end} {incr index} {
 
 if {$exit_code == 0} {
 	send_user "\nSUCCESS\n"
+	delete_file
 } else {
 	send_user "\nFAILURE\n"
 }
-delete_file
 exit $exit_code

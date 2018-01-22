@@ -1,4 +1,4 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Test of SLURM functionality
 #          Validate that Allow/Deny Qos are enforced.
@@ -12,7 +12,7 @@
 # Written by Nathan Yee <nyee32@schedmd.com>
 #
 # This file is part of SLURM, a resource management program.
-# For details, see <http://slurm.schedmd.com/>.
+# For details, see <https://slurm.schedmd.com/>.
 # Please also read the included file: DISCLAIMER.
 #
 # SLURM is free software; you can redistribute it and/or modify it under
@@ -53,7 +53,8 @@ if { [test_account_storage] == 0 } {
 	exit 0
 }
 if { [string compare [check_accounting_admin_level] "Administrator"] } {
-	send_user "\nWARNING: This test can't be run without being an Accounting administrator.\nUse sacctmgr mod user \$USER_NAME set admin=admin.\n"
+	send_user "\nWARNING: This test can't be run without being an Accounting administrator.\n"
+	send_user "Use: sacctmgr mod user \$USER set admin=admin.\n"
 	exit 0
 }
 
@@ -90,7 +91,8 @@ proc cleanup { } {
 		}
 	}
 
-	send_user "Any error, except for unresponsiveness, from the previous scancel is expected and should be ignored.\n"
+	send_user "Any error, except for unresponsiveness, from the previous "
+	send_user "scancel is expected and should be ignored.\n"
 
 	spawn $scontrol delete partition=$part_name
 	expect {
@@ -202,7 +204,8 @@ proc test_part {acct qos part qos_con } {
 	global srun part_name exit_code
 
 	set sub_job 0
-	spawn $srun -I -A $acct --qos $qos -p $part true
+
+	spawn $srun -I2 -A $acct --qos $qos -p $part true
 	expect {
 		-re "error" {
 			if { $qos_con == 1 } {
@@ -226,21 +229,10 @@ proc test_part {acct qos part qos_con } {
 # Delete any vestigial qos or accounts
 cleanup
 
-spawn $bin_id -un
-expect {
-	-re "($alpha_numeric_under)" {
-		set user_name $expect_out(1,string)
-		exp_continue
-	}
-	timeout {
-		send_user "\nFAILURE: id is not responding\n"
-		set exit_code 1
-	}
-	eof {
-		wait
-	}
-}
+set user_name [get_my_user_name]
 
+# Setup
+set partition [default_partition]
 set node_name [ get_idle_node_in_part $partition ]
 set cluster_name [ get_cluster_name ]
 

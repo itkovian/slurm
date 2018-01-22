@@ -1,4 +1,4 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Test of SLURM functionality
 #          Test scancel user and partition filters, delete all remaining jobs
@@ -17,7 +17,7 @@
 # CODE-OCEC-09-009. All rights reserved.
 #
 # This file is part of SLURM, a resource management program.
-# For details, see <http://slurm.schedmd.com/>.
+# For details, see <https://slurm.schedmd.com/>.
 # Please also read the included file: DISCLAIMER.
 #
 # SLURM is free software; you can redistribute it and/or modify it under
@@ -44,27 +44,16 @@ set job_id        0
 
 print_header $test_id
 
+if {[job_submit_all_partitions] != 0} {
+	send_user "\nWARNING: This test is incompatible with JobSubmitPlugins=all_partitions\n"
+	exit 0
+}
+
 #
 # Execute 'id' to determine my login name
 #
 
-set got_login 0
-spawn $bin_id -un
-expect {
-        -re "($alpha_numeric_under)" {
-		set my_login $expect_out(1,string)
-		set got_login 1
-		exp_continue
-	}
-	eof {
-		wait
-	}
-}
-
-if { $got_login == 0 } {
-	send_user "\nFAILURE: Unable to get login name\n"
-	exit 1
-}
+set my_login [get_my_user_name]
 
 #
 # Build input script file
@@ -93,10 +82,9 @@ if {$job_id == 0} {
 	send_user "\nFAILURE: batch submit failure\n"
 	exit 1
 }
-exec $bin_rm -f $file_in
 
 #
-# Identify this job's parition
+# Identify this job's partition
 #
 set matches  0
 spawn $scancel --interactive $job_id
@@ -116,7 +104,7 @@ expect {
 }
 
 #
-# Kill all jobs by parition and user
+# Kill all jobs by partition and user
 #
 spawn $scancel --interactive --user=$my_login --partition=NO_VAL
 expect {
@@ -186,13 +174,13 @@ expect {
 		wait
 	}
 }
-
 if {$matches != 0} {
 	send_user "\nFAILURE: scancel user filter failed\n"
 	set exit_code 1
 }
 
 if {$exit_code == 0} {
+	exec $bin_rm -f $file_in
 	send_user "\nSUCCESS\n"
 }
 exit $exit_code

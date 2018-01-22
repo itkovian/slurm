@@ -1,6 +1,5 @@
 /*****************************************************************************\
  * src/slurmd/common/setproctitle.h - Emulation of BSD setproctitle()
- * $Id$
  *****************************************************************************
  *  Copyright (C) 2002 The Regents of the University of California.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -8,7 +7,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -40,22 +39,19 @@
 #ifndef _BSD_SETPROCTITLE_H
 #define _BSD_SETPROCTITLE_H
 
-#if HAVE_CONFIG_H
-#  include "config.h"
-#endif
+#include "config.h"
 
 #if defined(__FreeBSD__)
 extern void setproctitle(const char *fmt, ...)
   __attribute__ ((format (printf, 1, 2)));
-extern void init_setproctitle(int argc, char *argv[]);
-extern void fini_setproctitle(void);
 #endif
 
 #ifndef HAVE_SETPROCTITLE
 extern void setproctitle(const char *fmt, ...)
   __attribute__ ((format (printf, 1, 2)));
-extern void init_setproctitle(int argc, char *argv[]);
-extern void fini_setproctitle(void);
 #endif
+
+extern void init_setproctitle(int argc, char **argv);
+extern void fini_setproctitle(void);
 
 #endif /* _BSD_SETPROCTITLE_H */

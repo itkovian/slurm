@@ -8,7 +8,7 @@
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -84,16 +84,26 @@ scontrol_load_nodes (node_info_msg_t ** node_buffer_pptr, uint16_t show_flags)
  *	last name match
  */
 extern void
-scontrol_print_node (char *node_name, node_info_msg_t  * node_buffer_ptr)
+scontrol_print_node(char *node_name, node_info_msg_t *node_buffer_ptr)
 {
-	int i, j, print_cnt = 0;
+	int error_code, i, j, print_cnt = 0;
 	static int last_inx = 0;
+	partition_info_msg_t *part_info_ptr = NULL;
+
+	error_code = scontrol_load_partitions(&part_info_ptr);
+	if (error_code) {
+		part_info_ptr = NULL;
+		exit_code = 1;
+		if (quiet_flag != 1)
+			slurm_perror("slurm_load_partitions error");
+	}
+	slurm_populate_node_partitions(node_buffer_ptr, part_info_ptr);
 
 	for (j = 0; j < node_buffer_ptr->record_count; j++) {
 		if (node_name) {
 			i = (j + last_inx) % node_buffer_ptr->record_count;
 			if ((node_buffer_ptr->node_array[i].name == NULL) ||
-			    strcmp (node_name,
+			    xstrcmp (node_name,
 				    node_buffer_ptr->node_array[i].name))
 				continue;
 		} else if (node_buffer_ptr->node_array[j].name == NULL)
@@ -140,6 +150,8 @@ scontrol_print_node_list (char *node_list)
 
 	if (all_flag)
 		show_flags |= SHOW_ALL;
+	if (detail_flag)
+		show_flags |= SHOW_DETAIL;
 
 	error_code = scontrol_load_nodes(&node_info_ptr, show_flags);
 	if (error_code) {
@@ -210,7 +222,7 @@ extern void	scontrol_print_topo (char *node_list)
 
 	/* Search for matching switch name */
 	for (i=0; i<topo_info_msg->record_count; i++) {
-		if (strcmp(topo_info_msg->topo_array[i].name, node_list))
+		if (xstrcmp(topo_info_msg->topo_array[i].name, node_list))
 			continue;
 		slurm_print_topo_record(stdout, &topo_info_msg->topo_array[i],
 					one_liner);
@@ -237,6 +249,29 @@ extern void	scontrol_print_topo (char *node_list)
 	if (match_cnt == 0) {
 		error("Topology information contains no switch or "
 		      "node named %s", node_list);
+	}
+}
+
+/*
+ * scontrol_print_powercap - print the powercapping related information
+ * above the specified node(s)
+ * IN node_list - NULL to print the overall powercapping details
+ */
+extern void	scontrol_print_powercap (char *node_list)
+{
+	static powercap_info_msg_t *powercap_info_msg = NULL;
+
+	if ((powercap_info_msg == NULL) &&
+	    slurm_load_powercap(&powercap_info_msg)) {
+		slurm_perror ("slurm_load_powercap error");
+		return;
+	}
+
+	/* TODO: the case of a particular node list is not yet treated here */
+	if ((node_list == NULL) || (node_list[0] == '\0')) {
+		slurm_print_powercap_info_msg(stdout, powercap_info_msg,
+					      one_liner);
+		return;
 	}
 }
 
@@ -296,8 +331,8 @@ scontrol_print_front_end(char *node_name,
 		if (node_name) {
 			i = (j + last_inx) % front_end_buffer_ptr->record_count;
 			if (!front_end_buffer_ptr->front_end_array[i].name ||
-			    strcmp(node_name, front_end_buffer_ptr->
-					      front_end_array[i].name))
+			    xstrcmp(node_name, front_end_buffer_ptr->
+				    front_end_array[i].name))
 				continue;
 		} else if (front_end_buffer_ptr->front_end_array[j].name == NULL)
 			continue;

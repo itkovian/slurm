@@ -3,14 +3,14 @@
  *****************************************************************************
  *  Copyright (C) 2002-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
- *  Portions Copyright (C) 2010 SchedMD <http://www.schedmd.com>.
+ *  Portions Copyright (C) 2010-2017 SchedMD <https://www.schedmd.com>.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Joey Ekstrom <ekstrom1@llnl.gov> and
  *  Morris Jette <jette1@llnl.gov>
  *  CODE-OCEC-09-009. All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -46,11 +46,13 @@
 #include <pwd.h>
 #include <sys/types.h>
 
-#include "src/common/list.h"
 #include "src/common/hostlist.h"
+#include "src/common/list.h"
+#include "src/common/parse_time.h"
+#include "src/common/slurm_time.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
-#include "src/common/parse_time.h"
+
 #include "src/sinfo/print.h"
 #include "src/sinfo/sinfo.h"
 
@@ -65,9 +67,12 @@ static int   _build_min_max_32_string(char *buffer, int buf_size,
 static int   _build_cpu_load_min_max_32(char *buffer, int buf_size,
 					uint32_t min, uint32_t max,
 					bool range);
+static int   _build_free_mem_min_max_64(char *buffer, int buf_size,
+					uint64_t min, uint64_t max,
+					bool range);
 static void  _print_reservation(reserve_info_t *resv_ptr, int width);
 static int   _print_secs(long time, int width, bool right, bool cut_output);
-static int   _print_str(char *str, int width, bool right, bool cut_output);
+static int   _print_str(const char *str, int width, bool right, bool cut_output);
 static int   _resv_name_width(reserve_info_t *resv_ptr);
 static void  _set_node_field_size(List sinfo_list);
 static void  _set_part_field_size(List sinfo_list);
@@ -81,7 +86,7 @@ void print_date(void)
 	time_t now;
 
 	now = time(NULL);
-	printf("%s", ctime(&now));
+	printf("%s", slurm_ctime(&now));
 }
 
 int print_sinfo_list(List sinfo_list)
@@ -173,7 +178,7 @@ static void _print_reservation(reserve_info_t *resv_ptr, int width)
 	return;
 }
 
-static int _print_str(char *str, int width, bool right, bool cut_output)
+static int _print_str(const char *str, int width, bool right, bool cut_output)
 {
 	char format[64];
 	int printed = 0;
@@ -237,13 +242,15 @@ _build_min_max_16_string(char *buffer, int buf_size, uint16_t min, uint16_t max,
 {
 	char tmp_min[8];
 	char tmp_max[8];
-	convert_num_unit((float)min, tmp_min, sizeof(tmp_min), UNIT_NONE);
-	convert_num_unit((float)max, tmp_max, sizeof(tmp_max), UNIT_NONE);
+	convert_num_unit((float)min, tmp_min, sizeof(tmp_min), UNIT_NONE,
+			 NO_VAL, params.convert_flags);
+	convert_num_unit((float)max, tmp_max, sizeof(tmp_max), UNIT_NONE,
+			 NO_VAL, params.convert_flags);
 
 	if (max == min)
 		return snprintf(buffer, buf_size, "%s", tmp_max);
 	else if (range) {
-		if (max == (uint16_t) INFINITE)
+		if (max == INFINITE16)
 			return snprintf(buffer, buf_size, "%s-infinite",
 					tmp_min);
 		else
@@ -263,9 +270,9 @@ _build_min_max_32_string(char *buffer, int buf_size,
 
 	if (use_suffix) {
 		convert_num_unit((float)min, tmp_min, sizeof(tmp_min),
-				 UNIT_NONE);
+				 UNIT_NONE, NO_VAL, params.convert_flags);
 		convert_num_unit((float)max, tmp_max, sizeof(tmp_max),
-				 UNIT_NONE);
+				 UNIT_NONE, NO_VAL, params.convert_flags);
 	} else {
 		snprintf(tmp_min, sizeof(tmp_min), "%u", min);
 		snprintf(tmp_max, sizeof(tmp_max), "%u", max);
@@ -305,6 +312,35 @@ _build_cpu_load_min_max_32(char *buffer, int buf_size,
 		strcpy(tmp_max, "N/A");
 	} else {
 		snprintf(tmp_max, sizeof(tmp_max), "%.2f", (max/100.0));
+	}
+
+	if (max == min)
+		return snprintf(buffer, buf_size, "%s", tmp_max);
+	else if (range)
+		return snprintf(buffer, buf_size, "%s-%s", tmp_min, tmp_max);
+	else
+		return snprintf(buffer, buf_size, "%s+", tmp_min);
+}
+
+static int
+_build_free_mem_min_max_64(char *buffer, int buf_size,
+			    uint64_t min, uint64_t max,
+			    bool range)
+{
+
+	char tmp_min[16];
+	char tmp_max[16];
+
+	if (min == NO_VAL64) {
+		strcpy(tmp_min, "N/A");
+	} else {
+		snprintf(tmp_min, sizeof(tmp_min), "%"PRIu64"", min);
+	}
+
+	if (max == NO_VAL64) {
+		strcpy(tmp_max, "N/A");
+	} else {
+		snprintf(tmp_max, sizeof(tmp_max), "%"PRIu64"", max);
 	}
 
 	if (max == min)
@@ -442,13 +478,17 @@ int _print_cpus_aiot(sinfo_data_t * sinfo_data, int width,
 	if (sinfo_data) {
 		if (params.cluster_flags & CLUSTER_FLAG_BG) {
 			convert_num_unit((float)sinfo_data->cpus_alloc,
-					 tmpa, sizeof(tmpa), UNIT_NONE);
+					 tmpa, sizeof(tmpa), UNIT_NONE, NO_VAL,
+					 params.convert_flags);
 			convert_num_unit((float)sinfo_data->cpus_idle,
-					 tmpi, sizeof(tmpi), UNIT_NONE);
+					 tmpi, sizeof(tmpi), UNIT_NONE, NO_VAL,
+					 params.convert_flags);
 			convert_num_unit((float)sinfo_data->cpus_other,
-					 tmpo, sizeof(tmpo), UNIT_NONE);
+					 tmpo, sizeof(tmpo), UNIT_NONE, NO_VAL,
+					 params.convert_flags);
 			convert_num_unit((float)sinfo_data->cpus_total,
-					 tmpt, sizeof(tmpt), UNIT_NONE);
+					 tmpt, sizeof(tmpt), UNIT_NONE, NO_VAL,
+					 params.convert_flags);
 		} else {
 			snprintf(tmpa, sizeof(tmpa), "%u",
 				 sinfo_data->cpus_alloc);
@@ -580,7 +620,20 @@ int _print_features(sinfo_data_t * sinfo_data, int width,
 	if (sinfo_data)
 		_print_str(sinfo_data->features, width, right_justify, true);
 	else
-		_print_str("FEATURES", width, right_justify, true);
+		_print_str("AVAIL_FEATURES", width, right_justify, true);
+
+	if (suffix)
+		printf("%s", suffix);
+	return SLURM_SUCCESS;
+}
+
+int _print_features_act(sinfo_data_t * sinfo_data, int width,
+			bool right_justify, char *suffix)
+{
+	if (sinfo_data)
+		_print_str(sinfo_data->features_act, width, right_justify, true);
+	else
+		_print_str("ACTIVE_FEATURES", width, right_justify, true);
 
 	if (suffix)
 		printf("%s", suffix);
@@ -730,7 +783,8 @@ int _print_nodes_t(sinfo_data_t * sinfo_data, int width,
 	if (sinfo_data) {
 		if (params.cluster_flags & CLUSTER_FLAG_BG)
 			convert_num_unit((float)sinfo_data->nodes_total,
-					 tmp, sizeof(tmp), UNIT_NONE);
+					 tmp, sizeof(tmp), UNIT_NONE, NO_VAL,
+					 params.convert_flags);
 		else
 			snprintf(tmp, sizeof(tmp), "%d",
 				 sinfo_data->nodes_total);
@@ -753,9 +807,11 @@ int _print_nodes_ai(sinfo_data_t * sinfo_data, int width,
 	if (sinfo_data) {
 		if (params.cluster_flags & CLUSTER_FLAG_BG) {
 			convert_num_unit((float)sinfo_data->nodes_alloc,
-					 tmpa, sizeof(tmpa), UNIT_NONE);
+					 tmpa, sizeof(tmpa), UNIT_NONE, NO_VAL,
+					 params.convert_flags);
 			convert_num_unit((float)sinfo_data->nodes_idle,
-					 tmpi, sizeof(tmpi), UNIT_NONE);
+					 tmpi, sizeof(tmpi), UNIT_NONE, NO_VAL,
+					 params.convert_flags);
 		} else {
 			snprintf(tmpa, sizeof(tmpa), "%d",
 				 sinfo_data->nodes_alloc);
@@ -784,13 +840,17 @@ int _print_nodes_aiot(sinfo_data_t * sinfo_data, int width,
 	if (sinfo_data) {
 		if (params.cluster_flags & CLUSTER_FLAG_BG) {
 			convert_num_unit((float)sinfo_data->nodes_alloc,
-					 tmpa, sizeof(tmpa), UNIT_NONE);
+					 tmpa, sizeof(tmpa), UNIT_NONE, NO_VAL,
+					 params.convert_flags);
 			convert_num_unit((float)sinfo_data->nodes_idle,
-					 tmpi, sizeof(tmpi), UNIT_NONE);
+					 tmpi, sizeof(tmpi), UNIT_NONE, NO_VAL,
+					 params.convert_flags);
 			convert_num_unit((float)sinfo_data->nodes_other,
-					 tmpo, sizeof(tmpo), UNIT_NONE);
+					 tmpo, sizeof(tmpo), UNIT_NONE, NO_VAL,
+					 params.convert_flags);
 			convert_num_unit((float)sinfo_data->nodes_total,
-					 tmpt, sizeof(tmpt), UNIT_NONE);
+					 tmpt, sizeof(tmpt), UNIT_NONE, NO_VAL,
+					 params.convert_flags);
 		} else {
 			snprintf(tmpa, sizeof(tmpa), "%u",
 				 sinfo_data->nodes_alloc);
@@ -860,6 +920,24 @@ int _print_partition_name(sinfo_data_t * sinfo_data, int width,
 	return SLURM_SUCCESS;
 }
 
+int _print_port(sinfo_data_t * sinfo_data, int width,
+			bool right_justify, char *suffix)
+{
+	char id[FORMAT_STRING_SIZE];
+	if (sinfo_data) {
+		_build_min_max_16_string(id, FORMAT_STRING_SIZE,
+				      sinfo_data->port,
+				      sinfo_data->port, false);
+		_print_str(id, width, right_justify, true);
+	} else {
+		_print_str("PORT", width, right_justify, true);
+	}
+
+	if (suffix)
+		printf("%s", suffix);
+	return SLURM_SUCCESS;
+}
+
 int _print_prefix(sinfo_data_t * job, int width, bool right_justify,
 		char* suffix)
 {
@@ -873,7 +951,7 @@ int _print_preempt_mode(sinfo_data_t * sinfo_data, int width,
 {
 	if (sinfo_data) {
 		uint16_t preempt_mode = sinfo_data->part_info->preempt_mode;
-		if (preempt_mode == (uint16_t) NO_VAL)
+		if (preempt_mode == NO_VAL16)
 			preempt_mode =  slurm_get_preempt_mode();
 		_print_str(preempt_mode_string(preempt_mode),
 			   width, right_justify, true);
@@ -885,18 +963,38 @@ int _print_preempt_mode(sinfo_data_t * sinfo_data, int width,
 	return SLURM_SUCCESS;
 }
 
-int _print_priority(sinfo_data_t * sinfo_data, int width,
-			bool right_justify, char *suffix)
+int _print_priority_job_factor(sinfo_data_t * sinfo_data, int width,
+			       bool right_justify, char *suffix)
 {
 	char id[FORMAT_STRING_SIZE];
 
 	if (sinfo_data) {
 		_build_min_max_16_string(id, FORMAT_STRING_SIZE,
-				      sinfo_data->part_info->priority,
-				      sinfo_data->part_info->priority, true);
+				sinfo_data->part_info->priority_job_factor,
+				sinfo_data->part_info->priority_job_factor,
+				true);
 		_print_str(id, width, right_justify, true);
 	} else
-		_print_str("PRIORITY", width, right_justify, true);
+		_print_str("PRIO_JOB_FACTOR", width, right_justify, true);
+
+	if (suffix)
+		printf("%s", suffix);
+	return SLURM_SUCCESS;
+}
+
+int _print_priority_tier(sinfo_data_t * sinfo_data, int width,
+			 bool right_justify, char *suffix)
+{
+	char id[FORMAT_STRING_SIZE];
+
+	if (sinfo_data) {
+		_build_min_max_16_string(id, FORMAT_STRING_SIZE,
+				sinfo_data->part_info->priority_tier,
+				sinfo_data->part_info->priority_tier,
+				true);
+		_print_str(id, width, right_justify, true);
+	} else
+		_print_str("PRIO_TIER", width, right_justify, true);
 
 	if (suffix)
 		printf("%s", suffix);
@@ -908,7 +1006,7 @@ int _print_reason(sinfo_data_t * sinfo_data, int width,
 {
 	if (sinfo_data) {
 		char * reason = sinfo_data->reason ? sinfo_data->reason:"none";
-		if (strncmp(reason, "(null)", 6) == 0)
+		if (xstrncmp(reason, "(null)", 6) == 0)
 			reason = "none";
 		_print_str(reason, width, right_justify, true);
 	} else
@@ -937,8 +1035,8 @@ int _print_root(sinfo_data_t * sinfo_data, int width,
 	return SLURM_SUCCESS;
 }
 
-int _print_share(sinfo_data_t * sinfo_data, int width,
-			bool right_justify, char *suffix)
+int _print_oversubscribe(sinfo_data_t * sinfo_data, int width,
+			 bool right_justify, char *suffix)
 {
 	char id[FORMAT_STRING_SIZE];
 
@@ -955,7 +1053,7 @@ int _print_share(sinfo_data_t * sinfo_data, int width,
 			snprintf(id, sizeof(id), "YES:%u", val);
 		_print_str(id, width, right_justify, true);
 	} else
-		_print_str("SHARE", width, right_justify, true);
+		_print_str("OVERSUBSCRIBE", width, right_justify, true);
 
 	if (suffix)
 		printf("%s", suffix);
@@ -995,7 +1093,6 @@ int _print_state_compact(sinfo_data_t * sinfo_data, int width,
 
 	if (sinfo_data && sinfo_data->nodes_total) {
 		my_state = sinfo_data->node_state;
-
 		upper_state = node_state_string_compact(my_state);
 		lower_state = _str_tolower(upper_state);
 		_print_str(lower_state, width, right_justify, true);
@@ -1018,11 +1115,6 @@ int _print_state_long(sinfo_data_t * sinfo_data, int width,
 
 	if (sinfo_data && sinfo_data->nodes_total) {
 		my_state = sinfo_data->node_state;
-		if (sinfo_data->cpus_alloc &&
-		    (sinfo_data->cpus_alloc != sinfo_data->cpus_total)) {
-			my_state &= NODE_STATE_FLAGS;
-			my_state |= NODE_STATE_MIXED;
-		}
 		upper_state = node_state_string(my_state);
 		lower_state = _str_tolower(upper_state);
 		_print_str(lower_state, width, right_justify, true);
@@ -1188,6 +1280,26 @@ int _print_cpu_load(sinfo_data_t * sinfo_data, int width,
 	return SLURM_SUCCESS;
 }
 
+int _print_free_mem(sinfo_data_t * sinfo_data, int width,
+		    bool right_justify, char *suffix)
+{
+	char id[FORMAT_STRING_SIZE];
+
+	if (sinfo_data) {
+		_build_free_mem_min_max_64(id, FORMAT_STRING_SIZE,
+					   sinfo_data->min_free_mem,
+					   sinfo_data->max_free_mem,
+					   true);
+		_print_str(id, width, right_justify, true);
+	} else {
+		_print_str("FREE_MEM", width, right_justify, true);
+	}
+
+	if (suffix)
+		printf("%s", suffix);
+	return SLURM_SUCCESS;
+}
+
 int _print_max_cpus_per_node(sinfo_data_t * sinfo_data, int width,
 			     bool right_justify, char *suffix)
 {
@@ -1219,6 +1331,43 @@ int _print_version(sinfo_data_t * sinfo_data, int width,
 		}
 	} else {
 		_print_str("VERSION", width, right_justify, true);
+	}
+	if (suffix) {
+		printf ("%s", suffix);
+	}
+	return SLURM_SUCCESS;
+
+}
+
+int _print_alloc_mem(sinfo_data_t * sinfo_data, int width,
+		     bool right_justify, char *suffix)
+{
+	char tmp_line[32];
+	if (sinfo_data) {
+		sprintf(tmp_line, "%"PRIu64"", sinfo_data->alloc_memory);
+		_print_str(tmp_line, width, right_justify, true);
+	} else {
+		_print_str("ALLOCMEM", width, right_justify, true);
+	}
+	if (suffix) {
+		printf ("%s", suffix);
+	}
+	return SLURM_SUCCESS;
+}
+
+
+int _print_cluster_name(sinfo_data_t *sinfo_data, int width,
+			bool right_justify, char *suffix)
+{
+	if (sinfo_data) {
+		if (sinfo_data->cluster_name == NULL) {
+			_print_str("N/A", width, right_justify, true);
+		} else {
+			_print_str(sinfo_data->cluster_name, width,
+				   right_justify, true);
+		}
+	} else {
+		_print_str("CLUSTER", width, right_justify, true);
 	}
 	if (suffix) {
 		printf ("%s", suffix);

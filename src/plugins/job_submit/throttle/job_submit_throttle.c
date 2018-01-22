@@ -9,7 +9,7 @@
  *  Written by Morris Jette <jette@schedmd.com>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -38,32 +38,11 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#if HAVE_CONFIG_H
-#  include "config.h"
-#  if STDC_HEADERS
-#    include <string.h>
-#  endif
-#  if HAVE_SYS_TYPES_H
-#    include <sys/types.h>
-#  endif /* HAVE_SYS_TYPES_H */
-#  if HAVE_UNISTD_H
-#    include <unistd.h>
-#  endif
-#  if HAVE_INTTYPES_H
-#    include <inttypes.h>
-#  else /* ! HAVE_INTTYPES_H */
-#    if HAVE_STDINT_H
-#      include <stdint.h>
-#    endif
-#  endif /* HAVE_INTTYPES_H */
-#else /* ! HAVE_CONFIG_H */
-#  include <sys/types.h>
-#  include <unistd.h>
-#  include <stdint.h>
-#  include <string.h>
-#endif /* HAVE_CONFIG_H */
-
+#include <inttypes.h>
 #include <stdlib.h>
+#include <string.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 #include "slurm/slurm_errno.h"
 #include "src/common/slurm_xlator.h"
@@ -93,14 +72,12 @@
  * only load authentication plugins if the plugin_type string has a prefix
  * of "auth/".
  *
- * plugin_version   - specifies the version number of the plugin.
- * min_plug_version - specifies the minumum version number of incoming
- *                    messages that this plugin can accept
+ * plugin_version - an unsigned 32-bit integer containing the Slurm version
+ * (major.minor.micro combined into a single number).
  */
 const char plugin_name[]       	= "Job submit throttle plugin";
 const char plugin_type[]       	= "job_submit/throttle";
-const uint32_t plugin_version   = 110;
-const uint32_t min_plug_version = 100;
+const uint32_t plugin_version   = SLURM_VERSION_NUMBER;
 
 typedef struct thru_put {
 	uint32_t    uid;
@@ -116,13 +93,16 @@ static void _get_config(void)
 {
 	char *opt;
 	char *params = slurm_get_sched_params();
-	/*                    01234567890123456789012 */
-	opt = strstr(params, "jobs_per_user_per_hour=");
-	if (opt)
-		jobs_per_user_per_hour = atoi(opt + 23);
-	info("job_submit/throttle: jobs_per_user_per_hour=%d",
-	     jobs_per_user_per_hour);
-	xfree(params);
+
+	if (params) {
+		/*                    01234567890123456789012 */
+		opt = strstr(params, "jobs_per_user_per_hour=");
+		if (opt)
+			jobs_per_user_per_hour = atoi(opt + 23);
+		info("job_submit/throttle: jobs_per_user_per_hour=%d",
+		     jobs_per_user_per_hour);
+		xfree(params);
+	}
 }
 
 static void _reset_counters(void)

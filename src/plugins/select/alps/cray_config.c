@@ -2,12 +2,12 @@
  *  cray_config.c
  *
  *****************************************************************************
- *  Copyright (C) 2011 SchedMD LLC <http://www.schedmd.com>.
+ *  Copyright (C) 2011 SchedMD LLC <https://www.schedmd.com>.
  *  Supported by the Oak Ridge National Laboratory Extreme Scale Systems Center
  *  Written by Danny Auble <da@schedmd.com>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -40,7 +40,6 @@
 
 #include "src/common/slurm_xlator.h"	/* Must be first */
 #include "src/common/read_config.h"
-#include "src/common/parse_spec.h"
 #include "src/common/xstring.h"
 #include "src/common/xmalloc.h"
 
@@ -57,11 +56,13 @@ s_p_options_t cray_conf_file_options[] = {
 	{"ApbasilTimeout", S_P_UINT16},
 	{"apkill",         S_P_STRING},
 	{"AlpsEngine",     S_P_STRING},
+	{"NoAPIDSignalOnKill", S_P_BOOLEAN},
 	{"SDBdb",          S_P_STRING},
 	{"SDBhost",        S_P_STRING},
 	{"SDBpass",        S_P_STRING},
 	{"SDBport",        S_P_UINT32},
 	{"SDBuser",        S_P_STRING},
+	{"SubAllocate",    S_P_BOOLEAN},
 	{"SyncTimeout",    S_P_UINT32},
 	{NULL}
 };
@@ -96,7 +97,7 @@ extern int create_config(void)
 	}
 	if (cray_conf->slurm_debug_flags & DEBUG_FLAG_SELECT_TYPE)
 		info("Reading the cray.conf file %s", cray_conf_file);
-	
+
 	if (last_config_update) {
 		if (last_config_update == config_stat.st_mtime) {
 			if (cray_conf->slurm_debug_flags
@@ -126,7 +127,10 @@ extern int create_config(void)
 	if (!s_p_get_string(&cray_conf->apkill, "apkill", tbl))
 		cray_conf->apkill = xstrdup(DEFAULT_APKILL);
 
-	s_p_get_string(&cray_conf->alps_engine, "AlpsEngine", tbl);
+	(void) s_p_get_string(&cray_conf->alps_engine, "AlpsEngine", tbl);
+
+	(void) s_p_get_boolean(&cray_conf->no_apid_signal_on_kill,
+			       "NoAPIDSignalOnKill", tbl);
 
 	if (!s_p_get_string(&cray_conf->sdb_db, "SDBdb", tbl))
 		cray_conf->sdb_db = xstrdup(DEFAULT_CRAY_SDB_DB);
@@ -138,6 +142,9 @@ extern int create_config(void)
 		cray_conf->sdb_port = DEFAULT_CRAY_SDB_PORT;
 	if (!s_p_get_string(&cray_conf->sdb_user, "SDBuser", tbl))
 		cray_conf->sdb_user = xstrdup(DEFAULT_CRAY_SDB_USER);
+
+	(void) s_p_get_boolean(&cray_conf->sub_alloc, "SubAllocate", tbl);
+
 	if (!s_p_get_uint32(&cray_conf->sync_timeout, "SyncTimeout", tbl))
 		cray_conf->sync_timeout = DEFAULT_CRAY_SYNC_TIMEOUT;
 
@@ -156,6 +163,7 @@ end_it:
 	info("\tSDBpass=\t%s", cray_conf->sdb_pass);
 	info("\tSDBport=\t%u", cray_conf->sdb_port);
 	info("\tSDBuser=\t%s", cray_conf->sdb_user);
+	info("\tSubAllocate=\t%u", cray_conf->sub_alloc);
 	info("\tSyncTimeout=\t%u", cray_conf->sync_timeout);
 #endif
 	return rc;

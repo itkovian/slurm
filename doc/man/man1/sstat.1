@@ -1,4 +1,4 @@
-.TH SSTAT "1" "August 2011" "sstat 2.3" "Slurm components"
+.TH sstat "1" "Slurm Commands" "April 2015" "Slurm Commands"
 
 .SH "NAME"
 sstat \- Display various status information
@@ -10,7 +10,7 @@ of a running job/step.
 
 .SH "DESCRIPTION"
 .PP
-Status information for running jobs invoked with SLURM.
+Status information for running jobs invoked with Slurm.
 .PP
 The
 .BR "sstat "
@@ -39,7 +39,7 @@ operational.
 .PP
 NOTE:  The
 .BR "sstat "
-command is not supported on Cray or IBM BlueGene systems. 
+command is not supported on Cray ALPS or IBM BlueGene systems.
 
 .TP
 \f3\-a\fP\f3,\fP \f3\-\-allsteps\fP
@@ -66,11 +66,18 @@ lowest step running if not specified, unless the \-\-allsteps flag is
 set where not specifying a step will result in all running steps to be
 displayed.
 NOTE: A step id of 'batch' will display the information about the batch step.
+NOTE: A step id of 'extern' will display the information about the
+extern step.  This step is only available when using PrologFlags=contain
 
 .TP
 \f3\-n\fP\f3,\fP \f3\-\-noheader\fP
 No heading will be added to the output. The default action is to
 display a header.
+
+.TP
+\f3\-\-noconvert\fP
+Don't convert units from their original type (e.g. 2048M won't be converted to
+2G).
 
 .TP
 \f3\-o\fP\f3,\fP \f3\-\-format\fP,\fP \f3\-\-fields\fP
@@ -229,6 +236,15 @@ Total number of tasks in a job or step.
 \f3ReqCPUFreq\fP
 Requested CPU frequency for the step, in kHz.
 
+.SH "ENVIRONMENT VARIABLES"
+.PP
+Some \fBsstat\fR options may be set via environment variables. These
+environment variables, along with their corresponding options, are listed below.
+(Note: commandline options will always override these settings)
+.TP 20
+\fBSLURM_CONF\fR
+The location of the Slurm configuration file.
+
 .SH "EXAMPLES"
 
 .TP
@@ -245,15 +261,15 @@ Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
 .br
 Copyright (C) 2010\-2013 SchedMD LLC.
 .LP
-This file is part of SLURM, a resource management program.
-For details, see <http://slurm.schedmd.com/>.
+This file is part of Slurm, a resource management program.
+For details, see <https://slurm.schedmd.com/>.
 .LP
-SLURM is free software; you can redistribute it and/or modify it under
+Slurm is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free
 Software Foundation; either version 2 of the License, or (at your option)
 any later version.
 .LP
-SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
 WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
 FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
 details.

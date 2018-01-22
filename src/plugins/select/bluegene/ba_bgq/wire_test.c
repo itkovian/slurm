@@ -1,14 +1,12 @@
 /*****************************************************************************\
  *  wire_test.c - used to debug and test wires on any given system.
- *
- *  $Id: block_allocator.c 17495 2009-05-14 16:49:52Z da $
  *****************************************************************************
  *  Copyright (C) 2004 Lawrence Livermore National Security.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Danny Auble <da@llnl.gov>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -37,13 +35,10 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
-#if HAVE_CONFIG_H
-#  include "config.h"
-#endif
-
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <math.h>
+
 #include "../ba_common.h"
 #include "block_allocator.h"
 #include "src/common/uid.h"
@@ -147,7 +142,7 @@ int main(int argc, char** argv)
 	} else
 		info("got back mps %s\n", request->save_name);
 
-	list_destroy(results);
+	FREE_NULL_LIST(results);
 
 /* 	/\* [001x801] *\/ */
 /* 	results = list_create(NULL); */
@@ -170,7 +165,7 @@ int main(int argc, char** argv)
 /* 		       request->geometry[1], */
 /* 		       request->geometry[2]); */
 /* 	} */
-/* 	list_destroy(results); */
+/* 	FREE_NULL_LIST(results); */
 
 	/* [001x801] */
 	results = list_create(NULL);
@@ -200,7 +195,7 @@ int main(int argc, char** argv)
 		       request->geometry[3]);
 	} else
 		info("got back mps %s\n", request->save_name);
-	list_destroy(results);
+	FREE_NULL_LIST(results);
 
 	int dim;
 	int a,b,c,d;
@@ -235,7 +230,7 @@ int main(int argc, char** argv)
 			}
 		}
 	}
-	/* list_destroy(results); */
+	/* FREE_NULL_LIST(results); */
 
 /* 	ba_fini(); */
 

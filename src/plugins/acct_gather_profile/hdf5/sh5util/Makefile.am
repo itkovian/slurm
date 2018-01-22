@@ -7,18 +7,19 @@ AUTOMAKE_OPTIONS = foreign
 # hdf5 could of been installed with a link to the generic mpi.h.
 AM_CPPFLAGS = -I$(top_srcdir) -I../ $(HDF5_CPPFLAGS)
 
-SHDF5_SOURCES = sh5util.c
+SHDF5_SOURCES = sh5util.c sh5util.h
 
 if BUILD_HDF5
 
 bin_PROGRAMS = sh5util
 
 sh5util_SOURCES = $(SHDF5_SOURCES)
-sh5util_LDADD = $(top_builddir)/src/api/libslurm.o $(DL_LIBS) \
+sh5util_LDADD = $(LIB_SLURM) $(DL_LIBS) \
 	../libhdf5_api.la
+sh5util_DEPENDENCIES = $(LIB_SLURM_BUILD) ../libhdf5_api.la
 
 sh5util_LDFLAGS = -export-dynamic $(CMD_LDFLAGS) \
-	$(HWLOC_LDFLAGS) $(HWLOC_LIBS) $(HDF5_LDFLAGS) $(HDF5_LIBS)
+	$(HDF5_LDFLAGS) $(HDF5_LIBS)
 
 force:
 $(sh5util_LDADD) : force

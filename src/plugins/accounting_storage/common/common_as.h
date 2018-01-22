@@ -1,7 +1,5 @@
 /*****************************************************************************\
  *  common_as.h - header for common functions for accounting storage
- *
- *  $Id: common_as.c 13061 2008-01-22 21:23:56Z da $
  *****************************************************************************
  *  Copyright (C) 2004-2007 The Regents of the University of California.
  *  Copyright (C) 2008 Lawrence Livermore National Security.
@@ -9,7 +7,7 @@
  *  Written by Danny Auble <da@llnl.gov>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://slurm.schedmd.com/>.
+ *  For details, see <https://slurm.schedmd.com/>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -50,7 +48,8 @@ extern void dump_update_list(List update_list);
 
 extern int cluster_first_reg(char *host, uint16_t port, uint16_t rpc_version);
 
-extern int set_usage_information(char **usage_table, slurmdbd_msg_type_t type,
+extern int set_usage_information(char **usage_table,
+				 slurmdbd_msg_type_t type,
 				 time_t *usage_start, time_t *usage_end);
 
 extern void merge_delta_qos_list(List qos_list, List delta_qos_list);
