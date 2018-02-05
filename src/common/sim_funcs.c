@@ -2,7 +2,7 @@
 
 #include "src/common/sim_funcs.h"
 #include "src/common/slurm_protocol_defs.h"
-
+#include <err.h>
 /* Structures, macros and other definitions */
 //#define LIBC_PATH  "/lib/x86_64-linux-gnu/libc.so.6"
 
@@ -26,6 +26,7 @@ int             * slurmctl_pid;     /* Shared Memory */
 int             * slurmd_pid;       /* Shared Memory */
 char            * global_sync_flag; /* Shared Memory */
 int             * trace_recs_end_sim; /* Shared Memory */
+int             * slurmd_registered;/* Shared Memory */ /*ANA: Replacing signals with shared vars for slurmd registration ***/
 char            * users_sim_path = NULL;
 
 extern void         * timemgr_data;  /* Shared Memory */
@@ -37,6 +38,7 @@ extern char         * default_slurm_config_file;
 /* Function Prototypes */
 static void init_funcs();
 void init_shared_memory_if_needed();
+static int getting_simulation_users();
 
 time_t time(time_t *t) {
 	init_shared_memory_if_needed();
@@ -124,6 +126,7 @@ int attaching_shared_memory() {
 	slurmd_pid       = timemgr_data + SIM_PTHREAD_SLURMD_PID;
 	global_sync_flag = timemgr_data + SIM_GLOBAL_SYNC_FLAG_OFFSET;
 	trace_recs_end_sim = timemgr_data + SIM_TRACE_RECS_END_SIM_OFFSET;
+	slurmd_registered = timemgr_data + SIM_SLURMD_REGISTERED_OFFSET; /*ANA: Replacing signals with shared vars for slurmd registration ***/ 
 
 	return 0;
 }
@@ -273,11 +276,11 @@ void determine_users_sim_path() {
 	}
 }
 
-int getting_simulation_users() {
+static int getting_simulation_users() {
 	char              username[100], users_sim_file_name[128];
 	char              uid_string[10];
 	sim_user_info_t * new_sim_user;
-	uid_t             sim_uid;
+	//uid_t             sim_uid;
 	int               fich, pos;
 	char              c;
 
@@ -338,6 +341,7 @@ int getting_simulation_users() {
 		new_sim_user->next = sim_users_list;
 		sim_users_list = new_sim_user;
 	}
+	return 0;
 }
 
 /*
@@ -401,5 +405,59 @@ void __attribute__ ((constructor)) sim_init(void) {
 
 	debug("sim_init: done");
 }
+/*************ANA: Replacing signals with shared vars for slurmd registration *****/
+int
+sim_open_sem(char * sem_name, sem_t ** mutex_sync, int max_attempts)
+{       
+        int iter = 0, max_iter = max_attempts;
+        if (!max_iter) max_iter = 10;
+        while ((*mutex_sync) == SEM_FAILED && iter < max_iter) {
+                (*mutex_sync) = sem_open(sem_name, 0, 0755, 0);
+                if ((*mutex_sync) == SEM_FAILED && max_iter > 1) {
+                        int err = errno;
+                        info("ERROR! Could not open semaphore (%s)-- %s",
+                                        sem_name, strerror(err));
+                        sleep(1);
+                }
+                ++iter;
+        }
+        
+        if ((*mutex_sync) == SEM_FAILED)
+                return -1;
+        else    
+                return 0;
+}
+
+void
+sim_perform_slurmd_register(char * sem_name, sem_t ** mutex_sync)
+{
+        if (*mutex_sync != SEM_FAILED) {
+                sem_wait(*mutex_sync);
+        } else {
+                while ( *mutex_sync == SEM_FAILED ) {
+                        sim_open_sem(sem_name, mutex_sync, 0);
+                }
+                sem_wait(*mutex_sync);
+        }
+
+        *slurmd_registered += 1;
+	info("sim_funcs: .. slurmd_registered: %d", *slurmd_registered);
+        if(sem_post(*mutex_sync)!=0){
+		info("error: in sim_funcs at sem_post when closing semaphore");
+	}
+}
+
+void
+sim_close_sem(sem_t ** mutex_sync)
+{
+	info("sim_close_sem: closing semaphore");
+        if ((*mutex_sync) != SEM_FAILED) {
+		//info("sim_close_sem: closing semaphore");
+                if(sem_close((*mutex_sync))!=0){
+			info("error: in sim_funcs at sem_close when closing semaphore");
+		}
+        }
+}
+/**********************************************************************************/
 
 #endif

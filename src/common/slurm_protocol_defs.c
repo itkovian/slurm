@@ -1232,12 +1232,16 @@ extern void slurm_free_kill_job_msg(kill_job_msg_t * msg)
 
 extern void slurm_free_sim_job_msg(sim_job_msg_t *msg)
 {
-       xfree(msg);
+	if(msg){
+       		xfree(msg);
+	}
 }
 
 extern void slurm_free_sim_helper_msg(sim_helper_msg_t *msg)
 {
-       xfree(msg);
+	if(msg){
+       		xfree(msg);
+	}
 }
 
 extern void slurm_free_update_job_time_msg(job_time_msg_t * msg)
@@ -4205,6 +4209,7 @@ extern int slurm_free_msg_data(slurm_msg_type_t type, void *data)
                 break;
         case MESSAGE_SIM_HELPER_CYCLE:
                 slurm_free_sim_helper_msg(data);
+		break;
 	case REQUEST_SUSPEND:
 	case SRUN_REQUEST_SUSPEND:
 		slurm_free_suspend_msg(data);

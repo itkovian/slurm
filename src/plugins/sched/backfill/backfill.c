@@ -166,6 +166,7 @@ static long bf_sched_counter = 0;
 static long bf_sched_checked = 0;
 static long bf_sched_queue_len = 0;
 static long bf_sched_backfilled = 0;
+
 /*********************** local variables *********************/
 static bool stop_backfill = false;
 static pthread_mutex_t thread_flag_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -174,7 +175,9 @@ static pthread_cond_t  term_cond = PTHREAD_COND_INITIALIZER;
 static pthread_mutex_t config_lock = PTHREAD_MUTEX_INITIALIZER;
 static bool config_flag = false;
 static uint64_t debug_flags = 0;
-static int backfill_interval = BACKFILL_INTERVAL;
+#ifndef SLURM_SIMULATOR
+static int backfill_interval = BACKFILL_INTERVAL; // if it is simulator backfill interval will be a global variable
+#endif
 static int bf_max_time = BACKFILL_INTERVAL;
 static int backfill_queue_limit = BACKFILL_QUEUE_LIMIT;
 static int backfill_resolution = BACKFILL_RESOLUTION;
@@ -584,6 +587,7 @@ static void _load_config(void)
 
 	if (sched_params && (tmp_ptr = strstr(sched_params, "bf_interval="))) {
 		backfill_interval = atoi(tmp_ptr + 12);
+		debug("SchedulerParameters bf_interval: %d", backfill_interval);
 		if (backfill_interval < 1) {
 			error("Invalid SchedulerParameters bf_interval: %d",
 			      backfill_interval);
@@ -919,6 +923,7 @@ int open_BF_sync_semaphore_pg() {
 void close_BF_sync_semaphore() {
         if(mutex_bf_pg != SEM_FAILED) sem_close(mutex_bf_pg);
         if(mutex_bf_done_pg != SEM_FAILED) sem_close(mutex_bf_done_pg);
+	debug("backfill_agent: Closing BF sync sempahore");
 }
 #endif
 
@@ -940,6 +945,8 @@ extern void *backfill_agent(void *args)
 	bool load_config;
 	bool short_sleep = false;
 	int backfill_cnt = 0;
+
+	debug("Inside backfill agent");
 
 #if HAVE_SYS_PRCTL_H
 	if (prctl(PR_SET_NAME, "bckfl", NULL, NULL, NULL) < 0) {
@@ -980,10 +987,12 @@ extern void *backfill_agent(void *args)
 			load_config = false;
 		}
 		slurm_mutex_unlock(&config_lock);
-		if (load_config)
+		if (load_config){
 			_load_config();
+		}
 		now = time(NULL);
 		wait_time = difftime(now, last_backfill_time);
+		//debug("backfill_agent: now %ld, wait_time %ld", now, wait_time);
 #ifndef SLURM_SIMULATOR
 		if ((wait_time < backfill_interval) ||
 		    job_is_completing(NULL) || _many_pending_rpcs() ||
@@ -992,10 +1001,14 @@ extern void *backfill_agent(void *args)
 			continue;
 		}
 #endif
+
 #ifdef SLURM_SIMULATOR
-                debug("backfill: now %e, last_backfill_time %e, wait_time %e, backfill_interval %d, job_is_completing %d, many_pending_rpcs %d, !avail_front_end %d, !more_work %d", now, last_backfill_time, wait_time, backfill_interval, _job_is_completing(), _many_pending_rpcs(), !avail_front_end(NULL), !_more_work(last_backfill_time));
-                if (!((wait_time < backfill_interval) ||
-                    _job_is_completing() || _many_pending_rpcs() ||
+                //debug("backfill: now %ld, last_backfill_time %ld, wait_time %ld, backfill_interval %d, job_is_completing %d, many_pending_rpcs %d, !avail_front_end %d, !more_work %d", now, last_backfill_time, wait_time, backfill_interval, _job_is_completing(), _many_pending_rpcs(), !avail_front_end(NULL), !_more_work(last_backfill_time));
+                debug("backfill: now %ld, last_backfill_time %ld, wait_time %lf, backfill_interval %d ", now, last_backfill_time, wait_time, backfill_interval);
+                /*if (!((wait_time < backfill_interval) ||
+                    job_is_completing(NULL) || _many_pending_rpcs() ||
+                    !avail_front_end(NULL) || !_more_work(last_backfill_time))) {*/
+		if (!(job_is_completing(NULL) || _many_pending_rpcs() ||
                     !avail_front_end(NULL) || !_more_work(last_backfill_time))) {
 			lock_slurmctld(all_locks);
 			if ((backfill_cnt++ % 2) == 0)
@@ -1031,6 +1044,7 @@ static int _clear_job_start_times(void *x, void *arg)
  * partition state or the backfill scheduler needs to be stopped. */
 static int _yield_locks(int usec)
 {
+#ifndef SLURM_SIMULATOR
 	slurmctld_lock_t all_locks = {
 		READ_LOCK, WRITE_LOCK, WRITE_LOCK, READ_LOCK, READ_LOCK };
 	time_t job_update, node_update, part_update;
@@ -1064,6 +1078,9 @@ static int _yield_locks(int usec)
 		return 0;
 	else
 		return 1;
+#else
+	return 0;
+#endif
 }
 
 /* Test if this job still has access to the specified partition. The job's
@@ -1112,7 +1129,7 @@ static bool _job_runnable_now(struct job_record *job_ptr)
 	return true;
 }
 
-static int _attempt_backfill(void)
+static int attempt_backfill(void)
 {
 	DEF_TIMERS;
 	List job_queue;
@@ -1338,7 +1355,7 @@ static int _attempt_backfill(void)
 			}
 			if (stop_backfill)
 				break;
-			/* Reset backfill scheduling timers, resume testing */
+			// Reset backfill scheduling timers, resume testing
 			sched_start = time(NULL);
 			gettimeofday(&start_tv, NULL);
 			job_test_count = 0;
@@ -1822,26 +1839,26 @@ next_task:
 			if (stop_backfill)
 				break;
 
-			/* Reset backfill scheduling timers, resume testing */
+			//Reset backfill scheduling timers, resume testing
 			sched_start = time(NULL);
 			gettimeofday(&start_tv, NULL);
 			job_test_count = 1;
 			test_time_count = 0;
 			START_TIMER;
 
-			/* With bf_continue configured, the original job could
-			 * have been scheduled or cancelled and purged.
-			 * Revalidate job the record here. */
+			// With bf_continue configured, the original job could
+			// have been scheduled or cancelled and purged.
+			// Revalidate job the record here.
 			if ((job_ptr->magic  != JOB_MAGIC) ||
 			    (job_ptr->job_id != save_job_id))
 				continue;
 			if (!_job_runnable_now(job_ptr))
 				continue;
 			if (!avail_front_end(job_ptr))
-				continue;	/* No available frontend */
+				continue;	// No available frontend
 			if (!job_independent(job_ptr, 0)) {
-				/* No longer independent
-				 * (e.g. another singleton started) */
+				// No longer independent
+				//(e.g. another singleton started)
 				continue;
 			}
 
@@ -2645,7 +2662,8 @@ static bool _more_work (time_t last_backfill_time)
 		rc = true;
 	}
 	slurm_mutex_unlock( &thread_flag_mutex );
-
+	if(rc)
+		debug2("last bf %d, last job update %d, last node update %d, last part update %d", last_backfill_time, last_job_update, last_node_update, last_part_update);
 	return rc;
 }
 

@@ -45,7 +45,7 @@ int sim_mgr_debug_level = 9;
 
 #define sim_mgr_debug(debug_level, ...) \
     ({ \
-     if(debug_level >= sim_mgr_debug_level) \
+     if(debug_level <= sim_mgr_debug_level) \
      printf(__VA_ARGS__); \
      })
 
@@ -58,6 +58,9 @@ char* sim_daemons_path = NULL;
 
 char SEM_NAME[] = "serversem";
 sem_t* mutexserver;
+/*ANA: Replacing signals with shared vars for slurmd registration ***/
+char    sig_sem_name[]  = "signalsem";
+sem_t* mutexsignal = SEM_FAILED;
 
 static pid_t pid[2] = {-1, -1};
 static int launch_daemons = 0;
@@ -238,11 +241,12 @@ char *re_write_dependencies(char *dep_string) {
 }
 
 /* handler to USR2 signal*/
-void
+/*void
 handlerSignal(int signo) {
-	signaled++;
 	printf ("SIM_MGR [%d] got a %d signal--signaled: %d\n", getpid(), signo, signaled);
-}
+	//signaled++;
+	*slurmd_registered += 1; /*ANA: Replacing signals with shared vars for slurmd registration ***/
+//}*/
 
 
 void
@@ -300,6 +304,7 @@ time_mgr(void *arg) {
 	current_sim      = timemgr_data + SIM_SECONDS_OFFSET;
 	current_micro    = timemgr_data + SIM_MICROSECONDS_OFFSET;
 	global_sync_flag = timemgr_data + SIM_GLOBAL_SYNC_FLAG_OFFSET;
+	slurmd_registered = timemgr_data + SIM_SLURMD_REGISTERED_OFFSET; /*ANA: Replacing signals with shared vars for slurmd registration ***/
 
 	memset(timemgr_data, 0, 32); /* st on 14-October-2015 moved from build_shared_memory to here as only sim_mgr should change the values, even if someone else "built" the shm segment. */
 
@@ -307,17 +312,28 @@ time_mgr(void *arg) {
 	current_micro[0] = 0;
 
 	/*signal (SIGUSR2, handlerSignal);*/
-	printf("Waiting for signals, signaled: %d...\n", signaled);
+	/*printf("Waiting for signals, signaled: %d...\n", signaled);
 	info("Waiting for signals..\n");
 	sleep(5);
 	while (signaled < 1 ){
 		printf("... signaled: %d\n", signaled);
 		sleep(5); 
-	}
-printf("Done waiting.\n");
+	}*/
+	/*ANA: Replacing signals with shared vars for slurmd registration ***/
+	info("Waiting for slurmd registrations, slurmd_registered: %d...",
+                                *slurmd_registered);
+	//sleep(5);
+        while (*slurmd_registered < 1 ) {
+		info("before ... slurmd_registered: %d", *slurmd_registered);
+                sleep(5);
+                info("after ... slurmd_registered: %d", *slurmd_registered);
+        }
+
+	info("Done waiting.\n");
+
 #ifdef DEBUG
 	gettimeofday(&t1, NULL);
-	printf("SIM_MGR[%u][%ld][%ld]\n", current_sim[0], t1.tv_sec, t1.tv_usec);
+	info("SIM_MGR[%u][%ld][%ld]\n", current_sim[0], t1.tv_sec, t1.tv_usec);
 #endif
 
 	/* Main simulation manager loop */
@@ -399,7 +415,7 @@ printf("Done waiting.\n");
 			 */
 
 #ifdef DEBUG
-			printf("time_mgr: current %u and next trace %ld\n",
+			info("time_mgr: current %u and next trace %ld\n",
 					*(current_sim), trace_head->submit);
 #endif
 
@@ -408,7 +424,7 @@ printf("Done waiting.\n");
 				job_trace_t *temp_ptr;
 
 #ifdef DEBUG
-				printf("[%d] time_mgr--current simulated time: "
+				info("[%d] time_mgr--current simulated time: "
 				       "%u\n", __LINE__, *current_sim);
 #endif
 
@@ -429,8 +445,9 @@ printf("Done waiting.\n");
 		}
 
 		/* Synchronization with daemons */
+		//info("before unlocking next loop");
 		sem_wait(mutexserver);
-		debug3("unlocking next loop");
+		info("unlocking next loop");
 		*global_sync_flag = 1;
 		sem_post(mutexserver);
 		while(1) {
@@ -457,10 +474,10 @@ printf("Done waiting.\n");
 				1000000.0;
 		//printf("sim_mgr loop iteration time %lu, SU: %f, sim_inc: %d, sim_time: %d\n",
 		//		i_loop.tv_usec, speed_up, time_incr, *(current_sim));
-#ifdef DEBUG
-		printf("[%d] time_mgr--current simulated time: %lu\n",
+//#ifdef DEBUG
+		info("[%d] time_mgr--current simulated time: %lu\n",
 					__LINE__, *current_sim);
-#endif
+//#endif
 	}
 
 	return 0;
@@ -836,8 +853,20 @@ open_global_sync_semaphore() {
 
 	return 0;
 }
+/*ANA: Replacing signals with shared vars for slurmd registration ***/
+static int
+open_slurmd_ready_semaphore()
+{
+        mutexsignal = sem_open(sig_sem_name, O_CREAT, 0755, 1);
+        if(mutexsignal == SEM_FAILED) {
+                perror("unable to create mutexsignal semaphore");
+                sem_unlink(sig_sem_name);
+                return -1;
+        }
 
-
+        return 0;
+}
+/**********************************************************************/
 int
 main(int argc, char *argv[], char *envp[]) {
 
@@ -848,7 +877,16 @@ main(int argc, char *argv[], char *envp[]) {
 	struct stat buf;
 	int ix, envcount = countEnvVars(envp);
 
-	signal (SIGUSR2, handlerSignal);
+	/*struct sigaction sa;
+	sa.sa_handler = handlerSignal;
+
+	if(sigaction(SIGUSR2, &sa, NULL) == -1){
+		printf("SIM_MGR: Unable to create handler for SIGUSR2!\n");
+	}*/
+
+	/*if (signal (SIGUSR2, handlerSignal) == SIG_ERR){
+		printf("SIM_MGR: Unable to create handler for SIGUSR2!\n");
+	}*/
 
 	_create_job_id_list();
 	if ( !getArgs(argc, argv) ) {
@@ -856,7 +894,7 @@ main(int argc, char *argv[], char *envp[]) {
 		exit(-1);
 	}
 
-	printf("SIM_MGR_PID is %d", getpid());
+	printf("SIM_MGR_PID is %d\n", getpid());
 
 	/* Determine location of the simulator library and Slurm daemons */
 
@@ -908,6 +946,11 @@ main(int argc, char *argv[], char *envp[]) {
 		printf("Error opening the global synchronization semaphore.\n");
 		return -1;
 	};
+	/*ANA: Replacing signals with shared vars for slurmd registration ***/
+	if (open_slurmd_ready_semaphore() < 0) {
+                error("Error opening the Simulator Slurmd-ready semaphore.");
+                return -1;
+        };
 
         if(init_job_trace() < 0){
                 printf("An error was detected when reading trace file. "

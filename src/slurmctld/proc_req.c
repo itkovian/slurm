@@ -417,7 +417,7 @@ void slurmctld_req(slurm_msg_t *msg, connection_arg_t *arg)
 		break;
 	case MESSAGE_SIM_HELPER_CYCLE:
                _slurm_rpc_sim_helper_cycle(msg);
-               slurm_free_sim_helper_msg(msg->data);
+               //slurm_free_sim_helper_msg(msg->data);
                break;
 	case REQUEST_JOB_ALLOCATION_INFO:
 	case DEFUNCT_REQUEST_JOB_ALLOCATION_INFO_LITE:
@@ -7120,7 +7120,7 @@ inline static void  _slurm_rpc_set_fs_dampening_factor(slurm_msg_t *msg)
 	info("Set FairShareDampeningFactor to %u", factor);
 	slurm_send_rc_msg(msg, SLURM_SUCCESS);
 }
-
+#ifdef SLURM_SIMULATOR
 char BF_SEM_NAME[] = "bf_sem";
 char BF_DONE_SEM_NAME[] = "bf_done_sem";
 sem_t* mutex_bf=NULL;
@@ -7194,11 +7194,13 @@ static void _slurm_rpc_sim_helper_cycle(slurm_msg_t * msg)
                 last_helper_schedule_time=current_time;
         }
         if (last_helper_backfill_time==0 ||
-                (current_time-last_helper_backfill_time)>HELPER_BACKFILL_PERIOD_S) {
-                info("unlocking backfill");
+                /*(current_time-last_helper_backfill_time)>HELPER_BACKFILL_PERIOD_S) {*/
+                (current_time-last_helper_backfill_time)>backfill_interval) {
+                info("unlocking backfill, backfill_interval %d", backfill_interval);
                 do_backfill();
                 last_helper_backfill_time=current_time;
         }
 
         slurm_send_rc_msg(msg, SLURM_SUCCESS);
 }
+#endif

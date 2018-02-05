@@ -214,7 +214,9 @@ FILE *stats = NULL;
 char SEM_NAME[]         = "serversem";
 sem_t* mutexserver      = SEM_FAILED;
 int total_log_jobs=0;
+int backfill_interval=30; //initialize here global variable backfill interval to the default value
 #endif
+
 
 /*
  * Static list of signals to block in this process
@@ -309,7 +311,6 @@ int main(int argc, char **argv)
 	_kill_old_slurmctld();
 
 	total_log_jobs= *trace_recs_end_sim; /* ANA: shared memory variable stored in a global variable, as it will not be changed by another process, to avoid accessing shared memory every time. */
-
 	for (i = 0; i < 3; i++)
 		fd_set_close_on_exec(i);
 
@@ -1170,13 +1171,16 @@ void *_service_connection(void *arg)
 {
 	connection_arg_t *conn = (connection_arg_t *) arg;
 	void *return_code = NULL;
+	//slurm_msg_t msg;
 	slurm_msg_t msg;
-
+	int do_sync_flag=0;
+	
 #if HAVE_SYS_PRCTL_H
 	if (prctl(PR_SET_NAME, "srvcn", NULL, NULL, NULL) < 0) {
 		error("%s: cannot set my name to %s %m", __func__, "srvcn");
 	}
 #endif
+	debug("In service_connection");
 	slurm_msg_t_init(&msg);
 /*      if (msg->msg_type == MESSAGE_SIM_HELPER_CYCLE)
                 if(open_global_sync_sem() == -1)
@@ -1196,7 +1200,6 @@ void *_service_connection(void *arg)
 		close(conn->newsockfd);
 		goto cleanup;
 	}
-
 	if (errno != SLURM_SUCCESS) {
 		if (errno == SLURM_PROTOCOL_VERSION_ERROR) {
 			slurm_send_rc_msg(&msg, SLURM_PROTOCOL_VERSION_ERROR);
@@ -1211,12 +1214,22 @@ void *_service_connection(void *arg)
 		error ("close(%d): %m",  conn->newsockfd);
 
 cleanup:
-	if (msg.msg_type == MESSAGE_SIM_HELPER_CYCLE)
-                perform_global_sync(); /* st on 20151020 */
+	if (msg.msg_type == MESSAGE_SIM_HELPER_CYCLE){
+                do_sync_flag=1;
+        }
 	slurm_free_msg_members(&msg);
 	xfree(arg);
 	server_thread_decr();
-	pthread_exit(NULL);
+	if (do_sync_flag){
+                perform_global_sync(); /* st on 20151020 */
+		//slurm_free_sim_helper_msg(msg);
+	} //else{
+	//usleep(1000);
+	//slurm_free_msg_members(&msg);
+	//}
+	//xfree(arg);
+        //server_thread_decr();
+	pthread_exit(NULL); /*This line does not exist in v17 only in simulator-v14*/
 	return return_code;
 }
 

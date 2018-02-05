@@ -898,7 +898,8 @@ rwfail:
 extern void jobacctinfo_pack(jobacctinfo_t *jobacct,
 			     uint16_t rpc_version, uint16_t protocol_type,
 			     Buf buffer)
-{
+{	
+	int i = 0;
 	bool no_pack;
 
 	no_pack = (!plugin_polling && (protocol_type != PROTOCOL_TYPE_DBD));
@@ -909,6 +910,17 @@ extern void jobacctinfo_pack(jobacctinfo_t *jobacct,
 			return;
 		}
 		pack8((uint8_t) 1, buffer);
+
+/*#ifdef SLURM_SIMULATOR
+                for (i = 0; i < 6; i++)
+                        pack64(0, buffer);
+                for (i = 0; i < 8; i++)
+                        pack32((uint32_t) 0, buffer);
+                for (i = 0; i < 4; i++)
+                        packdouble((double) 0, buffer);
+                for (i = 0; i < 6; i++)
+                        _pack_jobacct_id(NULL, rpc_version, buffer);
+#endif */
 
 		pack32((uint32_t)jobacct->user_cpu_sec, buffer);
 		pack32((uint32_t)jobacct->user_cpu_usec, buffer);

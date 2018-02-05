@@ -11691,7 +11691,9 @@ _pack_complete_batch_script_msg(
 	complete_batch_script_msg_t * msg, Buf buffer,
 	uint16_t protocol_version)
 {
+	xassert ( msg != NULL );
 	if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
+#ifndef SLURM_SIMULATOR
 		jobacctinfo_pack(msg->jobacct, protocol_version,
 				 PROTOCOL_TYPE_SLURM, buffer);
 		pack32(msg->job_id, buffer);
@@ -11699,6 +11701,12 @@ _pack_complete_batch_script_msg(
 		pack32(msg->slurm_rc, buffer);
 		pack32(msg->user_id, buffer);
 		packstr(msg->node_name, buffer);
+#else
+		pack32(msg->job_id, buffer);
+                pack32(msg->job_rc, buffer);
+                pack32(msg->slurm_rc, buffer);
+		packstr(msg->node_name, buffer);
+#endif
 	} else {
 		error("_pack_complete_batch_script_msg: protocol_version "
 		      "%hu not supported", protocol_version);
@@ -11713,10 +11721,12 @@ _unpack_complete_batch_script_msg(
 	complete_batch_script_msg_t *msg;
 	uint32_t uint32_tmp;
 
+	xassert ( msg_ptr != NULL );
 	msg = xmalloc(sizeof(complete_batch_script_msg_t));
 	*msg_ptr = msg;
 
 	if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
+#ifndef SLURM_SIMULATOR
 		if (jobacctinfo_unpack(&msg->jobacct, protocol_version,
 				       PROTOCOL_TYPE_SLURM, buffer, 1)
 		    != SLURM_SUCCESS)
@@ -11726,6 +11736,12 @@ _unpack_complete_batch_script_msg(
 		safe_unpack32(&msg->slurm_rc, buffer);
 		safe_unpack32(&msg->user_id, buffer);
 		safe_unpackstr_xmalloc(&msg->node_name, &uint32_tmp, buffer);
+#else
+		safe_unpack32(&msg->job_id, buffer);
+                safe_unpack32(&msg->job_rc, buffer);
+                safe_unpack32(&msg->slurm_rc, buffer);
+		safe_unpackstr_xmalloc(&msg->node_name, &uint32_tmp, buffer);
+#endif
 	} else {
 		error("_unpack_complete_batch_script_msg: protocol_version "
 		      "%hu not supported", protocol_version);
@@ -13946,7 +13962,8 @@ static int  _unpack_sim_job_msg(sim_job_msg_t **msg_ptr, Buf buffer)
 unpack_error:
     info("SIM: unpack_sim_job_msg error!\n");
        *msg_ptr = NULL;
-       slurm_free_suspend_msg(msg);
+       //slurm_free_suspend_msg(msg);
+       slurm_free_sim_job_msg(msg);
        return SLURM_ERROR;
 }
 
@@ -13964,7 +13981,8 @@ static int  _unpack_sim_helper_msg(sim_helper_msg_t **msg_ptr, Buf buffer)
 unpack_error:
     info("SIM: unpack_sim_helper_msg error!\n");
        *msg_ptr = NULL;
-       slurm_free_suspend_msg(msg);
+       //slurm_free_suspend_msg(msg);
+       slurm_free_sim_helper_msg(msg);
        return SLURM_ERROR;
 }
 

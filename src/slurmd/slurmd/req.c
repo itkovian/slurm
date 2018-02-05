@@ -372,7 +372,12 @@ slurmd_req(slurm_msg_t *msg)
 	case REQUEST_TERMINATE_JOB:
 		debug2("Processing RPC: REQUEST_TERMINATE_JOB");
 		last_slurmctld_msg = time(NULL);
-		_rpc_terminate_job(msg);
+#ifndef SLURM_SIMULATOR
+                _rpc_terminate_job(msg);
+#else
+                simulator_rpc_terminate_job(msg);
+#endif
+                info("RPC TERMINATE_JOB FINISHED\n");
 		break;
 	case REQUEST_COMPLETE_BATCH_SCRIPT:
 		debug2("Processing RPC: REQUEST_COMPLETE_BATCH_SCRIPT");
