@@ -1417,6 +1417,8 @@ extern void slurm_free_checkpoint_msg(checkpoint_msg_t *msg);
 extern void slurm_free_checkpoint_comp_msg(checkpoint_comp_msg_t *msg);
 extern void slurm_free_checkpoint_task_comp_msg(checkpoint_task_comp_msg_t *msg);
 extern void slurm_free_checkpoint_resp_msg(checkpoint_resp_msg_t *msg);
+extern void slurm_free_sim_job_msg(sim_job_msg_t *msg);
+extern void slurm_free_sim_helper_msg(sim_helper_msg_t *msg);
 extern void slurm_free_suspend_msg(suspend_msg_t *msg);
 extern void slurm_free_suspend_int_msg(suspend_int_msg_t *msg);
 extern void slurm_free_top_job_msg(top_job_msg_t *msg);
