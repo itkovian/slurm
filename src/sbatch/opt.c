@@ -2751,8 +2751,29 @@ static void _parse_pbs_resource_list(char *rl)
 			xfree(temp);
 			_get_next_pbs_option(rl, &i);
 		} else if (!xstrncmp(rl+i, "pvmem=", 6)) {
+			int end = 0;
+
 			i+=6;
-			_get_next_pbs_option(rl, &i);
+			temp = _get_pbs_option_value(rl, &i, ',');
+			if (!temp) {
+				error("No value given for pvmem");
+				exit(error_exit);
+			}
+			end = strlen(temp) - 1;
+			if (toupper(temp[end]) == 'B') {
+				/* In Torque they do GB or MB on the
+				 * end of size, we just want G or M so
+				 * we will remove the b on the end
+				 */
+				temp[end] = '\0';
+			}
+			opt.mem_per_cpu = (int) str_to_mbytes(temp);
+			if (opt.mem_per_cpu < 0) {
+				error("invalid pvmem memory per cpu constraint %s", temp);
+				exit(error_exit);
+			}
+
+			xfree(temp);
 		} else if (!xstrncasecmp(rl+i, "select=", 7)) {
 			i += 7;
 			temp = _get_pbs_option_value(rl, &i, ':');
