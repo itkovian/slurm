@@ -2382,14 +2382,19 @@ static void _parse_pbs_nodes_opts(char *node_opts)
 {
 	int i = 0;
 	char *temp = NULL;
-	int ppn = 0;
+	int tasks = 0;
+    int ppn = 0;
+	int max_ppn = 0;
 	int node_cnt = 0;
 	hostlist_t hl = hostlist_create(NULL);
 
 	while (node_opts[i]) {
 		if (!xstrncmp(node_opts+i, "ppn=", 4)) {
 			i+=4;
-			ppn += strtol(node_opts+i, NULL, 10);
+            ppn = strtol(node_opts+i, NULL, 10);
+			tasks += ppn;
+            if (ppn > max_ppn)
+                max_ppn = ppn;
 			_get_next_pbs_node_part(node_opts, &i);
 		} else if (isdigit(node_opts[i])) {
 			node_cnt += strtol(node_opts+i, NULL, 10);
@@ -2410,11 +2415,16 @@ static void _parse_pbs_nodes_opts(char *node_opts)
 		opt.min_nodes = opt.max_nodes = node_cnt;
 	}
 
-	if (ppn) {
-		ppn *= node_cnt;
+	if (tasks) {
+		tasks *= node_cnt;
 		opt.ntasks_set = true;
-		opt.ntasks = ppn;
+		opt.ntasks = tasks;
 	}
+
+    if (max_ppn) {
+        opt.ntasks_per_node = max_ppn;
+        pack_env.ntasks_per_node = max_ppn;
+    }
 
 	if (hostlist_count(hl) > 0) {
 		xfree(opt.nodelist);
