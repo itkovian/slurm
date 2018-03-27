@@ -69,6 +69,8 @@
 #define PROTOCOL_TYPE_SLURM 0
 #define PROTOCOL_TYPE_DBD 1
 
+#define SLURM_CPUACCT_PERCPU_SIZE 128
+
 struct lustre_data {
 	uint64_t	reads;
 	uint64_t	writes;
@@ -88,6 +90,8 @@ struct jobacctinfo {
 	uint32_t sys_cpu_usec;
 	uint32_t user_cpu_sec;
 	uint32_t user_cpu_usec;
+    uint32_t percpu_cores; /* available cores in the job */
+    uint32_t percpu_usage_sec[SLURM_CPUACCT_PERCPU_SIZE]; /* usage seconds over each core */
 	uint64_t max_vsize; /* max size of virtual memory */
 	jobacct_id_t max_vsize_id; /* contains which task number it was on */
 	uint64_t tot_vsize; /* total virtual memory

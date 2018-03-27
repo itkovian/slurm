@@ -618,6 +618,8 @@ extern jobacctinfo_t *jobacctinfo_create(jobacct_id_t *jobacct_id)
 	jobacct->sys_cpu_usec = 0;
 	jobacct->user_cpu_sec = 0;
 	jobacct->user_cpu_usec = 0;
+    jobacct->percpu_cores = 0;
+    memset(jobacct->percpu_usage_sec, 0, SLURM_CPUACCT_PERCPU_SIZE * sizeof(uint64_t));
 
 	jobacct->max_vsize = 0;
 	memcpy(&jobacct->max_vsize_id, jobacct_id, sizeof(jobacct_id_t));
@@ -690,6 +692,9 @@ extern int jobacctinfo_setinfo(jobacctinfo_t *jobacct,
 			jobacct->sys_cpu_sec = rusage->ru_stime.tv_sec;
 		jobacct->sys_cpu_usec = rusage->ru_stime.tv_usec;
 		break;
+    case JOBACCT_PERCPU_USAGE:
+        // not offered yet, use JOBACCT_DATA_TOTAL if you want this captured
+        break;
 	case JOBACCT_DATA_MAX_RSS:
 		jobacct->max_rss = *uint64;
 		break;
@@ -807,6 +812,9 @@ extern int jobacctinfo_getinfo(
 		rusage->ru_stime.tv_sec = jobacct->sys_cpu_sec;
 		rusage->ru_stime.tv_usec = jobacct->sys_cpu_usec;
 		break;
+    case JOBACCT_PERCPU_USAGE:
+        // nothing yet, use JOBACCT_DATA_TOTAL if you want this
+        break;
 	case JOBACCT_DATA_MAX_RSS:
 		*uint64 = jobacct->max_rss;
 		break;
@@ -882,6 +890,7 @@ extern void jobacctinfo_pack(jobacctinfo_t *jobacct,
 			     Buf buffer)
 {
 	bool no_pack;
+    int i = 0;
 
 	no_pack = (!plugin_polling && (protocol_type != PROTOCOL_TYPE_DBD));
 
@@ -896,6 +905,10 @@ extern void jobacctinfo_pack(jobacctinfo_t *jobacct,
 		pack32((uint32_t)jobacct->user_cpu_usec, buffer);
 		pack32((uint32_t)jobacct->sys_cpu_sec, buffer);
 		pack32((uint32_t)jobacct->sys_cpu_usec, buffer);
+        pack32((uint32_t)jobacct->percpu_cores, buffer);
+        for(i = 0; i < SLURM_CPUACCT_PERCPU_SIZE; i++) {
+            pack32((uint32_t)jobacct->percpu_usage_sec[i], buffer);
+        }
 		pack64(jobacct->max_vsize, buffer);
 		pack64(jobacct->tot_vsize, buffer);
 		pack64(jobacct->max_rss, buffer);
@@ -932,6 +945,7 @@ extern int jobacctinfo_unpack(jobacctinfo_t **jobacct,
 {
 	uint32_t uint32_tmp;
 	uint8_t  uint8_tmp;
+    int i = 0;
 
 	if (jobacct_gather_init() < 0)
 		return SLURM_ERROR;
@@ -950,6 +964,12 @@ extern int jobacctinfo_unpack(jobacctinfo_t **jobacct,
 		(*jobacct)->sys_cpu_sec = uint32_tmp;
 		safe_unpack32(&uint32_tmp, buffer);
 		(*jobacct)->sys_cpu_usec = uint32_tmp;
+		safe_unpack32(&uint32_tmp, buffer);
+        (*jobacct)->percpu_cores = uint32_tmp;
+        for(i = 0; i < SLURM_CPUACCT_PERCPU_SIZE; i++) {
+            safe_unpack32(&uint32_tmp, buffer);
+            (*jobacct)->percpu_usage_sec[i] = uint32_tmp;
+        }
 		safe_unpack64(&(*jobacct)->max_vsize, buffer);
 		safe_unpack64(&(*jobacct)->tot_vsize, buffer);
 		safe_unpack64(&(*jobacct)->max_rss, buffer);
@@ -1002,6 +1022,7 @@ unpack_error:
 
 extern void jobacctinfo_aggregate(jobacctinfo_t *dest, jobacctinfo_t *from)
 {
+    int i = 0;
 	if (!plugin_polling)
 		return;
 
@@ -1061,6 +1082,10 @@ extern void jobacctinfo_aggregate(jobacctinfo_t *dest, jobacctinfo_t *from)
 		dest->sys_cpu_sec++;
 		dest->sys_cpu_usec -= 1E6;
 	}
+    dest->percpu_cores += from->percpu_cores;
+    for(i = 0; i < SLURM_CPUACCT_PERCPU_SIZE; i++) {
+        dest->percpu_usage_sec[i] += from->percpu_usage_sec[i];
+    }
 	dest->act_cpufreq 	+= from->act_cpufreq;
 	if (dest->energy.consumed_energy != NO_VAL64) {
 		if (from->energy.consumed_energy == NO_VAL64)
