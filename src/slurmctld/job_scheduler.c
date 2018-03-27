@@ -917,7 +917,7 @@ next_part:		part_ptr = (struct part_record *)
 		job_ptr->details->exc_node_bitmap =
 			bit_copy(fini_job_ptr->job_resrcs->node_bitmap);
 		bit_not(job_ptr->details->exc_node_bitmap);
-		error_code = select_nodes(job_ptr, false, NULL, NULL, NULL);
+		error_code = select_nodes(job_ptr, false, NULL, NULL, false);
 		bit_free(job_ptr->details->exc_node_bitmap);
 		job_ptr->details->exc_node_bitmap = orig_exc_bitmap;
 		if (error_code == SLURM_SUCCESS) {
@@ -1216,13 +1216,12 @@ static int _schedule(uint32_t job_limit)
 	static int def_job_limit = 100;
 	static int max_jobs_per_part = 0;
 	static int defer_rpc_cnt = 0;
-	static bool reduce_completing_frag = 0;
+	static bool reduce_completing_frag = false;
 	time_t now, last_job_sched_start, sched_start;
 	uint32_t reject_array_job_id = 0;
 	struct part_record *reject_array_part = NULL;
 	uint16_t reject_state_reason = WAIT_NO_REASON;
 	char job_id_buf[32];
-	char *unavail_node_str = NULL;
 	bool fail_by_part;
 	uint32_t deadline_time_limit, save_time_limit = 0;
 #if HAVE_SYS_PRCTL_H
@@ -1491,9 +1490,6 @@ static int _schedule(uint32_t job_limit)
 	failed_parts = xmalloc(sizeof(struct part_record *) * part_cnt);
 	failed_resv = xmalloc(sizeof(struct slurmctld_resv*) * MAX_FAILED_RESV);
 	save_avail_node_bitmap = bit_copy(avail_node_bitmap);
-	bit_not(avail_node_bitmap);
-	unavail_node_str = bitmap2node_name(avail_node_bitmap);
-	bit_not(avail_node_bitmap);
 	bit_and_not(avail_node_bitmap, booting_node_bitmap);
 
 	/* Avoid resource fragmentation if important */
@@ -1700,6 +1696,10 @@ next_task:
 			debug("sched: schedule() returning, too many RPCs");
 			break;
 		}
+		if (job_limits_check(&job_ptr, false) != WAIT_NO_REASON) {
+			/* should never happen */
+			continue;
+		}
 
 		slurmctld_diag_stats.schedule_cycle_depth++;
 
@@ -1887,8 +1887,7 @@ next_task:
 			goto skip_start;
 		}
 
-		error_code = select_nodes(job_ptr, false, NULL,
-					  unavail_node_str, NULL);
+		error_code = select_nodes(job_ptr, false, NULL, NULL, false);
 
 		if (error_code == SLURM_SUCCESS) {
 			/* If the following fails because of network
@@ -2129,7 +2128,6 @@ fail_this_part:	if (fail_by_part) {
 	save_last_part_update = last_part_update;
 	FREE_NULL_BITMAP(avail_node_bitmap);
 	avail_node_bitmap = save_avail_node_bitmap;
-	xfree(unavail_node_str);
 	xfree(failed_parts);
 	xfree(failed_resv);
 	if (fifo_sched) {
@@ -2889,6 +2887,8 @@ static void _depend_list2str(struct job_record *job_ptr, bool set_or_flag)
 			dep_str = "aftercorr";
 		else if (dep_ptr->depend_type == SLURM_DEPEND_EXPAND)
 			dep_str = "expand";
+		else if (dep_ptr->depend_type == SLURM_DEPEND_BURST_BUFFER)
+			dep_str = "afterburstbuffer";
 		else
 			dep_str = "unknown";
 
@@ -3106,11 +3106,14 @@ extern int test_job_dependency(struct job_record *job_ptr)
 				job_ptr->details->whole_node =
 					djob_ptr->details->whole_node;
 			}
+		} else if (dep_ptr->depend_type == SLURM_DEPEND_BURST_BUFFER) {
+			if (IS_JOB_COMPLETED(djob_ptr) &&
+			    (bb_g_job_test_stage_out(djob_ptr) == 1)) {
+				clear_dep = true;
+			} else
+				depends = true;
 		} else
 			failure = true;
-		if (clear_dep && djob_ptr &&
-		    (bb_g_job_test_stage_out(djob_ptr) != 1))
-			clear_dep = false; /* Wait for burst buffer stage-out */
 		if (clear_dep) {
 			rebuild_str = true;
 			if (dep_ptr->depend_flags & SLURM_FLAGS_OR) {
@@ -3328,6 +3331,8 @@ extern int update_job_dependency(struct job_record *job_ptr, char *new_depend)
 			depend_type = SLURM_DEPEND_AFTER_ANY;
 		else if (xstrncasecmp(tok, "afterok", 7) == 0)
 			depend_type = SLURM_DEPEND_AFTER_OK;
+		else if (xstrncasecmp(tok, "afterburstbuffer", 10) == 0)
+			depend_type = SLURM_DEPEND_BURST_BUFFER;
 		else if (xstrncasecmp(tok, "after", 5) == 0)
 			depend_type = SLURM_DEPEND_AFTER;
 		else if (xstrncasecmp(tok, "expand", 6) == 0) {
@@ -3601,17 +3606,27 @@ extern int job_start_data(job_desc_msg_t *job_desc_msg,
 	time_t now = time(NULL), start_res, orig_start_time = (time_t) 0;
 	List preemptee_candidates = NULL, preemptee_job_list = NULL;
 	bool resv_overlap = false;
+	ListIterator iter = NULL;
 
 	job_ptr = find_job_record(job_desc_msg->job_id);
 	if (job_ptr == NULL)
 		return ESLURM_INVALID_JOB_ID;
 
-	part_ptr = job_ptr->part_ptr;
-	if (part_ptr == NULL)
-		return ESLURM_INVALID_PARTITION_NAME;
-
 	if ((job_ptr->details == NULL) || (!IS_JOB_PENDING(job_ptr)))
 		return ESLURM_DISABLED;
+
+	if (job_ptr->part_ptr_list) {
+		iter = list_iterator_create(job_ptr->part_ptr_list);
+		part_ptr = list_next(iter);
+	} else
+		part_ptr = job_ptr->part_ptr;
+next_part:
+	rc = SLURM_SUCCESS;
+	if (part_ptr == NULL) {
+		if (iter)
+			list_iterator_destroy(iter);
+		return ESLURM_INVALID_PARTITION_NAME;
+	}
 
 	if ((job_desc_msg->req_nodes == NULL) ||
 	    (job_desc_msg->req_nodes[0] == '\0')) {
@@ -3620,6 +3635,9 @@ extern int job_start_data(job_desc_msg_t *job_desc_msg,
 		bit_nset(avail_bitmap, 0, (node_record_count - 1));
 	} else if (node_name2bitmap(job_desc_msg->req_nodes, false,
 				    &avail_bitmap) != 0) {
+		/* Don't need to check for each partition */
+		if (iter)
+			list_iterator_destroy(iter);
 		return ESLURM_INVALID_NODE_NAME;
 	}
 
@@ -3652,6 +3670,11 @@ extern int job_start_data(job_desc_msg_t *job_desc_msg,
 	if (i != SLURM_SUCCESS) {
 		FREE_NULL_BITMAP(avail_bitmap);
 		FREE_NULL_BITMAP(exc_core_bitmap);
+		if (job_ptr->part_ptr_list && (part_ptr = list_next(iter)))
+			goto next_part;
+
+		if (iter)
+			list_iterator_destroy(iter);
 		return i;
 	}
 	bit_and(avail_bitmap, resv_bitmap);
@@ -3770,6 +3793,13 @@ extern int job_start_data(job_desc_msg_t *job_desc_msg,
 	FREE_NULL_LIST(preemptee_job_list);
 	FREE_NULL_BITMAP(avail_bitmap);
 	FREE_NULL_BITMAP(exc_core_bitmap);
+
+	if (rc && job_ptr->part_ptr_list && (part_ptr = list_next(iter)))
+		goto next_part;
+
+	if (iter)
+		list_iterator_destroy(iter);
+
 	return rc;
 }
 
@@ -4163,7 +4193,7 @@ static void *_wait_boot(void *arg)
 		READ_LOCK, WRITE_LOCK, READ_LOCK, NO_LOCK, NO_LOCK };
 	/* Locks: Write jobs; write nodes */
 	slurmctld_lock_t node_write_lock = {
-		READ_LOCK, WRITE_LOCK, WRITE_LOCK, NO_LOCK, NO_LOCK };
+		READ_LOCK, WRITE_LOCK, WRITE_LOCK, NO_LOCK, READ_LOCK };
 	bitstr_t *boot_node_bitmap;
 	uint16_t resume_timeout = slurm_get_resume_timeout();
 	struct node_record *node_ptr;
@@ -4270,7 +4300,7 @@ static void *_run_prolog(void *arg)
 	char *argv[2], **my_env;
 	/* Locks: Read config; Write jobs, nodes */
 	slurmctld_lock_t config_read_lock = {
-		READ_LOCK, WRITE_LOCK, WRITE_LOCK, NO_LOCK, NO_LOCK };
+		READ_LOCK, WRITE_LOCK, WRITE_LOCK, NO_LOCK, READ_LOCK };
 	bitstr_t *node_bitmap = NULL;
 	time_t now = time(NULL);
 	uint16_t resume_timeout = slurm_get_resume_timeout();
@@ -4385,6 +4415,9 @@ static void *_run_prolog(void *arg)
 /* Decrement a job's prolog_running counter and launch the job if zero */
 extern void prolog_running_decr(struct job_record *job_ptr)
 {
+	xassert(verify_lock(JOB_LOCK, WRITE_LOCK));
+	xassert(verify_lock(FED_LOCK, READ_LOCK));
+
 	if (!job_ptr)
 		return;
 

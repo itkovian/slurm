@@ -14,17 +14,30 @@ use constant SLURM_JOB_PENDING => 'ESLURM_JOB_PENDING';
 use constant SLURM_ALREADY_DONE => 'ESLURM_ALREADY_DONE';
 use constant SLURM_INVALID_JOB_ID => 'ESLURM_INVALID_JOB_ID';
 
+use constant ESLURM_REQUESTED_PART_CONFIG_UNAVAILABLE => 'ESLURM_REQUESTED_PART_CONFIG_UNAVAILABLE';
 
 use parent qw(Exporter);
 our @EXPORT_OK = qw(JOB_COMPLETE
     SLURM_SUCCESS SLURM_ERROR
     ESLURM_TRANSITION_STATE_NO_UPDATE ESLURM_JOB_PENDING
     ESLURM_ALREADY_DONE ESLURM_INVALID_JOB_ID
+    ESLURM_REQUESTED_PART_CONFIG_UNAVAILABLE
 );
 our %EXPORT_TAGS = (
     all => \@EXPORT_OK,
     );
 
+sub new {
+    my $self = {};
+    bless $self, 'Slurm';
+    return $self;
+};
+
+sub get_end_time {1;};
+
+sub load_job {
+    return {job_array => [{comment => 'acomment'}]};
+}
 
 package Slurm::Hostlist;
 

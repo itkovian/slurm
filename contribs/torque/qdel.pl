@@ -134,7 +134,7 @@ sub main
 
 	    my $err = 0;
 	    my $resp = 0;
-	    for (my $i=0; $i<3; $i++) {
+	    for (my $i=0; $i < 3; $i++) {
 		    $resp = Slurm->kill_job($jobid, SIGKILL);
 		    $err = Slurm->get_errno();
 		    if($resp == SLURM_SUCCESS
@@ -143,15 +143,21 @@ sub main
 			    last;
 		    }
 	    }
+
 	    if ($resp == SLURM_ERROR) {
-		    $rc++;
-		    if($err ne ESLURM_ALREADY_DONE &&
-		       $err ne ESLURM_INVALID_JOB_ID) {
-			    printf("qdel: Kill job error on job id %u: %s\n",
-				   $jobid, Slurm->strerror($err));
+            if ($err eq ESLURM_INVALID_JOB_ID) {
+                $rc = 153;
+                print STDERR "qdel: nonexistent job id: $jobid\n";
+            } else {
+                $rc = 1;
+                if ($err ne ESLURM_ALREADY_DONE) {
+                    printf("qdel: Kill job error on job id %u: %s\n",
+                           $jobid, Slurm->strerror($err));
+                }
 		    }
 	    }
     }
+
     exit $rc;
 }
 

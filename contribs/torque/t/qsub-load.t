@@ -66,5 +66,17 @@ foreach my $notxt (sort keys %nopts) {
     is_deeply($nodes, $nopts{$notxt}, "converted node option '$notxt'");
 }
 
+=head1 split_variables
+
+=cut
+
+is_deeply(split_variables("x"), {x => undef}, "trivial split");
+is_deeply(split_variables("x,y=value,z=,zz=',',xx=1"), {
+    x => undef,
+    xx => '1',
+    y => 'value',
+    z => '',
+    zz => "','",
+}, "more complex split example");
 
 done_testing;

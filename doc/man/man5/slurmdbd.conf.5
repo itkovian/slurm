@@ -1,4 +1,4 @@
-.TH "slurmdbd.conf" "5" "Slurm Configuration File" "July 2015" "Slurm Configuration File"
+.TH "slurmdbd.conf" "5" "Slurm Configuration File" "June 2018" "Slurm Configuration File"
 
 .SH "NAME"
 slurmdbd.conf \- Slurm Database Daemon (SlurmDBD) configuration file
@@ -135,8 +135,8 @@ communication messages is not verified.
 This may be fine for testing purposes, but
 \fBdo not use "auth/none" if you desire any security\fR.
 "auth/munge" indicates that LLNL's Munge system is to be used
-(this is the best supported authentication mechanism for Slurm,
-see "https://code.google.com/p/munge/" for more information).
+(this is the supported authentication mechanism for Slurm;
+see "https://dun.github.io/munge/" for more information).
 SlurmDBD must be terminated prior to changing the value of \fBAuthType\fR
 and later restarted.
 
@@ -525,7 +525,7 @@ Default is none.
 .TP
 \fBStorageLoc\fR
 Specify the name of the database as the location where accounting
-records are written.
+records are written. Defaults to "slurm_acct_db".
 
 .TP
 \fBStoragePass\fR
