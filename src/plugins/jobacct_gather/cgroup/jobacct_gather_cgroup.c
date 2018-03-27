@@ -102,8 +102,10 @@ static slurm_cgroup_conf_t slurm_cgroup_conf;
 static void _prec_extra(jag_prec_t *prec)
 {
 	unsigned long utime, stime, total_rss, total_pgpgin;
-	char *cpu_time = NULL, *memory_stat = NULL, *ptr;
-	size_t cpu_time_size = 0, memory_stat_size = 0;
+	char *cpu_time = NULL, *memory_stat = NULL, *cpuacct_percpu = NULL, *ptr;
+	size_t cpu_time_size = 0, memory_stat_size = 0, cpuacct_percpu_size = 0;
+    int i = 0i, pos = 0;
+    uint64_t cpuacct;
 
 	//DEF_TIMERS;
 	//START_TIMER;
@@ -147,8 +149,30 @@ static void _prec_extra(jag_prec_t *prec)
 		}
 	}
 
+    xcgroup_get_param(&task_cpuacct_cg, "cpuacct.usage_percpu",
+                    &cpuacct_percpu, & cpuacct_percpu_size);
+    if (cpuacct_percpu == NULL) {
+        debug2("%s: failed to collect cpuacct.usage_percpu pid %d ppd %d",
+                        __func__, prec->pid, prec->ppid);
+    } else {
+        /*
+         * These numbers represent the amount of time spent on each
+         * core by all tasks in this cgroup.
+         */
+        ptr = cpuacct_percpu;
+        for(i = 0; i < SLURM_CPUACCT_PERCPU_SIZE; i++) {
+            if(sscanf(ptr, "%lu %n", &cpuacct, &pos) == EOF) {
+                prec->percpu_cores = i+1;
+                break;
+            }
+            ptr += pos;
+            prec->percpu_usage_sec[i] = cpuacct / 1000000000;  // convert from nanoseconds to seconds
+        }
+    }
+
 	xfree(cpu_time);
 	xfree(memory_stat);
+    xfree(cpuacct_percpu);
 
 	/* FIXME: Enable when kernel support ready.
 	 *
