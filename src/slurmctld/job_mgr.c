@@ -2343,6 +2343,9 @@ static int _load_job_state(Buf buffer, uint16_t protocol_version)
 		job_set_req_tres(job_ptr, true);
 
 	build_node_details(job_ptr, false);	/* set node_addr */
+	gres_build_job_details(job_ptr->gres_list,
+			       &job_ptr->gres_detail_cnt,
+			       &job_ptr->gres_detail_str);
 	job_ptr->clusters     = clusters;
 	job_ptr->fed_details  = job_fed_details;
 	return SLURM_SUCCESS;
@@ -3855,7 +3858,9 @@ extern int kill_running_job_by_node_name(char *node_name)
 				kill_step_on_node(job_ptr, node_ptr, true);
 				excise_node_from_job(job_ptr, node_ptr);
 				(void) gs_job_start(job_ptr);
-				_clear_job_gres_details(job_ptr);
+				gres_build_job_details(job_ptr->gres_list,
+						       &job_ptr->gres_detail_cnt,
+						       &job_ptr->gres_detail_str);
 				job_post_resize_acctg(job_ptr);
 			} else if (job_ptr->batch_flag && job_ptr->details &&
 				   job_ptr->details->requeue) {
@@ -4352,6 +4357,8 @@ extern struct job_record *job_array_split(struct job_record *job_ptr)
 		job_ptr_pend->gres_list =
 			gres_plugin_job_state_dup(job_ptr->gres_list);
 	}
+	job_ptr_pend->gres_detail_cnt = 0;
+	job_ptr_pend->gres_detail_str = NULL;
 	job_ptr_pend->gres_alloc = NULL;
 	job_ptr_pend->gres_req = NULL;
 	job_ptr_pend->gres_used = NULL;
@@ -4606,12 +4613,12 @@ static int _select_nodes_parts(struct job_record *job_ptr, bool test_only,
 
 			if (part_limits_rc == WAIT_NO_REASON) {
 				rc = select_nodes(job_ptr, test_only,
-						  select_node_bitmap,
-						  NULL, err_msg);
+						  select_node_bitmap, err_msg,
+						  true);
 			} else {
 				rc = select_nodes(job_ptr, true,
-						  select_node_bitmap,
-						  NULL, err_msg);
+						  select_node_bitmap, err_msg,
+						  true);
 				if ((rc == SLURM_SUCCESS) &&
 				    (part_limits_rc == WAIT_PART_DOWN))
 					rc = ESLURM_PARTITION_DOWN;
@@ -4663,10 +4670,10 @@ static int _select_nodes_parts(struct job_record *job_ptr, bool test_only,
 		part_limits_rc = job_limits_check(&job_ptr, false);
 		if (part_limits_rc == WAIT_NO_REASON) {
 			rc = select_nodes(job_ptr, test_only,
-					  select_node_bitmap, NULL, err_msg);
+					  select_node_bitmap, err_msg, true);
 		} else if (part_limits_rc == WAIT_PART_DOWN) {
 			rc = select_nodes(job_ptr, true,
-					  select_node_bitmap, NULL, err_msg);
+					  select_node_bitmap, err_msg, true);
 			if (rc == SLURM_SUCCESS)
 				rc = ESLURM_PARTITION_DOWN;
 		}
@@ -5518,6 +5525,9 @@ extern int job_str_signal(char *job_id_str, uint16_t signal, uint16_t flags,
 		}
 		if (signal == SIGKILL) {
 			uint32_t orig_task_cnt, new_task_count;
+			/* task_id_bitmap changes, so we need a copy of it */
+			bitstr_t *task_id_bitmap_orig =
+				bit_copy(job_ptr->array_recs->task_id_bitmap);
 			bit_and_not(job_ptr->array_recs->task_id_bitmap,
 				array_bitmap);
 			xfree(job_ptr->array_recs->task_id_str);
@@ -5549,8 +5559,8 @@ extern int job_str_signal(char *job_id_str, uint16_t signal, uint16_t flags,
 			 * limit for submitted jobs correctly.
 			 */
 			job_ptr->array_recs->task_cnt = new_task_count;
-			bit_and_not(array_bitmap,
-				    job_ptr->array_recs->task_id_bitmap);
+			bit_and_not(array_bitmap, task_id_bitmap_orig);
+			FREE_NULL_BITMAP(task_id_bitmap_orig);
 		} else {
 			bit_and_not(array_bitmap,
 				    job_ptr->array_recs->task_id_bitmap);
@@ -7003,6 +7013,9 @@ static int _job_create(job_desc_msg_t *job_desc, int allocate, int will_run,
 		job_ptr->gres_list = gres_list;
 		gres_list = NULL;
 	}
+
+	job_ptr->gres_detail_cnt = 0;
+	job_ptr->gres_detail_str = NULL;
 	gres_plugin_job_state_log(job_ptr->gres_list, job_ptr->job_id);
 
 	if ((error_code = validate_job_resv(job_ptr)))
@@ -8647,8 +8660,8 @@ void job_time_limit(void)
 		}
 
 		if (job_ptr->resv_ptr &&
-		    (job_ptr->resv_ptr->end_time + resv_over_run)
-		     < time(NULL)) {
+		    !(job_ptr->resv_ptr->flags & RESERVE_FLAG_FLEX) &&
+		    (job_ptr->resv_ptr->end_time + resv_over_run) < time(NULL)){
 			last_job_update = now;
 			info("Reservation ended for JobId=%u",
 			     job_ptr->job_id);
@@ -8787,8 +8800,12 @@ extern void job_set_alloc_tres(struct job_record *job_ptr,
 	xfree(job_ptr->tres_alloc_cnt);
 	xfree(job_ptr->tres_fmt_alloc_str);
 
-	/* We only need to do this on non-pending jobs */
-	if (IS_JOB_PENDING(job_ptr))
+	/*
+	 * We only need to do this on non-pending jobs.
+	 * Requeued jobs are marked as PENDING|COMPLETING until the epilog is
+	 * finished so we still need the alloc tres until then.
+	 */
+	if (IS_JOB_PENDING(job_ptr) && !IS_JOB_COMPLETING(job_ptr))
 		return;
 
 	if (!assoc_mgr_locked)
@@ -9319,16 +9336,16 @@ static void _pack_job(struct job_record *job_ptr,
 {
 	xassert (job_ptr->magic == JOB_MAGIC);
 
+	if ((pack_info->filter_uid != NO_VAL) &&
+	    (pack_info->filter_uid != job_ptr->user_id))
+		return;
+
 	if (((pack_info->show_flags & SHOW_ALL) == 0) &&
 	    (pack_info->uid != 0) &&
 	    _all_parts_hidden(job_ptr, pack_info->uid))
 		return;
 
 	if (_hide_job(job_ptr, pack_info->uid, pack_info->show_flags))
-		return;
-
-	if ((pack_info->filter_uid != NO_VAL) &&
-	    (pack_info->filter_uid != job_ptr->user_id))
 		return;
 
 	pack_job(job_ptr, pack_info->show_flags, pack_info->buffer,
@@ -9583,14 +9600,6 @@ static void _pack_job_gres(struct job_record *dump_job_ptr, Buf buffer,
 	    (dump_job_ptr->gres_list == NULL)) {
 		packstr_array(NULL, 0, buffer);
 		return;
-	}
-
-	if ((dump_job_ptr->gres_detail_cnt == 0) &&
-	    (dump_job_ptr->gres_detail_str == NULL)) {
-		/* Populate job GRES details */
-		gres_build_job_details(dump_job_ptr->gres_list,
-				       &dump_job_ptr->gres_detail_cnt,
-				       &dump_job_ptr->gres_detail_str);
 	}
 
 	packstr_array(dump_job_ptr->gres_detail_str,
@@ -11666,7 +11675,11 @@ static int _update_job(struct job_record *job_ptr, job_desc_msg_t * job_specs,
 	if (error_code != SLURM_SUCCESS)
 		goto fini;
 
-	if (job_specs->licenses) {
+	if (job_specs->licenses && !xstrcmp(job_specs->licenses,
+					    job_ptr->licenses)) {
+		debug("sched: update_job: new licenses identical to old licenses \"%s\"",
+		      job_ptr->licenses);
+	} else if (job_specs->licenses) {
 		bool valid, pending = IS_JOB_PENDING(job_ptr);
 		license_list = license_validate(job_specs->licenses,
 						pending ?
@@ -11733,7 +11746,11 @@ static int _update_job(struct job_record *job_ptr, job_desc_msg_t * job_specs,
 	if (error_code != SLURM_SUCCESS)
 		goto fini;
 
-	if (job_specs->exc_nodes) {
+	if (job_specs->exc_nodes && detail_ptr &&
+	    !xstrcmp(job_specs->exc_nodes, detail_ptr->exc_nodes)) {
+		debug("sched: update_job: new exc_nodes identical to old exc_nodes %s",
+		      job_specs->exc_nodes);
+	} else if (job_specs->exc_nodes) {
 		if ((!IS_JOB_PENDING(job_ptr)) || (detail_ptr == NULL))
 			error_code = ESLURM_JOB_NOT_PENDING;
 		else if (job_specs->exc_nodes[0] == '\0') {
@@ -11794,7 +11811,9 @@ static int _update_job(struct job_record *job_ptr, job_desc_msg_t * job_specs,
 				excise_node_from_job(job_ptr, node_ptr);
 			}
 			(void) gs_job_start(job_ptr);
-			_clear_job_gres_details(job_ptr);
+			gres_build_job_details(job_ptr->gres_list,
+					       &job_ptr->gres_detail_cnt,
+					       &job_ptr->gres_detail_str);
 			job_post_resize_acctg(job_ptr);
 			/* Since job_post_resize_acctg will restart
 			 * things, don't do it again. */
@@ -12662,7 +12681,11 @@ static int _update_job(struct job_record *job_ptr, job_desc_msg_t * job_specs,
 	if (error_code != SLURM_SUCCESS)
 		goto fini;
 
-	if (job_specs->features) {
+	if (job_specs->features && detail_ptr &&
+	    !xstrcmp(job_specs->features, detail_ptr->features)) {
+		debug("sched: update_job: new features identical to old features %s",
+		      job_specs->features);
+	} else if (job_specs->features) {
 		if ((!IS_JOB_PENDING(job_ptr)) || (detail_ptr == NULL))
 			error_code = ESLURM_JOB_NOT_PENDING;
 		else if (job_specs->features[0] != '\0') {
@@ -12715,6 +12738,9 @@ static int _update_job(struct job_record *job_ptr, job_desc_msg_t * job_specs,
 
 		FREE_NULL_LIST(job_ptr->gres_list);
 		job_ptr->gres_list = gres_list;
+		gres_build_job_details(job_ptr->gres_list,
+				       &job_ptr->gres_detail_cnt,
+				       &job_ptr->gres_detail_str);
 		gres_list = NULL;
 	}
 
@@ -12735,7 +12761,11 @@ static int _update_job(struct job_record *job_ptr, job_desc_msg_t * job_specs,
 		}
 	}
 
-	if (job_specs->std_out) {
+	if (job_specs->std_out && detail_ptr &&
+	    !xstrcmp(job_specs->std_out, detail_ptr->std_out)) {
+		debug("sched: update_job: new std_out identical to old std_out %s",
+		      job_specs->std_out);
+	} else if (job_specs->std_out) {
 		if (!IS_JOB_PENDING(job_ptr))
 			error_code = ESLURM_JOB_NOT_PENDING;
 		else if (detail_ptr) {
@@ -12868,8 +12898,9 @@ static int _update_job(struct job_record *job_ptr, job_desc_msg_t * job_specs,
 			 * things don't do it again. */
 			update_accounting = false;
 		}
-
-		_clear_job_gres_details(job_ptr);
+		gres_build_job_details(job_ptr->gres_list,
+				       &job_ptr->gres_detail_cnt,
+				       &job_ptr->gres_detail_str);
 	}
 
 	if (job_specs->array_inx && job_ptr->array_recs) {
@@ -13225,7 +13256,11 @@ static int _update_job(struct job_record *job_ptr, job_desc_msg_t * job_specs,
 	}
 #endif
 
-	if (job_specs->network) {
+	if (job_specs->network && !xstrcmp(job_specs->network,
+					   job_ptr->network)) {
+		debug("sched: update_job: new network identical to old network %s",
+		      job_ptr->network);
+	} else if (job_specs->network) {
 		xfree(job_ptr->network);
 		if (!strlen(job_specs->network)
 		    || !xstrcmp(job_specs->network, "none")) {
@@ -14746,8 +14781,13 @@ extern void job_completion_logger(struct job_record *job_ptr, bool requeue)
 	xassert(job_ptr);
 
 	acct_policy_remove_job_submit(job_ptr);
-	if (job_ptr->nodes &&  ((job_ptr->bit_flags & JOB_KILL_HURRY) == 0)) {
+	if (job_ptr->nodes && ((job_ptr->bit_flags & JOB_KILL_HURRY) == 0)
+	    && !IS_JOB_RESIZING(job_ptr)) {
 		(void) bb_g_job_start_stage_out(job_ptr);
+	} else if (job_ptr->nodes && IS_JOB_RESIZING(job_ptr)){
+		char jbuf[JBUFSIZ];
+		debug("%s: %s resizing, skipping bb stage_out",
+		      __func__, jobid2str(job_ptr, jbuf, sizeof(jbuf)));
 	} else {
 		/*
 		 * Never allocated compute nodes.

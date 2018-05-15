@@ -239,13 +239,14 @@ _send_srun_resp_msg(slurm_msg_t *resp_msg, uint32_t nnodes)
 			break;
 
 		if (!max_retry)
-			max_retry = (nnodes / 1024) + 1;
+			max_retry = (nnodes / 1024) + 5;
 
-		if (retry > max_retry)
+		debug("%s: %d/%d failed to send msg type %u: %m",
+		      __func__, retry, max_retry, resp_msg->msg_type);
+
+		if (retry >= max_retry)
 			break;
 
-		debug3("%s: failed to send msg type %u: %m",
-			__func__, resp_msg->msg_type);
 		usleep(delay);
 		if (delay < 800000)
 			delay *= 2;
@@ -965,7 +966,7 @@ static int _spawn_job_container(stepd_step_rec_t *job)
 	int rc = SLURM_SUCCESS;
 
 #ifdef WITH_SLURM_X11
-	int x11_pipe[2];
+	int x11_pipe[2] = {0, 0};
 
 	if (job->x11 && (pipe(x11_pipe) < 0)) {
 		error("x11 pipe: %m");
@@ -1037,7 +1038,7 @@ static int _spawn_job_container(stepd_step_rec_t *job)
 			 * work, it will not keep a process named "slurmstepd"
 			 */
 
-			execl(SLEEP_CMD, "sleep", "1000000", NULL);
+			execl(SLEEP_CMD, "sleep", "100000000", NULL);
 			error("execl: %m");
 			sleep(1);
 			exit(0);

@@ -3,6 +3,71 @@ documents those changes that are of interest to users and administrators.
 
 * Changes in Slurm 17.11.6
 ==========================
+ -- CRAY - Add slurmsmwd to the contribs/cray dir.
+ -- sview - fix crash when closing any search dialog.
+ -- Fix initialization of variable in stepd when using native x11.
+ -- Fix reading slurm_io_init_msg to handle partial messages.
+ -- Fix scontrol create res segfault when wrong user/account parameters given.
+ -- Fix documentation for sacct on parameter -X (--allocations)
+ -- Change TRES Weights debug messages to debug3.
+ -- FreeBSD - assorted fixes to restore build.
+ -- Fix for not tracking environment variables from unrelated different jobs.
+ -- PMIX - Added the direct connect authentication.
+    When upgrading this may cause issues with jobs using pmix starting on mixed
+    slurmstepd versions where some are less than 17.11.6.
+ -- Prevent the backup slurmctld from losing the active/available node
+    features list on takeover.
+ -- Add documentation for fix IDLE*+POWER due to capmc stuck in Cray systems.
+ -- Fix missing mutex unlock when prolog is failing on a node, leading to a
+    hung slurmd.
+ -- Fix locking around Cray CCM prolog/epilog.
+ -- Add missing fed_mgr read locks.
+ -- Fix issue incorrectly setting a job time_start to 0 while requeueing.
+ -- smail - remove stray '-s' from mail subject line.
+ -- srun - prevent segfault if ClusterName setting is unset but
+    SLURM_WORKING_CLUSTER environment variable is defined.
+ -- In configurator.html web pages change default configuration from
+    task/none to task/affinity plugin and from select/linear plugin to
+    select/cons_res plus CR_Core.
+ -- Allow jobs to run beyond a FLEX reservation end time.
+ -- Fix problem with wrongly set as Reservation job state_reason.
+ -- Prevent bit_ffs() from returnig value out of bitmap range.
+ -- Improve performance of 'squeue -u' when PrivateData=jobs is enabled.
+ -- Make UnavailableNodes value in job reason be correct for each job.
+ -- Fix 'squeue -o %s' on Cray systems.
+ -- Fix incorrect error thrown when cancelling part of a job array.
+ -- Fix error code and scheduling problem for --exclusive=[user|mcs].
+ -- Fix build when lz4 is in a non-standard location.
+ -- Be able to force power_down of cloud node even if in power_save state.
+ -- Allow cloud nodes to be recognized in Slurm when booted out of band.
+ -- Fixes race condition in _pack_job_gres() when is called multiple times.
+ -- Increase duration of "sleep" command used to keep extern step alive.
+ -- Remove unsafe usage of pthread_cancel in slurmstepd that can lead to
+    to deadlock in glibc.
+ -- Fix total TRES Billing on partitions.
+ -- Don't tear down a BB if a node fails and --no-kill or resize of a job
+    happens.
+ -- Remove unsafe usage of pthread_cancel in pmix plugin that can lead to
+    to deadlock in glibc.
+ -- Fix fatal in controller when loading completed trigger
+ -- Ignore reservation overlap at submission time.
+ -- GRES type model and QOS limits documentation added
+ -- slurmd - fix ABRT on SIGINT after reconfigure with MemSpecLimit set.
+ -- PMIx - move two error messages on retry to debug level, and only display
+    the error after the retry count has been exceeded.
+ -- Increase number of tries when sending responses to srun.
+ -- Fix checkpointing requeued/completing jobs in a bad state which caused a
+    segfault on restart.
+ -- Fix srun on ppc64 platforms.
+ -- Prevent slurmd from starting steps if the Prolog returns an error when using
+    PrologFlags=alloc.
+ -- priority/multifactor - prevent segfault running sprio if a partition has
+    just been deleted and PriorityFlags=CALCULATE_RUNNING is turned on.
+ -- job_submit/lua - add ESLURM_INVALID_TIME_LIMIT return code value.
+ -- job_submit/lua - print an error if the script calls log.user in
+    job_modify() instead of returning it to the next submitted job erroneously.
+ -- select/linear - handle job resize correctly.
+ -- select/cons_res - improve handling of --cores-per-socket requests.
 
 * Changes in Slurm 17.11.5
 ==========================
@@ -30,6 +95,11 @@ documents those changes that are of interest to users and administrators.
     NoReserve flag on their QOS.
  -- Fix security issue in accounting_storage/mysql plugin by always escaping
     strings within the slurmdbd. CVE-2018-7033.
+ -- Soften messages about best_fit topology to debug2 to avoid alarm.
+ -- Fix issue in sreport reservation utilization report to handle more
+    allocated time than 100% (Flex reservations).
+ -- When a job is requesting a Flex reservation prefer the reservation's nodes
+    over any other nodes.
 
 * Changes in Slurm 17.11.4
 ==========================
