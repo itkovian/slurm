@@ -589,6 +589,11 @@ char * base_name(char* command)
 	return name;
 }
 
+/* use_gbytes:
+   1 : no unit is GB
+   2 : no unit is B
+   anything else : no unit is MB
+*/
 static long _str_to_mbtyes(const char *arg, int use_gbytes)
 {
 	long result;
@@ -598,6 +603,8 @@ static long _str_to_mbtyes(const char *arg, int use_gbytes)
 	result = strtol(arg, &endptr, 10);
 	if ((errno != 0) && ((result == LONG_MIN) || (result == LONG_MAX)))
 		result = -1;
+	else if ((endptr[0] == '\0') && (use_gbytes == 2))  /* B default */
+		result = ( ((result + 1023) / 1024) + 1023 ) / 1024;	/* round up */
 	else if ((endptr[0] == '\0') && (use_gbytes == 1))  /* GB default */
 		result *= 1024;
 	else if (endptr[0] == '\0')	/* MB default */
@@ -644,6 +651,15 @@ long str_to_mbytes2(const char *arg)
 	}
 
 	return _str_to_mbtyes(arg, use_gbytes);
+}
+
+/*
+ * str_to_mbytes_pbs(): verify that arg is numeric with optional "K", "M", "G"
+ * or "T" at end and return the number in mega-bytes. Default units are B.
+ */
+long str_to_mbytes_pbs(const char *arg)
+{
+	return _str_to_mbtyes(arg, 2);
 }
 
 /* Convert a string into a node count */

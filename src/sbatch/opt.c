@@ -2472,14 +2472,19 @@ static void _parse_pbs_nodes_opts(char *node_opts)
 {
 	int i = 0;
 	char *temp = NULL;
-	int ppn = 0;
+	int tasks = 0;
+    int ppn = 0;
+	int max_ppn = 0;
 	int node_cnt = 0;
 	hostlist_t hl = hostlist_create(NULL);
 
 	while (node_opts[i]) {
 		if (!xstrncmp(node_opts+i, "ppn=", 4)) {
 			i+=4;
-			ppn += strtol(node_opts+i, NULL, 10);
+            ppn = strtol(node_opts+i, NULL, 10);
+			tasks += ppn;
+            if (ppn > max_ppn)
+                max_ppn = ppn;
 			_get_next_pbs_node_part(node_opts, &i);
 		} else if (isdigit(node_opts[i])) {
 			node_cnt += strtol(node_opts+i, NULL, 10);
@@ -2500,11 +2505,16 @@ static void _parse_pbs_nodes_opts(char *node_opts)
 		opt.min_nodes = opt.max_nodes = node_cnt;
 	}
 
-	if (ppn) {
-		ppn *= node_cnt;
+	if (tasks) {
+		tasks *= node_cnt;
 		opt.ntasks_set = true;
-		opt.ntasks = ppn;
+		opt.ntasks = tasks;
 	}
+
+    if (max_ppn) {
+        opt.ntasks_per_node = max_ppn;
+        pack_env.ntasks_per_node = max_ppn;
+    }
 
 	if (hostlist_count(hl) > 0) {
 		xfree(opt.nodelist);
@@ -2613,7 +2623,7 @@ static void _parse_pbs_resource_list(char *rl)
 				 */
 				temp[end] = '\0';
 			}
-			opt.pn_min_memory = (int) str_to_mbytes(temp);
+			opt.pn_min_memory = (int) str_to_mbytes_pbs(temp);
 			if (opt.pn_min_memory < 0) {
 				error("invalid memory constraint %s", temp);
 				exit(error_exit);
@@ -2737,8 +2747,29 @@ static void _parse_pbs_resource_list(char *rl)
 			opt.time_limit_str = xstrdup(temp);
 			xfree(temp);
 		} else if (!xstrncmp(rl+i, "pmem=", 5)) {
+			int end = 0;
+
 			i+=5;
-			_get_next_pbs_option(rl, &i);
+			temp = _get_pbs_option_value(rl, &i, ',');
+			if (!temp) {
+				error("No value given for pmem");
+				exit(error_exit);
+			}
+			end = strlen(temp) - 1;
+			if (toupper(temp[end]) == 'B') {
+				/* In Torque they do GB or MB on the
+				 * end of size, we just want G or M so
+				 * we will remove the b on the end
+				 */
+				temp[end] = '\0';
+			}
+			opt.mem_per_cpu = (int) str_to_mbytes_pbs(temp);
+			if (opt.mem_per_cpu < 0) {
+				error("invalid pmem memory per cpu constraint %s", temp);
+				exit(error_exit);
+			}
+
+			xfree(temp);
 		} else if (!xstrncmp(rl+i, "proc=", 5)) {
 			i += 5;
 			if (opt.constraints)
@@ -2748,8 +2779,29 @@ static void _parse_pbs_resource_list(char *rl)
 			xfree(temp);
 			_get_next_pbs_option(rl, &i);
 		} else if (!xstrncmp(rl+i, "pvmem=", 6)) {
+			int end = 0;
+
 			i+=6;
-			_get_next_pbs_option(rl, &i);
+			temp = _get_pbs_option_value(rl, &i, ',');
+			if (!temp) {
+				error("No value given for pvmem");
+				exit(error_exit);
+			}
+			end = strlen(temp) - 1;
+			if (toupper(temp[end]) == 'B') {
+				/* In Torque they do GB or MB on the
+				 * end of size, we just want G or M so
+				 * we will remove the b on the end
+				 */
+				temp[end] = '\0';
+			}
+			opt.mem_per_cpu = (int) str_to_mbytes_pbs(temp);
+			if (opt.mem_per_cpu < 0) {
+				error("invalid pvmem memory per cpu constraint %s", temp);
+				exit(error_exit);
+			}
+
+			xfree(temp);
 		} else if (!xstrncasecmp(rl+i, "select=", 7)) {
 			i += 7;
 			temp = _get_pbs_option_value(rl, &i, ':');
@@ -2764,8 +2816,29 @@ static void _parse_pbs_resource_list(char *rl)
 			i+=9;
 			_get_next_pbs_option(rl, &i);
 		} else if (!xstrncmp(rl+i, "vmem=", 5)) {
+			int end = 0;
+
 			i+=5;
-			_get_next_pbs_option(rl, &i);
+			temp = _get_pbs_option_value(rl, &i, ',');
+			if (!temp) {
+				error("No value given for vmem");
+				exit(error_exit);
+			}
+			end = strlen(temp) - 1;
+			if (toupper(temp[end]) == 'B') {
+				/* In Torque they do GB or MB on the
+				 * end of size, we just want G or M so
+				 * we will remove the b on the end
+				 */
+				temp[end] = '\0';
+			}
+			opt.pn_min_memory = (int) str_to_mbytes_pbs(temp);
+			if (opt.pn_min_memory < 0) {
+				error("invalid vmem memory constraint %s", temp);
+				exit(error_exit);
+			}
+
+			xfree(temp);
 		} else if (!xstrncmp(rl+i, "walltime=", 9)) {
 			i+=9;
 			temp = _get_pbs_option_value(rl, &i, ',');
