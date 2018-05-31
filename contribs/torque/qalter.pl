@@ -16,6 +16,8 @@ use Slurm ':all';
 use Slurmdb ':all'; # needed for getting the correct cluster dims
 use Switch;
 
+my $qalter = __FILE__;
+
 # shared namespace with qsub
 sub qalter_main
 {
@@ -33,7 +35,7 @@ sub qalter_main
         'N=s'    => \$new_name,
         'r=s'    => \$rerun,
         'o=s'    => \$output,
-        #'l=s'    => \@resource_list,
+        'l=s'    => \@resource_list,
         'help|?' => \$help,
         'man'    => \$man
         )
@@ -141,15 +143,57 @@ sub qalter_main
         # give it to make_command from qsub as interactive job
         local @ARGV = ('-I', (map {('-l', $_)} @resource_list));
 
-        # do not look at the next line...
-        require "qsub.pl";
+        # do not look at the next lines...
+        my $qsub = $qalter;
+        $qsub =~ s/qalter/qsub/;
+        require "$qsub";
 
-        my ($mode, $command, $block, $script, $script_args, $defaults) = make_command();
+        # use fake=1 to avouid default nodes
+        my ($mode, $command, $block, $script, $script_args, $defaults) = make_command(undef, 1);
 
         # extract all long options from command
         my $longopts = {map {$_ =~ m/^--([\w-]+)=(.*)/; $1 => $2} grep {m/^--[\w-]+=/} @$command};
-        $longopts->{job_id} = $job_id;
-        qalter_update($longopts, 'resource_list')
+
+        # for certain attributes, convert the values
+        my $convert = {
+            'mem' => sub {my $mem = shift; $mem =~ s/M$//; return $mem},
+            'time' => sub {my $time = shift; die("time $time not valid. contact developers") if $time !~ m/^\d+$/; return $time; },
+        };
+
+        my $converted = {map {$_ => exists($convert->{$_}) ? $convert->{$_}->($longopts->{$_}) : $longopts->{$_} } sort keys %$longopts};
+
+        my $update;
+        # map all names to job info struct attrs
+        # see src/scontrol/update_job.c to map scontrol names to attributes
+        #   see also src/sbatch/opt.c for mapping of sbatch names to job attributes
+        my $attrmap = {
+            # MinMemoryNode
+            'mem' => ['pn_min_memory'],
+            # TODO: look for MinMemoryCPU, which is the same, but with correction for number of cpus/cores
+            # NumNodes / ReqNodes
+            'nodes' => ['min_nodes', 'max_nodes'],
+            # Numtasks / ReqProcs
+            'ntasks' => ['num_tasks'],
+            #  TasksPerNode
+            'ntasks-per-node' => ['ntasks_per_node'],
+            # TimeLimit (attrinbute in minutes)
+            'time' => ['time_limit'],
+        };
+
+        foreach my $key (sort keys %$converted) {
+            my $map = $attrmap->{$key};
+            if ($map) {
+                foreach my $nkey (@$map) {
+                    $update->{$nkey} = $converted->{$key};
+                }
+            } else {
+                # ? warn? debug? die?
+            }
+        }
+
+        # at the end, add job_id
+        $update->{job_id} = $job_id;
+        qalter_update($update, 'resource_list')
     };
 }
 
@@ -160,12 +204,18 @@ sub qalter_update
 
     if (Slurm->update_job($opts)) {
         my $err = Slurm->get_errno();
-        my $resp = Slurm->strerror($err);
-        pod2usage(
-            -message => "Job id $opts->{job_id} $msg change error: $resp",
-            -verbose => 0,
-            -exitstatus => 1,
-            );
+        if ($err == ESLURM_REQUESTED_PART_CONFIG_UNAVAILABLE) {
+            # Requested partition configuration not available now (2015)
+            # --> job (still) won't start, but modification was made
+            # not reporting anything wrong
+        } else {
+            my $resp = Slurm->strerror($err);
+            pod2usage(
+                -message => "Job id $opts->{job_id} $msg change error: $resp",
+                -verbose => 0,
+                -exitstatus => 1,
+                );
+        }
     }
 }
 
@@ -211,6 +261,10 @@ Alter a job rerunnable flag. "y" will allow a qrerun to be issued. "n" disable q
 Alter a job output log file name (stdout).
 
 The job log will be move/rename after the job has B<terminated>.
+
+=item B<-l>
+
+Alter a job resources.
 
 =item B<-?> | B<--help>
 

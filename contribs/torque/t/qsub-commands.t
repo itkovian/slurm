@@ -3,6 +3,7 @@ use warnings;
 
 use Test::More;
 use Test::MockModule;
+use Cwd;
 
 my $submitfilter;
 BEGIN {
@@ -29,11 +30,12 @@ my @da = qw(script arg1 -l nodes=2:ppn=4);
 my $dba = "--nodes=2 --ntasks=8 --ntasks-per-node=4";
 # defaults
 my $defs = {
-    e => '%x.e%A',
-    o => '%x.o%A',
+    e => getcwd . '/%x.e%A',
+    o => getcwd . '/%x.o%A',
     J => 'script',
     export => 'NONE',
     'get-user-env' => '60L',
+    chdir => $ENV{HOME},
 };
 # default script args
 my $dsa = "script arg1";
@@ -90,7 +92,7 @@ my $txt = "$sbatch $dba";
 is(join(" ", @$command), $txt, "expected command for submitfilter");
 
 # no match
-$txt .= " -J script -e %x.e%A --export=NONE --get-user-env=60L -o %x.o%A";
+$txt .= " -J script --chdir=$ENV{HOME} -e ".getcwd."/%x.e%A --export=NONE --get-user-env=60L -o ".getcwd."/%x.o%A";
 my ($newtxt, $newcommand) = parse_script('', $command, $defaults);
 is(join(" ", @$newcommand), $txt, "expected command after parse_script without eo");
 
@@ -99,12 +101,12 @@ is(join(" ", @$newcommand), $txt, "expected command after parse_script without e
 # insert shebang
 {
     local $ENV{SHELL} = '/some/shell';
-    my $stdin = "#\n#PBS -l abd -o stdout.\${PBS_JOBID}..\$PBS_JOBID\n#\n#PBS -e abc -N def\ncmd\n";
+    my $stdin = "#\n#PBS -l abd -o stdout.\${PBS_JOBID}..\$PBS_JOBID\n#\n#PBS -e /abc -N def\ncmd\n";
     ($newtxt, $newcommand) = parse_script($stdin, $command, $defaults);
     is(join(" ", @$newcommand),
-       "$sbatch --nodes=2 --ntasks=8 --ntasks-per-node=4 --export=NONE --get-user-env=60L",
+       "$sbatch --nodes=2 --ntasks=8 --ntasks-per-node=4 --chdir=$ENV{HOME} --export=NONE --get-user-env=60L",
        "expected command after parse_script with eo");
-    is($newtxt, "#!/some/shell\n#\n#PBS -l abd -o stdout.%A..%A\n#\n#PBS -e abc -N def\ncmd\n",
+    is($newtxt, "#!/some/shell\n#\n#PBS -l abd -o ".getcwd."/stdout.%A..%A\n#\n#PBS -e /abc -N def\ncmd\n",
        "PBS_JOBID replaced");
 }
 
@@ -127,10 +129,11 @@ is_deeply($defaults, {
     J => 'INTERACTIVE',
     export => 'USER,HOME',
     'cpu-bind' => 'v,none',
+    chdir => $ENV{HOME},
 }, "interactive defaults");
 
 # no 'bash -i'
-$txt = "$salloc -J INTERACTIVE $txt --cpu-bind=v,none --export=USER,HOME";
+$txt = "$salloc -J INTERACTIVE $txt --chdir=$ENV{HOME} --cpu-bind=v,none --export=USER,HOME";
 ($newtxt, $newcommand) = parse_script(undef, $command, $defaults);
 ok(!defined($newtxt), "no text for interactive job");
 is(join(" ", @$newcommand), $txt, "expected command after parse with interactive");
