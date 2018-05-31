@@ -1401,6 +1401,10 @@ next_task:
 				continue;
 		}
 		job_ptr->part_ptr = part_ptr;
+		if (job_limits_check(&job_ptr, true) != WAIT_NO_REASON) {
+			/* should never happen */
+			continue;
+		}
 
 		if (debug_flags & DEBUG_FLAG_BACKFILL) {
 			char job_id_str[64];
@@ -2366,7 +2370,7 @@ static int _start_job(struct job_record *job_ptr, bitstr_t *resv_bitmap)
 		job_ptr->details->exc_node_bitmap = bit_copy(resv_bitmap);
 	if (job_ptr->array_recs)
 		is_job_array_head = true;
-	rc = select_nodes(job_ptr, false, NULL, NULL, NULL);
+	rc = select_nodes(job_ptr, false, NULL, NULL, false);
 	if (is_job_array_head && job_ptr->details) {
 		struct job_record *base_job_ptr;
 		base_job_ptr = find_job_record(job_ptr->array_job_id);
