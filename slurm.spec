@@ -19,18 +19,18 @@ Source:		%{slurm_source_dir}.tar.gz
 
 # build options		.rpmmacros options	change to default action
 # ====================  ====================	========================
-# --prefix		%_prefix path		install path for commands, libraries, etc.
-# --with cray		%_with_cray 1		build for a Native-Slurm Cray system
-# --with cray_network	%_with_cray_network 1	build for a non-Cray system with a Cray network
-# --without debug	%_without_debug 1	don't compile with debugging symbols
-# --with hdf5		%_with_hdf5 path	require hdf5 support
-# --with hwloc		%_with_hwloc 1		require hwloc support
-# --with lua		%_with_lua path		build Slurm lua bindings
-# --with mysql		%_with_mysql 1		require mysql/mariadb support
-# --with numa		%_with_numa 1		require NUMA support
-# --with openssl	%_with_openssl 1	require openssl RPM to be installed
+# --prefix		%%_prefix path		install path for commands, libraries, etc.
+# --with cray		%%_with_cray 1		build for a Native-Slurm Cray system
+# --with cray_network	%%_with_cray_network 1	build for a non-Cray system with a Cray network
+# --without debug	%%_without_debug 1	don't compile with debugging symbols
+# --with hdf5		%%_with_hdf5 path	require hdf5 support
+# --with hwloc		%%_with_hwloc 1		require hwloc support
+# --with lua		%%_with_lua path		build Slurm lua bindings
+# --with mysql		%%_with_mysql 1		require mysql/mariadb support
+# --with numa		%%_with_numa 1		require NUMA support
+# --with openssl	%%_with_openssl 1	require openssl RPM to be installed
 #						ensures auth/openssl and crypto/openssl are built
-# --without pam		%_without_pam 1		don't require pam-devel RPM to be installed
+# --without pam		%%_without_pam 1		don't require pam-devel RPM to be installed
 
 #  Options that are off by default (enable with --with <opt>)
 %bcond_with cray
