@@ -153,7 +153,7 @@ BuildRequires: numactl-devel
 #
 # Should unpackaged files in a build root terminate a build?
 # Uncomment if needed again.
-#%define _unpackaged_files_terminate_build      0
+#%%define _unpackaged_files_terminate_build      0
 
 # First we remove $prefix/local and then just prefix to make
 # sure we get the correct installdir
