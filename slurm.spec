@@ -110,7 +110,11 @@ BuildRequires: pkgconfig
 BuildRequires: perl(ExtUtils::MakeMaker)
 
 %if %{with lua}
-BuildRequires: pkgconfig(lua) >= 5.1.0
+%if %{defined suse_version}
+BuildRequires: lua51-devel
+%else
+BuildRequires: lua-devel
+%endif
 %endif
 
 %if %{with hwloc}
@@ -152,10 +156,6 @@ BuildRequires: numactl-devel
 # Should unpackaged files in a build root terminate a build?
 # Uncomment if needed again.
 #%define _unpackaged_files_terminate_build      0
-
-# Slurm may intentionally include empty manifest files, which will
-# cause errors with rpm 4.13 and on. Turn that check off.
-%define _empty_manifest_terminate_build 0
 
 # First we remove $prefix/local and then just prefix to make
 # sure we get the correct installdir
@@ -221,15 +221,6 @@ Obsoletes: slurm-sql
 %description slurmdbd
 Slurm database daemon. Used to accept and process database RPCs and upload
 database changes to slurmctld daemons on each cluster
-
-%package libpmi
-Summary: Slurm\'s implementation of the pmi libraries
-Group: System Environment/Base
-Requires: %{name}%{?_isa} = %{version}-%{release}
-Conflicts: pmix-libpmi
-%description libpmi
-Slurm\'s version of libpmi. For systems using Slurm, this version
-is preferred over the compatibility libraries shipped by the PMIx project.
 
 %package torque
 Summary: Torque/PBS wrappers for transition from Torque/PBS to Slurm
@@ -474,10 +465,12 @@ rm -rf %{buildroot}
 %exclude %{_bindir}/sjobexitmod
 %exclude %{_bindir}/sjstat
 %exclude %{_bindir}/smail
-%exclude %{_libdir}/libpmi*
 %{_libdir}/*.so*
 %{_libdir}/slurm/src/*
 %{_libdir}/slurm/*.so
+%if %{with cray}
+%{_libdir}/slurmpmi/*
+%endif
 %exclude %{_libdir}/slurm/accounting_storage_mysql.so
 %exclude %{_libdir}/slurm/job_submit_pbs.so
 %exclude %{_libdir}/slurm/spank_pbs.so
@@ -549,15 +542,6 @@ rm -rf %{buildroot}
 %{_sbindir}/slurmdbd
 %{_libdir}/slurm/accounting_storage_mysql.so
 %{_unitdir}/slurmdbd.service
-#############################################################################
-
-%files libpmi
-%defattr(-,root,root)
-%if %{with cray}
-%{_libdir}/slurmpmi/*
-%else
-%{_libdir}/libpmi*
-%endif
 #############################################################################
 
 %files torque

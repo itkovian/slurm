@@ -42,15 +42,44 @@
 #  Based off code with permission copyright 2006, 2007 Cluster Resources, Inc.
 ###############################################################################
 
-#use strict;
+use strict;
+use warnings;
+
 use FindBin;
 use Getopt::Long 2.24 qw(:config no_ignore_case);
 use lib "${FindBin::Bin}/../lib/perl";
 use autouse 'Pod::Usage' => qw(pod2usage);
 use Slurm ':all';
+use Slurmdb ':all';
 use POSIX qw(:signal_h);
 
-Main:
+my $arraycache;
+
+# Make array cache (once)
+sub mkarraycache
+{
+    return if defined $arraycache;
+
+    my $job_flags = SHOW_ALL | SHOW_DETAIL;
+    my $resp = Slurm->load_jobs(0, $job_flags);
+    if (!$resp) {
+        die "Problem loading jobs.\n";
+    }
+
+    foreach my $job (@{$resp->{job_array}}) {
+        # code from qstat
+        $job->{is_array} = $job->{array_job_id} &&
+            ($job->{array_task_id} != INFINITE ||
+             $job->{array_task_str});
+        if ($job->{is_array}) {
+            $job->{job_id_full} = $job->{array_job_id} .
+                (($job->{array_task_id} != INFINITE)  ? "[$job->{array_task_id}]" : "[]");
+            $arraycache->{$job->{job_id_full}} = $job->{job_id};
+        }
+    }
+}
+
+sub main
 {
 
     # Parse Command Line Arguments
@@ -90,9 +119,22 @@ Main:
 
     my $rc = 0;
     foreach my $jobid (@jobIds) {
+        if ($jobid =~ m/\[\d+\]$/) {
+            mkarraycache();
+            $jobid = $arraycache->{$jobid} || $jobid;
+        } elsif ($jobid =~ m/\[\]$/) {
+            # delete all
+            mkarraycache();
+            my $pat = "^$jobid";
+            $pat =~ s/(\[)/\\[/;
+            $pat =~ s/(\])$//;
+            push(@jobIds, map {$arraycache->{$_}} grep {m/$pat/} keys %$arraycache);
+            next;
+        }
+
 	    my $err = 0;
 	    my $resp = 0;
-	    for(my $i=0; $i<3; $i++) {
+	    for (my $i=0; $i < 3; $i++) {
 		    $resp = Slurm->kill_job($jobid, SIGKILL);
 		    $err = Slurm->get_errno();
 		    if($resp == SLURM_SUCCESS
@@ -101,17 +143,26 @@ Main:
 			    last;
 		    }
 	    }
-	    if($resp == SLURM_ERROR) {
-		    $rc++;
-		    if($err ne ESLURM_ALREADY_DONE &&
-		       $err ne ESLURM_INVALID_JOB_ID) {
-			    printf("qdel: Kill job error on job id %u: %s\n",
-				   $jobid, Slurm->strerror($err));
+
+	    if ($resp == SLURM_ERROR) {
+            if ($err eq ESLURM_INVALID_JOB_ID) {
+                $rc = 153;
+                print STDERR "qdel: nonexistent job id: $jobid\n";
+            } else {
+                $rc = 1;
+                if ($err ne ESLURM_ALREADY_DONE) {
+                    printf("qdel: Kill job error on job id %u: %s\n",
+                           $jobid, Slurm->strerror($err));
+                }
 		    }
 	    }
     }
+
     exit $rc;
 }
+
+# Run main
+main() unless caller;
 
 ##############################################################################
 
@@ -148,4 +199,3 @@ full documentation
 On success, B<qdel> will exit with a value of zero. On failure, B<qdel> will exit with a value greater than zero.
 
 =cut
-
