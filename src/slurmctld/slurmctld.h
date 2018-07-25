@@ -488,6 +488,7 @@ struct job_details {
 	uint32_t cpu_freq_gov;  	/* cpu frequency governor */
 	uint16_t cpus_per_task;		/* number of processors required for
 					 * each task */
+	uint16_t orig_cpus_per_task;	/* requested value of cpus_per_task */
 	List depend_list;		/* list of job_ptr:state pairs */
 	char *dependency;		/* wait for other jobs */
 	char *orig_dependency;		/* original value (for archiving) */
@@ -520,6 +521,7 @@ struct job_details {
 					 * SLURM_DIST_PLANE */
 	/* job constraints: */
 	uint32_t pn_min_cpus;		/* minimum processors per node */
+	uint32_t orig_pn_min_cpus;	/* requested value of pn_min_cpus */
 	uint64_t pn_min_memory;		/* minimum memory per node (MB) OR
 					 * memory per allocated
 					 * CPU | MEM_PER_CPU */
@@ -830,6 +832,8 @@ struct job_record {
 #define SLURM_DEPEND_EXPAND		6	/* Expand running job */
 #define SLURM_DEPEND_AFTER_CORRESPOND	7	/* After corresponding job array
 						 * elements completes */
+#define SLURM_DEPEND_BURST_BUFFER	8	/* After job burst buffer
+						 * stage-out completes */
 
 #define SLURM_FLAGS_OR			1	/* OR job dependencies */
 

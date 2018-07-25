@@ -1,4 +1,4 @@
-.TH sbatch "1" "Slurm Commands" "December 2017" "Slurm Commands"
+.TH sbatch "1" "Slurm Commands" "February 2018" "Slurm Commands"
 
 .SH "NAME"
 sbatch \- Submit a batch script to Slurm.
@@ -450,6 +450,10 @@ execution.
 .TP
 \fBafterany:job_id[:jobid...]\fR
 This job can begin execution after the specified jobs have terminated.
+.TP
+\fBafterburstbuffer:job_id[:jobid...]\fR
+This job can begin execution after the specified jobs have terminated and
+any associated burst buffer stage out operations have completed.
 .TP
 \fBaftercorr:job_id[:jobid...]\fR
 A task of this job array can begin execution after the corresponding task ID
@@ -1301,17 +1305,19 @@ Network (InfiniBand) data is collected.
 .RE
 
 .TP
-\fB\-\-propagate\fR[=\fIrlimitfR]
+\fB\-\-propagate\fR[=\fIrlimit[,rlimit...]\fR]
 Allows users to specify which of the modifiable (soft) resource limits
-to propagate to the compute nodes and apply to their jobs.  If
-\fIrlimits\fR is not specified, then all resource limits will be
-propagated.
+to propagate to the compute nodes and apply to their jobs. If no
+\fIrlimit\fR is specified, then all resource limits will be propagated.
 The following rlimit names are supported by Slurm (although some
 options may not be supported on some systems):
 .RS
 .TP 10
 \fBALL\fR
-All limits listed below
+All limits listed below (default)
+.TP
+\fBNONE\fR
+No limits listed below
 .TP
 \fBAS\fR
 The maximum address space for a process

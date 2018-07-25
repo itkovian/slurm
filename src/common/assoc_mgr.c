@@ -2154,18 +2154,15 @@ extern int assoc_mgr_get_user_assocs(void *db_conn,
 	xassert(assoc->uid != NO_VAL);
 	xassert(assoc_list);
 
-	/* Call assoc_mgr_refresh_lists instead of just getting the
-	   association list because we need qos and user lists before
-	   the association list can be made.
-	*/
-	if (!assoc_mgr_assoc_list)
-		if (assoc_mgr_refresh_lists(db_conn, 0) == SLURM_ERROR)
-			return SLURM_ERROR;
-
 	if ((!assoc_mgr_assoc_list
 	     || !list_count(assoc_mgr_assoc_list))
 	    && !(enforce & ACCOUNTING_ENFORCE_ASSOCS)) {
 		return SLURM_SUCCESS;
+	}
+
+	if (!assoc_mgr_assoc_list) {
+		error("No assoc list available, this should never happen");
+		return SLURM_ERROR;
 	}
 
 	itr = list_iterator_create(assoc_mgr_assoc_list);
@@ -3711,10 +3708,6 @@ extern int assoc_mgr_update_assocs(slurmdb_update_object_t *update, bool locked)
 				// reset the parent pointers below
 				parents_changed = 1;
 			}
-			/* info("rec has def of %d %d", */
-			/*      rec->def_qos_id, object->def_qos_id); */
-			if (object->def_qos_id != NO_VAL)
-				rec->def_qos_id = object->def_qos_id;
 
 			if (object->qos_list) {
 				if (rec->qos_list) {
@@ -3745,6 +3738,15 @@ extern int assoc_mgr_update_assocs(slurmdb_update_object_t *update, bool locked)
 						rec->qos_list);
 				}
 			}
+
+			/* info("rec has def of %d %d", */
+			/*      rec->def_qos_id, object->def_qos_id); */
+			if (object->def_qos_id != NO_VAL &&
+			    object->def_qos_id >= g_qos_count) {
+				error("qos %d doesn't exist", rec->def_qos_id);
+				rec->def_qos_id = 0;
+			} else  if (object->def_qos_id != NO_VAL)
+				rec->def_qos_id = object->def_qos_id;
 
 			if (rec->def_qos_id && rec->user
 			    && rec->usage && rec->usage->valid_qos
