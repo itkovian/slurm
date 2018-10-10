@@ -2241,7 +2241,6 @@ static void _rpc_prolog(slurm_msg_t *msg)
 		job_env.user_name = req->user_name;
 
         node_inx = _get_node_inx(req->nodes);
-        debug("_rpc_prolog: this node resides at index %d of the hostlist", node_inx);
         job_env.job_node_cpus = (node_inx >= 0 ? req->job_node_cpus[node_inx] : 0);
 
 		if ((rc = container_g_create(req->job_id)))
@@ -5759,8 +5758,9 @@ static char **_build_env(job_env_t *job_env)
 		setenvf(&env, "SLURM_JOB_PARTITION", "%s", job_env->partition);
 
     setenvf(&env, "SLURM_JOB_NODE_CPUS", "%d", job_env->job_node_cpus);
-
-    return env;
+    setenvf(&env, "SLURM_ACTUAL_NODE_CPUS", "%d", conf->actual_cpus);
+    
+	return env;
 }
 
 static void
