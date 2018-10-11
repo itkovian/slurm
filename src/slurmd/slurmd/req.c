@@ -5123,6 +5123,7 @@ _rpc_abort_job(slurm_msg_t *msg)
 							  SELECT_PRINT_RESV_ID);
 #endif
 
+    debug2("Calling _run_epilog from _rpc_abort_job");
 	_run_epilog(&job_env);
 
 	if (container_g_delete(req->job_id))
@@ -5218,6 +5219,7 @@ _rpc_terminate_batch_job(uint32_t job_id, uint32_t user_id, char *node_name)
 	job_env.node_list = node_name;
 	job_env.uid = (uid_t)user_id;
 	/* NOTE: We lack the job's SPANK environment variables */
+    debug2("Calling _run_epilog from _rpc_terminate_batch_job");
 	rc = _run_epilog(&job_env);
 	if (rc) {
 		int term_sig = 0, exit_status = 0;
@@ -5350,6 +5352,7 @@ _rpc_terminate_job(slurm_msg_t *msg)
 						      conf->auth_info);
 	int             nsteps = 0;
 	int		delay;
+    int node_inx = -1;
 //	slurm_ctl_conf_t *cf;
 //	struct stat	stat_buf;
 	job_env_t       job_env;
@@ -5558,6 +5561,9 @@ _rpc_terminate_job(slurm_msg_t *msg)
 	job_env.spank_job_env_size = req->spank_job_env_size;
 	job_env.uid = req->job_uid;
 
+    node_inx = _get_node_inx(req->nodes);
+    job_env.job_node_cpus = (node_inx >= 0 ? req->job_node_cpus[node_inx] : 0);
+    debug2("Setting job_env.job_cpu_nodes to %d", job_env.job_node_cpus);
 #if defined(HAVE_BG)
 	select_g_select_jobinfo_get(req->select_jobinfo,
 				    SELECT_JOBDATA_BLOCK_ID,
@@ -5566,6 +5572,7 @@ _rpc_terminate_job(slurm_msg_t *msg)
 	job_env.resv_id = select_g_select_jobinfo_xstrdup(
 		req->select_jobinfo, SELECT_PRINT_RESV_ID);
 #endif
+    debug2("Calling _run_epilog from _rpc_terminate_job");
 	rc = _run_epilog(&job_env);
 	xfree(job_env.resv_id);
 
