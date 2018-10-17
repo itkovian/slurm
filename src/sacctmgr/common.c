@@ -511,7 +511,7 @@ static print_field_t *_get_print_field(char *object)
 		field->name = xstrdup("MaxNodes");
 		field->len = 8;
 		field->print_routine = print_fields_uint;
-	} else if (!xstrncasecmp("MaxNodesPerUser", object, 
+	} else if (!xstrncasecmp("MaxNodesPerUser", object,
 				 MAX(command_len, 12)) ||
 		   !xstrncasecmp("MaxNodesPU", object,
 				 MAX(command_len, 10))) {
@@ -774,6 +774,11 @@ extern int commit_check(char *warning)
 
 	printf("%s (You have 30 seconds to decide)\n", warning);
 	_nonblock(1);
+    /* Automation might introduce a newline after some previous answer.
+     * We will empty the input buffer before awaiting a new answer.
+     */
+    while((c = getchar()) != '\n' && c != EOF) { }
+
 	while(c != 'Y' && c != 'y'
 	      && c != 'N' && c != 'n'
 	      && c != '\n') {
