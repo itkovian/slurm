@@ -40,7 +40,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include "slurm/spank.h"
-#include "slurm/slurm_stepd_job.h"
+#include "slurm/slurmstepd_job.h"
 
 SPANK_PLUGIN(pbs, 1);
 
