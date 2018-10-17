@@ -1973,6 +1973,8 @@ spank_err_t spank_get_item(spank_t spank, spank_item_t item, ...)
 	else if (spank->stack->type == S_TYPE_JOB_SCRIPT)
 		s_job_info = spank->job;
 
+	debug("SPANK_GET_ITEM: Processing item ...");
+
 	va_start(vargs, item);
 	switch (item) {
 	case S_JOB_TIMELIMIT:
@@ -1980,8 +1982,9 @@ spank_err_t spank_get_item(spank_t spank, spank_item_t item, ...)
 		if (spank->stack->type == S_TYPE_REMOTE) {
 			*p2timelimit = slurmd_job->timelimit;
 			rc = ESPANK_SUCCESS;
+		} else {
+			rc = ESPANK_NOT_REMOTE;
 		}
-		rc = ESPANK_NOT_REMOTE;
 		break;
 	case S_JOB_UID:
 		p2uid = va_arg(vargs, uid_t *);
