@@ -40,7 +40,6 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include "slurm/spank.h"
-#include "slurm/slurmstepd_job.h"
 
 SPANK_PLUGIN(pbs, 1);
 
@@ -142,8 +141,8 @@ int slurm_spank_task_init(spank_t sp, int ac, char **av)
 	    ESPANK_SUCCESS)
 		spank_setenv(sp, "PBS_O_WORKDIR", val, 1);
 
-	if ( spank_get_item(spank, S_JOB_TIMELIMIT, &timelimit) == ESPANK_SUCCESS) {
-		if(snprintf(pbs_walltime, 32, "%ld", slurmd_job->timelimit) < 0) {
+	if ( spank_get_item(sp, S_JOB_TIMELIMIT, &timelimit) == ESPANK_SUCCESS) {
+		if(snprintf(pbs_walltime, 32, "%ld", timelimit) < 0) {
 			spank_setenv(sp, "PBS_WALLTIME", pbs_walltime, 1);
 		}
 	}
