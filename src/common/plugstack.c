@@ -1945,7 +1945,7 @@ spank_err_t spank_get_item(spank_t spank, spank_item_t item, ...)
 	gid_t **p2gids;
 	pid_t *p2pid;
 	pid_t  pid;
-	time_t p2timelimit;
+	time_t *p2timelimit;
 	char ***p2argv;
 	char **p2str;
 	char **p2vers;
@@ -1976,9 +1976,10 @@ spank_err_t spank_get_item(spank_t spank, spank_item_t item, ...)
 	va_start(vargs, item);
 	switch (item) {
 	case S_JOB_TIMELIMIT:
-	    p2timelimit = va_args(vargs, time_t *);
+	    p2timelimit = va_arg(vargs, time_t *);
 		if (spank->stack->type == S_TYPE_REMOTE)
 			*p2timelimit = slurmd_job->timelimit;
+		break;
 	case S_JOB_UID:
 		p2uid = va_arg(vargs, uid_t *);
 		if (spank->stack->type == S_TYPE_LOCAL)
