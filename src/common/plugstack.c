@@ -1945,6 +1945,7 @@ spank_err_t spank_get_item(spank_t spank, spank_item_t item, ...)
 	gid_t **p2gids;
 	pid_t *p2pid;
 	pid_t  pid;
+	time_t p2timelimit;
 	char ***p2argv;
 	char **p2str;
 	char **p2vers;

@@ -160,7 +160,7 @@ enum spank_item {
     S_JOB_ALLOC_MEM,         /* Job allocated memory in MB (uint64_t *)      */
     S_STEP_ALLOC_CORES,      /* Step alloc'd cores in list format  (char **) */
     S_STEP_ALLOC_MEM,        /* Step alloc'd memory in MB (uint64_t *)       */
-    S_SLURM_RESTART_COUNT    /* Job restart count (uint32_t *)               */
+    S_SLURM_RESTART_COUNT,    /* Job restart count (uint32_t *)               */
     S_JOB_TIMELIMIT          /* Timelimit for the job in minutes             */
 };
 
