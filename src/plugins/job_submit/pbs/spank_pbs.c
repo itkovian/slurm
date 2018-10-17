@@ -40,12 +40,15 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include "slurm/spank.h"
+#include "slurm/slurm_stepd_job.h"
 
 SPANK_PLUGIN(pbs, 1);
 
 int slurm_spank_task_init(spank_t sp, int ac, char **av)
 {
 	char val[30000];
+	stepd_step_rec_t *slurmd_job = sp->job;
+	char pbs_walltime[32];
 
 	/* PBS_ACCOUNT is set in the job_submit/pbs plugin, but only for
 	 * batch jobs that specify the job's account at job submit time. */
@@ -138,6 +141,10 @@ int slurm_spank_task_init(spank_t sp, int ac, char **av)
 	if (spank_getenv(sp, "SLURM_SUBMIT_DIR", val, sizeof(val)) ==
 	    ESPANK_SUCCESS)
 		spank_setenv(sp, "PBS_O_WORKDIR", val, 1);
+
+	if( snprintf(pbs_walltime, 32, "%ld", job->timelimit) < 0) {
+		spank_setenv(sp, "PBS_WALLTIME", pbs_walltime, 1);
+	}
 
 	/* PBS_QUEUE is set in the job_submit/pbs plugin, but only for
 	 * batch jobs that specify the job's partition at job submit time. */
