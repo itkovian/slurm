@@ -142,7 +142,7 @@ int slurm_spank_task_init(spank_t sp, int ac, char **av)
 		spank_setenv(sp, "PBS_O_WORKDIR", val, 1);
 
 	if ( spank_get_item(sp, S_JOB_TIMELIMIT, &timelimit) == ESPANK_SUCCESS) {
-		if(snprintf(pbs_walltime, 32, "%ld", timelimit) < 0) {
+		if(snprintf(pbs_walltime, 32, "%ld", timelimit) > 0) {
 			spank_setenv(sp, "PBS_WALLTIME", pbs_walltime, 1);
 		} else {
 			slurm_debug("Cannot set PBS_WALLTIME env");
