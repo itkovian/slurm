@@ -1977,8 +1977,11 @@ spank_err_t spank_get_item(spank_t spank, spank_item_t item, ...)
 	switch (item) {
 	case S_JOB_TIMELIMIT:
 	    p2timelimit = va_arg(vargs, time_t *);
-		if (spank->stack->type == S_TYPE_REMOTE)
+		if (spank->stack->type == S_TYPE_REMOTE) {
 			*p2timelimit = slurmd_job->timelimit;
+			rc = ESPANK_SUCCESS;
+		}
+		rc = ESPANK_NOT_REMOTE;
 		break;
 	case S_JOB_UID:
 		p2uid = va_arg(vargs, uid_t *);
