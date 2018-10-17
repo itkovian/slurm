@@ -47,8 +47,8 @@ SPANK_PLUGIN(pbs, 1);
 int slurm_spank_task_init(spank_t sp, int ac, char **av)
 {
 	char val[30000];
-	stepd_step_rec_t *slurmd_job = sp->job;
 	char pbs_walltime[32];
+	time_t timelimit;
 
 	/* PBS_ACCOUNT is set in the job_submit/pbs plugin, but only for
 	 * batch jobs that specify the job's account at job submit time. */
@@ -142,8 +142,10 @@ int slurm_spank_task_init(spank_t sp, int ac, char **av)
 	    ESPANK_SUCCESS)
 		spank_setenv(sp, "PBS_O_WORKDIR", val, 1);
 
-	if( snprintf(pbs_walltime, 32, "%ld", job->timelimit) < 0) {
-		spank_setenv(sp, "PBS_WALLTIME", pbs_walltime, 1);
+	if ( spank_get_item(spank, S_JOB_TIMELIMIT, &timelimit) == ESPANK_SUCCESS) {
+		if(snprintf(pbs_walltime, 32, "%ld", slurmd_job->timelimit) < 0) {
+			spank_setenv(sp, "PBS_WALLTIME", pbs_walltime, 1);
+		}
 	}
 
 	/* PBS_QUEUE is set in the job_submit/pbs plugin, but only for
