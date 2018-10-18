@@ -1,6 +1,6 @@
 Name:		slurm
 Version:	17.11.8
-%global rel	1
+%global rel	2
 Release:	%{rel}%{gittag}%{?dist}.ug
 Summary:	Slurm Workload Manager
 
@@ -546,16 +546,6 @@ rm -rf %{buildroot}
 
 %files torque
 %defattr(-,root,root)
-%attr(755, root, root) %{_libexecdir}/slurm/wrapper/pbsnodes
-%attr(755, root, root) %{_libexecdir}/slurm/wrapper/qalter
-%attr(755, root, root) %{_libexecdir}/slurm/wrapper/qdel
-%attr(755, root, root) %{_libexecdir}/slurm/wrapper/qhold
-%attr(755, root, root) %{_libexecdir}/slurm/wrapper/qrerun
-%attr(755, root, root) %{_libexecdir}/slurm/wrapper/qrls
-%attr(755, root, root) %{_libexecdir}/slurm/wrapper/qstat
-%attr(755, root, root) %{_libexecdir}/slurm/wrapper/qsub
-%attr(755, root, root) %{_libexecdir}/slurm/wrapper/mpiexec
-%attr(755, root, root) %{_libexecdir}/slurm/wrapper/generate_pbs_nodefile
 %{_libdir}/slurm/job_submit_pbs.so
 %{_libdir}/slurm/spank_pbs.so
 #############################################################################
