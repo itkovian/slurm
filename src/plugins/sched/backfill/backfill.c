@@ -1930,12 +1930,13 @@ next_task:
 		     (!bit_super_set(job_ptr->details->req_node_bitmap,
 				     avail_bitmap))) ||
 		    (job_req_node_filter(job_ptr, avail_bitmap, true))) {
-#ifndef SLURM_SIMULATOR
+//Marco: why this has been altered?
+//#ifndef SLURM_SIMULATOR
 			if (later_start) {
 				job_ptr->start_time = 0;
 				goto TRY_LATER;
 			}
-#endif
+//#endif
 			/* Job can not start until too far in the future */
 			_set_job_time_limit(job_ptr, orig_time_limit);
 			job_ptr->start_time = 0;
@@ -2266,7 +2267,8 @@ skip_start:
 			}
 			continue;
 		}
-#ifndef SLURM_SIMULATOR
+//Marco: why this has been altered?
+//#ifndef SLURM_SIMULATOR
 		if (later_start && (job_ptr->start_time > later_start)) {
 			/* Try later when some nodes currently reserved for
 			 * pending jobs are free */
@@ -2277,7 +2279,7 @@ skip_start:
 			job_ptr->start_time = 0;
 			goto TRY_LATER;
 		}
-#endif
+//#endif
 		start_time  = job_ptr->start_time;
 		end_reserve = job_ptr->start_time + boot_time +
 			      (time_limit * 60);
@@ -2325,7 +2327,9 @@ skip_start:
 			}
 			break;
 		}
-#ifndef SLURM_SIMULATOR
+
+//Marco: why this has been altered?
+//#ifndef SLURM_SIMULATOR
 		if ((job_ptr->start_time > now) &&
 		    (job_ptr->state_reason != WAIT_BURST_BUFFER_RESOURCE) &&
 		    (job_ptr->state_reason != WAIT_BURST_BUFFER_STAGING) &&
@@ -2346,7 +2350,7 @@ skip_start:
 			}
 			goto TRY_LATER;
 		}
-#endif
+//#endif
 		if (_job_pack_deadlock_test(job_ptr))
 			continue;
 
