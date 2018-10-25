@@ -592,9 +592,14 @@ static int _load_cgroup_config()
 }
 
 /* Parse arguments, etc then get my socket address/port information. 
- * Always check if the user has a job on the node, otherwise deny access.
- * If action_adopt=check_only, do not adopt the job, otherwise attempt to
- * adopt this process into a job in the following order:
+ * This function can be used in two ways:
+ * - check only
+ * - check and adopt (default behaviour)
+ * 
+ * The action_adopt flag governs this choice, if it is set to check_only,
+ * there will be no adoption of the process into a job.
+ * 
+ * The adoption process proceeds in the following order:
  * 	1) If the user has only one job on the node, pick that one
  * 	2) Send RPC to source IP of socket. If there is a slurmd at the IP
  * 		address, ask it which job I belong to. On success, pick that one
@@ -778,7 +783,8 @@ PAM_EXTERN int pam_sm_close_session(pam_handle_t *pamh, int flags
 }
 
 
-
+/* Implementation for the pam_acct_mgmt API call. 
+ */
 PAM_EXTERN int pam_sm_acct_mgmt(pam_handle_t *pamh, int flags
 				__attribute__((unused)), int argc, const char **argv)
 {
