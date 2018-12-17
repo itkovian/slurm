@@ -1980,7 +1980,7 @@ spank_err_t spank_get_item(spank_t spank, spank_item_t item, ...)
 		if (spank->stack->type == S_TYPE_REMOTE) {
 			*p2timelimit = slurmd_job->timelimit;
 			debug("SPANK_GET_ITEM S_JOB_TIMELIMIT: %ld", *p2timelimit);
-			debug("SPANK_GET_ITEM S_JOB_TIMELIMIT job ID: %d", slurm_job->jobid);
+			debug("SPANK_GET_ITEM S_JOB_TIMELIMIT job ID: %d", slurmd_job->jobid);
 			rc = ESPANK_SUCCESS;
 		} else {
 			rc = ESPANK_NOT_REMOTE;
