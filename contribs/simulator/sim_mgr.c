@@ -748,6 +748,7 @@ int init_job_trace() {
 #if 0
 		displayJobTraceT(&new_job);
 #endif
+#define SLURM_SIMULATOR
 		init_trace_info(&new_job, 0);
 		total_trace_records++;
 	}
@@ -1014,11 +1015,13 @@ fork_daemons(int idx) {
 		pid[idx] = fork();
 		if(pid[idx]==0) {
 			if (idx==0) {
+				printf("Fork for daemon %s", daemon1);
 				args[0] = daemon1;
 				args[1] = "-c";
 				args[2] = NULL;
 				execvpe(daemon1, args, envs);
 			} else {
+				printf("Fork for daemon %s", daemon2);
 				args[0] = daemon2;
 				args[1] = NULL;
 				execvpe(daemon2, args, envs);
