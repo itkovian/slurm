@@ -608,7 +608,7 @@ static void _load_config(void)
 	} else {
 		bf_max_time = backfill_interval;
 	}
-        
+
         /*ANA: Adding new bf parameter for limiting job queue depth, i.e., number of jobs in the queue considered to be backfilled */
         if (sched_params && (tmp_ptr=strstr(sched_params, "bf_queue_limit=")))
                 backfill_queue_limit = atoi(tmp_ptr + 15);
@@ -1129,7 +1129,7 @@ static bool _job_runnable_now(struct job_record *job_ptr)
 	return true;
 }
 
-static int attempt_backfill(void)
+static int _attempt_backfill(void)
 {
 	DEF_TIMERS;
 	List job_queue;
@@ -2680,7 +2680,7 @@ static void _add_reservation(uint32_t start_time, uint32_t end_reserve,
 	bool placed = false;
 	int i, j;
 
-#if 0	
+#if 0
 	info("add job start:%u end:%u", start_time, end_reserve);
 	for (j = 0; ; ) {
 		info("node start:%u end:%u",
