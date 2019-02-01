@@ -65,7 +65,6 @@
 #include "slurm/slurm.h"
 #include "src/common/slurm_xlator.h"
 #include "src/common/slurm_protocol_api.h"
-#include "src/common/xcgroup_read_config.c"
 #include "src/slurmd/common/xcgroup.c"
 
 /* This definition would probably be good to centralize somewhere */
@@ -332,7 +331,7 @@ static int _action_unknown(pam_handle_t *pamh, struct passwd *pwd, List steps)
 			else
 				return PAM_PERM_DENIED;
 		}
-	} 
+	}
 
 	/* This pam module was worthless, apparently */
 	debug("_indeterminate_multiple failed to find a job to adopt this into");
@@ -659,6 +658,7 @@ static int check_pam_service(pam_handle_t *pamh)
 }
 
 /* Parse arguments, etc then get my socket address/port information. 
+/* Parse arguments, etc then get my socket address/port information.
  * Always check if the user has a job on the node, otherwise deny access.
  * If action_adopt=check_only, do not adopt the job, otherwise attempt to
  * adopt this process into a job in the following order:
@@ -746,7 +746,7 @@ int _adopt_and_or_check(pam_handle_t *pamh, int flags
 		return PAM_SESSION_ERR;
 	}
 
-	if (opts.action_adopt==CALLERID_ACTION_ADOPT_AND_CHECK 
+	if (opts.action_adopt==CALLERID_ACTION_ADOPT_AND_CHECK
 	    && _load_cgroup_config() != SLURM_SUCCESS)
 		return rc;
 
@@ -815,7 +815,7 @@ int _adopt_and_or_check(pam_handle_t *pamh, int flags
 
 	/* The source of the connection either didn't reply or couldn't
 	 * determine the job ID at the source. Proceed to action_unknown */
-	if (rc != PAM_SUCCESS) 
+	if (rc != PAM_SUCCESS)
 		rc = _action_unknown(pamh, &pwd, steps);
 
 cleanup:
