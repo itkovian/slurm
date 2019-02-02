@@ -43,6 +43,8 @@
 
 #include "src/common/list.h"
 
+#define SLURM_CPUACCT_PERCPU_SIZE 128
+
 typedef struct jag_prec {	/* process record */
 	int	act_cpufreq;	/* actual average cpu frequency */
 	int	last_cpu;	/* last cpu */
@@ -53,6 +55,8 @@ typedef struct jag_prec {	/* process record */
 	int     tres_count; /* count of tres in the tres_data */
 	acct_gather_data_t *tres_data; /* array of tres data */
 	double  usec;   /* user cpu time */
+    int     percpu_cores; /* number of cores present in the node for this job */
+    uint64_t percpu_usage_sec[SLURM_CPUACCT_PERCPU_SIZE]; /* per cpu(core) usage seconds */
 } jag_prec_t;
 
 typedef struct jag_callbacks {
