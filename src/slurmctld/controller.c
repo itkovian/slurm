@@ -172,6 +172,7 @@ uint32_t cluster_cpus = 0;
 time_t	last_proc_req_start = 0;
 bool	ping_nodes_now = false;
 pthread_cond_t purge_thread_cond = PTHREAD_COND_INITIALIZER;
+pthread_mutex_t purge_thread_lock = PTHREAD_MUTEX_INITIALIZER;
 int	sched_interval = 60;
 slurmctld_config_t slurmctld_config;
 diag_stats_t slurmctld_diag_stats;
@@ -194,7 +195,6 @@ static time_t	next_stats_reset = 0;
 static int	new_nice = 0;
 static char	node_name_short[MAX_SLURM_NAME];
 static char	node_name_long[MAX_SLURM_NAME];
-static pthread_mutex_t purge_thread_lock = PTHREAD_MUTEX_INITIALIZER;
 static int	recover   = DEFAULT_RECOVER;
 static pthread_mutex_t sched_cnt_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t server_thread_cond = PTHREAD_COND_INITIALIZER;
@@ -479,6 +479,7 @@ int main(int argc, char **argv)
 		if (!slurmctld_primary) {
 			slurm_sched_fini();	/* make sure shutdown */
 			run_backup(&callbacks);
+			agent_init();   /* Killed at any previous shutdown */
 			if (slurm_acct_storage_init(NULL) != SLURM_SUCCESS )
 				fatal("failed to initialize "
 				      "accounting_storage plugin");
@@ -608,7 +609,9 @@ int main(int argc, char **argv)
 		slurm_priority_fini();
 		slurmctld_plugstack_fini();
 		shutdown_state_save();
+		slurm_mutex_lock(&purge_thread_lock);
 		slurm_cond_signal(&purge_thread_cond); /* wake up last time */
+		slurm_mutex_unlock(&purge_thread_lock);
 		pthread_join(slurmctld_config.thread_id_purge_files, NULL);
 		pthread_join(slurmctld_config.thread_id_sig,  NULL);
 		pthread_join(slurmctld_config.thread_id_rpc,  NULL);
@@ -1300,6 +1303,8 @@ static void _remove_assoc(slurmdb_assoc_rec_t *rec)
 {
 	int cnt = 0;
 
+	bb_g_reconfig();
+
 	cnt = job_hold_by_assoc_id(rec->id);
 
 	if (cnt) {
@@ -1332,6 +1337,8 @@ static void _remove_qos(slurmdb_qos_rec_t *rec)
 		list_iterator_destroy(itr);
 	}
 	unlock_slurmctld(part_write_lock);
+
+	bb_g_reconfig();
 
 	cnt = job_hold_by_qos_id(rec->id);
 

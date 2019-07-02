@@ -278,6 +278,7 @@ EXTRA_DIST = \
 	test7.17_configs/test7.17.6/slurm.conf	\
 	test7.17_configs/test7.17.7/gres.conf	\
 	test7.17_configs/test7.17.7/slurm.conf	\
+	test7.19			\
 	test8.1				\
 	test8.2				\
 	test8.3				\
@@ -574,7 +575,6 @@ EXTRA_DIST = \
 	test29.6                        \
 	test29.7			\
 	test29.8			\
-	test30.1			\
 	test31.1			\
 	test31.2			\
 	test32.1			\

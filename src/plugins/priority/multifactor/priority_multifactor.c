@@ -60,6 +60,7 @@
 
 #include "src/common/parse_time.h"
 #include "src/common/slurm_mcs.h"
+#include "src/common/slurm_priority.h"
 #include "src/common/slurm_time.h"
 #include "src/common/xstring.h"
 #include "src/common/gres.h"
@@ -489,7 +490,6 @@ static double _get_fairshare_priority(struct job_record *job_ptr)
 	return priority_fs;
 }
 
-
 /* Returns the priority after applying the weight factors */
 static uint32_t _get_priority_internal(time_t start_time,
 				       struct job_record *job_ptr)
@@ -586,6 +586,7 @@ static uint32_t _get_priority_internal(time_t start_time,
 		}
 
 		i = 0;
+		list_sort(job_ptr->part_ptr_list, priority_sort_part_tier);
 		part_iterator = list_iterator_create(job_ptr->part_ptr_list);
 		while ((part_ptr = (struct part_record *)
 			list_next(part_iterator))) {

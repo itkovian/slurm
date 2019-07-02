@@ -1,8 +1,109 @@
 This file describes changes in recent versions of Slurm. It primarily
 documents those changes that are of interest to users and administrators.
 
+* Changes in Slurm 17.11.14
+===========================
+
+* Changes in Slurm 17.11.13-2
+=============================
+ -- Fix Perl build for 32-bit systems.
+
+* Changes in Slurm 17.11.13
+===========================
+ -- Add mitigation for a potential heap overflow on 32-bit systems in xmalloc.
+    CVE-2019-6438.
+
+* Changes in Slurm 17.11.12
+===========================
+ -- Fix regression in 17.11.10 that caused dbd messages to not be queued up
+    when the dbd was down.
+
+* Changes in Slurm 17.11.11
+===========================
+ -- Correctly initialize variable in env_array_user_default().
+ -- Correctly handle scenarios where a partitions MaxMemPerCPU is less than
+    a jobs --mem-per-cpu and also -c is greater than 1.
+
+* Changes in Slurm 17.11.10
+===========================
+ -- Move priority_sort_part_tier from slurmctld to libslurm to make it possible
+    to run the regression tests 24.* without changing that code since it links
+    directly to the priority plugin where that function isn't defined.
+ -- Fix issue where job time limits can increase to max walltime when updating
+    a job with scontrol.
+ -- Fix invalid protocol_version manipulation on big endian platforms causing
+    srun and sattach to fail.
+ -- Fix for QOS, Reservation and Alias env variables in srun.
+ -- mpi/pmi2 - Backport 6a702158b49c4 from 18.08 to avoid dangerous detached
+    thread.
+ -- When allowing heterogeneous steps make sure we copy all the options to
+    avoid copying strings that may be overwritten.
+ -- Print correctly when sh5util finds and empty file.
+ -- Fix sh5util to not seg fault on exit.
+ -- Fix sh5util to check correctly for H5free_memory.
+ -- Adjust OOM monitoring function in task/cgroup to prevent problems in
+    regression suite from leaked file descriptors.
+ -- Fix issue with gres when defined with a type and no count
+    (i.e. gres=gpu/tesla) it would get a count of 0.
+ -- Allow sstat to talk to slurmd's that are new in protocol version.
+ -- Permit database names over 33 characters in accounting_storage/mysql.
+ -- Fix negative values when profiling.
+ -- Fix srun segfault caused by invalid memory reads on the env.
+ -- Fix segfault on job arrays when starting controller without dbd up.
+ -- Fix pmi2 to build with gcc 8.0+.
+ -- Fix proper alignment of clauses when determining if more nodes are needed
+    for an allocation.
+ -- Fix race condition when canceling a federation job that just started
+    running.
+ -- Prevent extra resources from being allocated when combining certain flags.
+ -- Fix problem in task/affinity plugin that can lead to slurmd fatal()'ing
+    when using --hint=nomultithread.
+ -- Fix left over socket file when step is ending and using pmi2 with
+    %n or %h in the spool dir.
+ -- Fix incorrect spacing for PartitionName lines in 'scontrol write config'.
+ -- Fix sacct to not print huge reserve times when the job was never eligible.
+ -- burst_buffer/cray - Add missing locks around assoc_mgr when timing out a
+    burst buffer.
+ -- burst_buffer/cray - Update burst buffers when an association or qos
+    is removed from the system.
+ -- If failed over to a backup controller, ensure the agent thread is launched
+    to handle deferred tasks.
+ -- Fix correct job CPU count allocated.
+ -- Protect against sending to the slurmdbd if the connection has gone away.
+ -- Fix checking missing return codes when unpacking structures.
+ -- Fix slurm.spec-legacy including slurmsmwd
+ -- More explicit error message when cgroup oom-kill events detected.
+ -- When updating an association and are unable to find parent association
+    initialize old fairshare association pointer correctly.
+ -- Wrap slurm_cond_signal() calls with mutexes where needed.
+ -- Fix correct timeout with resends in slurm_send_only_node_msg.
+ -- Fix pam_slurm_adopt to honor action_adopt_failure.
+ -- job_submit/lua - expose argc/argv options through lua interface.
+
+* Changes in Slurm 17.11.9-2
+============================
+ -- Fix printing of node state "drain + reboot" (and other node state flags).
+ -- Fix invalid read (segfault) when sorting multi-partition jobs.
+ -- Move several new error() messages to debug() to keep them out of users'
+    srun output.
+
 * Changes in Slurm 17.11.9
 ==========================
+ -- Fix segfault in slurmctld when a job's node bitmap is NULL during a
+    scheduling cycle.  Primarily caused by EnforcePartLimits=ALL.
+ -- Remove erroneous unlock in acct_gather_energy/ipmi.
+ -- Enable support for hwloc version 2.0.1.
+ -- Fix 'srun -q' (--qos) option handling.
+ -- Fix socket communication issue that can lead to lost task completition
+    messages, which will cause a permanently stuck srun process.
+ -- Handle creation of TMPDIR if environment variable is set or changed in
+    a task prolog script.
+ -- Avoid node layout fragmentation if running with a fixed CPU count but
+    without Sockets and CoresPerSocket defined.
+ -- burst_buffer/cray - Fix datawarp swap default pool overriding jobdw.
+ -- Fix incorrect job priority assignment for multi-partition job with
+    different PriorityTier settings on the partitions.
+ -- Fix sinfo to print correct node state.
 
 * Changes in Slurm 17.11.8
 ==========================

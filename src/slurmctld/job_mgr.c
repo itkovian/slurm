@@ -4438,6 +4438,7 @@ extern struct job_record *job_array_split(struct job_record *job_ptr)
 	job_ptr_pend->tres_fmt_req_str = xstrdup(job_ptr->tres_fmt_req_str);
 	job_ptr_pend->tres_alloc_str = NULL;
 	job_ptr_pend->tres_fmt_alloc_str = NULL;
+	job_ptr_pend->tres_alloc_cnt = NULL;
 
 	job_ptr_pend->user_name = xstrdup(job_ptr->user_name);
 	job_ptr_pend->wckey = xstrdup(job_ptr->wckey);
@@ -4573,19 +4574,6 @@ static void _create_job_array(struct job_record *job_ptr,
 	}
 }
 
-static int _sort_part_tier(void *x, void *y)
-{
-	struct part_record *parta = *(struct part_record **) x;
-	struct part_record *partb = *(struct part_record **) y;
-
-	if (parta->priority_tier > partb->priority_tier)
-		return -1;
-	if (parta->priority_tier < partb->priority_tier)
-		return 1;
-
-	return 0;
-}
-
 /*
  * Wrapper for select_nodes() function that will test all valid partitions
  * for a new job
@@ -4606,7 +4594,7 @@ static int _select_nodes_parts(struct job_record *job_ptr, bool test_only,
 	int best_rc = -1, part_limits_rc = WAIT_NO_REASON;
 
 	if (job_ptr->part_ptr_list) {
-		list_sort(job_ptr->part_ptr_list, _sort_part_tier);
+		list_sort(job_ptr->part_ptr_list, priority_sort_part_tier);
 		iter = list_iterator_create(job_ptr->part_ptr_list);
 		while ((part_ptr = list_next(iter))) {
 			job_ptr->part_ptr = part_ptr;
@@ -4656,7 +4644,9 @@ static int _select_nodes_parts(struct job_record *job_ptr, bool test_only,
 				if ((slurmctld_conf.enforce_part_limits ==
 				     PARTITION_ENFORCE_ANY) ||
 				    (slurmctld_conf.enforce_part_limits ==
-				     PARTITION_ENFORCE_NONE)) {
+				     PARTITION_ENFORCE_NONE) ||
+				    (!test_only &&
+				     (part_limits_rc == WAIT_NO_REASON))) {
 					break;
 				}
 			}
@@ -8193,7 +8183,6 @@ static bool _valid_pn_min_mem(job_desc_msg_t * job_desc_msg,
 		return true;
 
 	if ((job_mem_limit & MEM_PER_CPU) && (sys_mem_limit & MEM_PER_CPU)) {
-		uint32_t cpu_ratio;
 		uint64_t mem_ratio;
 		job_mem_limit &= (~MEM_PER_CPU);
 		sys_mem_limit &= (~MEM_PER_CPU);
@@ -8213,12 +8202,10 @@ static bool _valid_pn_min_mem(job_desc_msg_t * job_desc_msg,
 		if ((job_desc_msg->num_tasks != NO_VAL) &&
 		    (job_desc_msg->num_tasks != 0) &&
 		    (job_desc_msg->min_cpus  != NO_VAL)) {
-			cpu_ratio = job_desc_msg->min_cpus /
-				    job_desc_msg->num_tasks;
-			if (cpu_ratio < mem_ratio) {
-				job_desc_msg->min_cpus =
-					job_desc_msg->num_tasks * mem_ratio;
-			}
+			job_desc_msg->min_cpus =
+				job_desc_msg->num_tasks *
+				job_desc_msg->cpus_per_task;
+
 			if ((job_desc_msg->max_cpus != NO_VAL) &&
 			    (job_desc_msg->max_cpus < job_desc_msg->min_cpus)) {
 				job_desc_msg->max_cpus = job_desc_msg->min_cpus;
@@ -10720,7 +10707,9 @@ static inline bool _purge_complete_pack_job(struct job_record *pack_leader)
 	if (i) {
 		debug2("%s: purged %d old job records", __func__, i);
 		last_job_update = time(NULL);
+		slurm_mutex_lock(&purge_thread_lock);
 		slurm_cond_signal(&purge_thread_cond);
+		slurm_mutex_unlock(&purge_thread_lock);
 	}
 	return true;
 }
@@ -10792,7 +10781,9 @@ void purge_old_job(void)
 	if (i) {
 		debug2("purge_old_job: purged %d old job records", i);
 		last_job_update = time(NULL);
+		slurm_mutex_lock(&purge_thread_lock);
 		slurm_cond_signal(&purge_thread_cond);
+		slurm_mutex_unlock(&purge_thread_lock);
 	}
 }
 
@@ -10812,7 +10803,9 @@ extern int purge_job_record(uint32_t job_id)
 	count = list_delete_all(job_list, &list_find_job_id, (void *)&job_id);
 	if (count) {
 		last_job_update = time(NULL);
+		slurm_mutex_lock(&purge_thread_lock);
 		slurm_cond_signal(&purge_thread_cond);
+		slurm_mutex_unlock(&purge_thread_lock);
 	}
 
 	return count;

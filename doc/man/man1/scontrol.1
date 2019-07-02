@@ -937,9 +937,8 @@ If the job is suspended, this is the run time accumulated by the job
 Count of desired sockets per node
 .TP
 \fISubmitTime\fP
-The time  and  date stamp (in Universal Time Coordinated, UTC)
-the job was submitted.  The format of the output is identical
-to that of the EndTime field.
+The time  and  date stamp (in localtime) the job was submitted.
+The format of the output is identical to that of the EndTime field.
 
 NOTE: If a job is requeued, the submit time is reset.
 To obtain the original submit time it is necessary
@@ -1325,6 +1324,20 @@ priority.
 The value may not exceed 65533.
 
 .TP
+\fIPriorityJobFactor\fP=<count>
+Partition factor used by priority/multifactor plugin in calculating
+job priority.  The value may not exceed 65533.  Also see PriorityTier.
+
+.TP
+\fIPriorityTier\fP=<count>
+Jobs submitted to a partition with a higher priority tier value will
+be dispatched before pending jobs in partition with lower priority tier
+value and,  if  possible,  they  will  preempt  running jobs from
+partitions with lower priority tier values.  Note that a partition's
+priority tier takes precedence over a job's priority.  The value may
+not exceed 65533.  Also see PriorityJobFactor.
+
+.TP
 \fIQOS\fP=<QOSname|blank to remove>
 Set the partition QOS with a QOS name or to remove the Partition QOS
 leave the option blank.
@@ -1587,7 +1600,7 @@ Once the reservation has been created, it must be populated within 5 minutes
 of its start time or it will be purged before any jobs have been run.
 .TP
 \fIREPLACE\fR
-Nodes which are DOWN, DRAINED, or allocated to jobs as automatically
+Nodes which are DOWN, DRAINED, or allocated to jobs are automatically
 replenished using idle resources.
 This option can be used to maintain a constant number of idle resources
 available for pending jobs (subject to availability of idle resources).
