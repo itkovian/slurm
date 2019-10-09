@@ -509,6 +509,7 @@ void lllp_distribution(launch_tasks_request_msg_t *req, uint32_t node_id)
 
 	switch (req->task_dist & SLURM_DIST_STATE_BASE) {
 	case SLURM_DIST_BLOCK_BLOCK:
+	case SLURM_DIST_BLOCK_BLOCK_BLOCK:
 	case SLURM_DIST_CYCLIC_BLOCK:
 	case SLURM_DIST_PLANE:
 		/* tasks are distributed in blocks within a plane */

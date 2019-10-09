@@ -12426,27 +12426,32 @@ static bitstr_t *_get_gres_map(char *map_gres, int local_proc_id)
 	if (!map_gres || !map_gres[0])
 		return NULL;
 
-	tmp = xstrdup(map_gres);
-	tok = strtok_r(tmp, ",", &save_ptr);
-	while (tok) {
-		if ((mult = strchr(tok, '*'))) {
-			mult[0] = '\0';
-			task_mult = atoi(mult + 1);
-		} else
-			task_mult = 1;
-		if ((local_proc_id >= task_offset) &&
-		    (local_proc_id <= (task_offset + task_mult - 1))) {
-			map_value = strtol(tok, NULL, 0);
-			if ((map_value < 0) || (map_value >= MAX_GRES_BITMAP))
-				break;	/* Bad value */
-			usable_gres = bit_alloc(MAX_GRES_BITMAP);
-			bit_set(usable_gres, map_value);
-			break;	/* All done */
-		} else {
-			task_offset += task_mult;
+	while (usable_gres == NULL) {
+		tmp = xstrdup(map_gres);
+		tok = strtok_r(tmp, ",", &save_ptr);
+		while (tok) {
+			if ((mult = strchr(tok, '*'))) {
+				mult[0] = '\0';
+				task_mult = atoi(mult + 1);
+			} else
+				task_mult = 1;
+			if ((local_proc_id >= task_offset) &&
+			    (local_proc_id <= (task_offset + task_mult - 1))) {
+				map_value = strtol(tok, NULL, 0);
+				if ((map_value < 0) || (map_value >= MAX_GRES_BITMAP)) {
+					error ("Invalid value provided for --gpu-bind=map_gpu:");
+					goto end;	/* Bad value */
+				}
+				usable_gres = bit_alloc(MAX_GRES_BITMAP);
+				bit_set(usable_gres, map_value);
+				break;	/* All done */
+			} else {
+				task_offset += task_mult;
+			}
+			tok = strtok_r(NULL, ",", &save_ptr);
 		}
-		tok = strtok_r(NULL, ",", &save_ptr);
 	}
+end:
 	xfree(tmp);
 
 	return usable_gres;
@@ -14079,7 +14084,8 @@ extern char *gres_flags2str(uint8_t config_flags)
  */
 extern void add_gres_to_list(List gres_list, char *name, uint64_t device_cnt,
 			     int cpu_cnt, char *cpu_aff_abs_range,
-			     char *device_file, char *type, char *links)
+			     bitstr_t *cpu_aff_mac_bitstr, char *device_file,
+			     char *type, char *links)
 {
 	gres_slurmd_conf_t *gpu_record;
 	bool use_empty_first_record = false;
@@ -14096,20 +14102,8 @@ extern void add_gres_to_list(List gres_list, char *name, uint64_t device_cnt,
 	else
 		gpu_record = xmalloc(sizeof(gres_slurmd_conf_t));
 	gpu_record->cpu_cnt = cpu_cnt;
-	gpu_record->cpus_bitmap = bit_alloc(gpu_record->cpu_cnt);
-	if (bit_unfmt(gpu_record->cpus_bitmap, cpu_aff_abs_range)) {
-		error("%s: bit_unfmt(dst_bitmap, src_str) failed", __func__);
-		error("    Is the CPU range larger than the CPU count allows?");
-		error("    src_str: %s", cpu_aff_abs_range);
-		error("    dst_bitmap_size: %"BITSTR_FMT,
-		      bit_size(gpu_record->cpus_bitmap));
-		error("    cpu_cnt: %d", gpu_record->cpu_cnt);
-		bit_free(gpu_record->cpus_bitmap);
-		if (!use_empty_first_record)
-			xfree(gpu_record);
-		list_iterator_destroy(itr);
-		return;
-	}
+	if (cpu_aff_mac_bitstr)
+		gpu_record->cpus_bitmap = bit_copy(cpu_aff_mac_bitstr);
 	if (device_file)
 		gpu_record->config_flags |= GRES_CONF_HAS_FILE;
 	if (type)
