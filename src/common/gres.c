@@ -123,8 +123,7 @@ typedef struct slurm_gres_ops {
 						  int local_proc_id );
 	void		(*step_reset_env)	( char ***job_env_ptr,
 						  void *gres_ptr,
-						  bitstr_t *usable_gres,
-					          int local_proc_id );
+						  bitstr_t *usable_gres );
 	void		(*send_stepd)		( int fd );
 	void		(*recv_stepd)		( int fd );
 	int		(*job_info)		( gres_job_state_t *job_gres_data,
@@ -11882,7 +11881,7 @@ extern uint64_t gres_plugin_step_count(List step_gres_list, char *gres_name)
  * This function only works with task/cgroup and constrained devices or
  * if the job step has access to the entire node's resources.
  */
-static bitstr_t * _get_usable_gres(int context_inx, int local_proc_id)
+static bitstr_t * _get_usable_gres(int context_inx)
 {
 #if defined(__APPLE__)
 	return NULL;
@@ -11934,18 +11933,10 @@ static bitstr_t * _get_usable_gres(int context_inx, int local_proc_id)
 		} else {
 			i_last = bit_fls(gres_slurmd_conf->cpus_bitmap);
 			for (i = 0; i <= i_last; i++) {
-				char * cpus2;
-				if (!bit_test(gres_slurmd_conf->cpus_bitmap, i)) {
-					info("DEBUG: local_proc_id:%d continue - not in gres bitmap i=%d ",local_proc_id, i);
+				if (!bit_test(gres_slurmd_conf->cpus_bitmap, i))
 					continue;
-				}
-				if (!CPU_ISSET(i, &mask)) {
-					info("DEBUG: local_proc_id:%d continue - not in cpuset i=%d ", local_proc_id, i);
+				if (!CPU_ISSET(i, &mask))
 					continue;
-				}
-				cpus2=bit_fmt_full(gres_slurmd_conf->cpus_bitmap);
-				info("DEBUG: local_proc_id:%d setting gres i=%d gres_inx=%d filename=%s cpus=%s bitmap:%s", local_proc_id, i,gres_inx,gres_slurmd_conf->file,gres_slurmd_conf->cpus,cpus2);
-				xfree(cpus2);
 				bit_nset(usable_gres, gres_inx,
 					 gres_inx + gres_slurmd_conf->count -1);
 				break;
@@ -12047,28 +12038,26 @@ static bitstr_t *_get_gres_map(char *map_gres, int local_proc_id)
 	if (!map_gres || !map_gres[0])
 		return NULL;
 
-	while (usable_gres == NULL) {
-		tmp = xstrdup(map_gres);
-		tok = strtok_r(tmp, ",", &save_ptr);
-		while (tok) {
-			if ((mult = strchr(tok, '*'))) {
-				mult[0] = '\0';
-				task_mult = atoi(mult + 1);
-			} else
-				task_mult = 1;
-			if ((local_proc_id >= task_offset) &&
-			    (local_proc_id <= (task_offset + task_mult - 1))) {
-				map_value = strtol(tok, NULL, 0);
-				if ((map_value < 0) || (map_value >= MAX_GRES_BITMAP))
-					break;	/* Bad value */
-				usable_gres = bit_alloc(MAX_GRES_BITMAP);
-				bit_set(usable_gres, map_value);
-				break;	/* All done */
-			} else {
-				task_offset += task_mult;
-			}
-			tok = strtok_r(NULL, ",", &save_ptr);
+	tmp = xstrdup(map_gres);
+	tok = strtok_r(tmp, ",", &save_ptr);
+	while (tok) {
+		if ((mult = strchr(tok, '*'))) {
+			mult[0] = '\0';
+			task_mult = atoi(mult + 1);
+		} else
+			task_mult = 1;
+		if ((local_proc_id >= task_offset) &&
+		    (local_proc_id <= (task_offset + task_mult - 1))) {
+			map_value = strtol(tok, NULL, 0);
+			if ((map_value < 0) || (map_value >= MAX_GRES_BITMAP))
+				break;	/* Bad value */
+			usable_gres = bit_alloc(MAX_GRES_BITMAP);
+			bit_set(usable_gres, map_value);
+			break;	/* All done */
+		} else {
+			task_offset += task_mult;
 		}
+		tok = strtok_r(NULL, ",", &save_ptr);
 	}
 	xfree(tmp);
 
@@ -12164,19 +12153,19 @@ extern void gres_plugin_step_set_env(char ***job_env_ptr, List step_gres_list,
 					usable_gres = _get_gres_mask(mask_gpu,
 								local_proc_id);
 				} else if (bind_gpu)
-					usable_gres = _get_usable_gres(i,local_proc_id);
+					usable_gres = _get_usable_gres(i);
 				else
 					continue;
 			} else if (!xstrcmp(gres_context[i].gres_name,
 					    "mic")) {
 				if (bind_mic)
-					usable_gres = _get_usable_gres(i,local_proc_id);
+					usable_gres = _get_usable_gres(i);
 				else
 					continue;
 			} else if (!xstrcmp(gres_context[i].gres_name,
 					    "nic")) {
 				if (bind_nic)
-					usable_gres = _get_usable_gres(i,local_proc_id);
+					usable_gres = _get_usable_gres(i);
 				else
 					continue;
 			} else {
@@ -12195,7 +12184,7 @@ extern void gres_plugin_step_set_env(char ***job_env_ptr, List step_gres_list,
 					(*(gres_context[i].ops.step_reset_env))
 						(job_env_ptr,
 						 gres_ptr->gres_data,
-						 usable_gres, local_proc_id);
+						 usable_gres);
 				} else {
 					(*(gres_context[i].ops.step_set_env))
 						(job_env_ptr,
@@ -12210,7 +12199,7 @@ extern void gres_plugin_step_set_env(char ***job_env_ptr, List step_gres_list,
 		if (!found) { /* No data fond */
 			if (accel_bind_type || tres_bind) {
 				(*(gres_context[i].ops.step_reset_env))
-					(job_env_ptr, NULL, NULL, 0); /* Fixme*/
+					(job_env_ptr, NULL, NULL); /* Fixme */
 			} else {
 				(*(gres_context[i].ops.step_set_env))
 					(job_env_ptr,
@@ -13702,8 +13691,7 @@ extern char *gres_flags2str(uint8_t config_flags)
  */
 extern void add_gres_to_list(List gres_list, char *name, uint64_t device_cnt,
 			     int cpu_cnt, char *cpu_aff_abs_range,
-			     bitstr_t *cpu_aff_mac_bitstr, char *device_file,
-			     char *type, char *links)
+			     char *device_file, char *type, char *links)
 {
 	gres_slurmd_conf_t *gpu_record;
 	bool use_empty_first_record = false;
@@ -13720,8 +13708,20 @@ extern void add_gres_to_list(List gres_list, char *name, uint64_t device_cnt,
 	else
 		gpu_record = xmalloc(sizeof(gres_slurmd_conf_t));
 	gpu_record->cpu_cnt = cpu_cnt;
-	if (cpu_aff_mac_bitstr)
-		gpu_record->cpus_bitmap = bit_copy(cpu_aff_mac_bitstr);
+	gpu_record->cpus_bitmap = bit_alloc(gpu_record->cpu_cnt);
+	if (bit_unfmt(gpu_record->cpus_bitmap, cpu_aff_abs_range)) {
+		error("%s: bit_unfmt(dst_bitmap, src_str) failed", __func__);
+		error("    Is the CPU range larger than the CPU count allows?");
+		error("    src_str: %s", cpu_aff_abs_range);
+		error("    dst_bitmap_size: %"BITSTR_FMT,
+		      bit_size(gpu_record->cpus_bitmap));
+		error("    cpu_cnt: %d", gpu_record->cpu_cnt);
+		bit_free(gpu_record->cpus_bitmap);
+		if (!use_empty_first_record)
+			xfree(gpu_record);
+		list_iterator_destroy(itr);
+		return;
+	}
 	if (device_file)
 		gpu_record->config_flags |= GRES_CONF_HAS_FILE;
 	if (type)

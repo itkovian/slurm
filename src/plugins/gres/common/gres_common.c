@@ -201,7 +201,7 @@ extern void common_gres_set_env(List gres_devices, char ***env_ptr,
 	ListIterator itr;
 	char *global_prefix = "", *local_prefix = "";
 	char *new_global_list = NULL, *new_local_list = NULL;
-	uint64_t tmp_gres_per_node = 0; int gres_per_task = 0;
+	uint64_t tmp_gres_per_node = 0;
 
 	if (!gres_devices)
 		return;
@@ -244,7 +244,6 @@ extern void common_gres_set_env(List gres_devices, char ***env_ptr,
 		}
 		if (gres_step_ptr) {
 			tmp_gres_per_node = gres_step_ptr->gres_per_node;
-			gres_per_task = gres_step_ptr->gres_per_task;
 		}
 	}
 
@@ -253,73 +252,46 @@ extern void common_gres_set_env(List gres_devices, char ***env_ptr,
 		return;
 
 	if (bit_alloc) {
-		int index, assigned=0;
-		int local_inx2 = (*local_inx) - 1;
 		len = bit_size(bit_alloc);
 		i = -1;
-
 		itr = list_iterator_create(gres_devices);
 		while ((gres_device = list_next(itr))) {
 			i++;
-
 			if (i >= len) {
 				/*
 				 * This can happen if GRES count in slurm.conf
 				 * and gres.conf differ and FastSchedule!= 0
 				 */
-				error("%s: DEBUG gres_list size different from count of gres_devices",
+				error("%s: gres_list size different from count of gres_devices",
 				      __func__);
 				break;
 			}
 			if (!bit_test(bit_alloc, i))
 				continue;
-			local_inx2++;
-
-			/*
-			 * We're using local_inx with an offset of task number,
-			 * if we didn't get enought GPU starting from offset
-			 * start back from zero.
-			 */
-			if ( local_inx2 >= len)
-				local_inx2 = 0;
-
-			if (use_local_dev_index)
-				index = local_inx2;
-			else
-				index = gres_device->dev_num;
-
-			info("%s: DEBUG: i=%d, index=%d, use_local_dev_index=%d local_inx=%d, local_inx2=%d gres_per_task=%d assigned=%d",__func__,i,index,use_local_dev_index,*local_inx,local_inx2,gres_per_task,assigned);
-
 			if (reset) {
 				if (!first_device)
 					first_device = gres_device;
-				if (!bit_test(usable_gres, index))
+				if (!bit_test(usable_gres, i))
 					continue;
 			}
-
 			if (global_id && !set_global_id) {
 				*global_id = gres_device->dev_num;
 				set_global_id = true;
 			}
-
 			xstrfmtcat(new_local_list, "%s%s%d", local_prefix,
-				   prefix, index);
+				   prefix, use_local_dev_index ?
+				   (*local_inx)++ : gres_device->dev_num);
 			local_prefix = ",";
 			//info("looking at %d and %d", i, gres_device->dev_num);
 			xstrfmtcat(new_global_list, "%s%s%d", global_prefix,
 				   prefix, gres_device->dev_num);
 			global_prefix = ",";
-			assigned++;
-/*			if (reset && gres_per_task && assigned >= gres_per_task ) {
-				info("%s: DEBUG: gres_per_task = %d", __func__, gres_per_task);
-				break;
-			}*/
 		}
 		list_iterator_destroy(itr);
 		if (reset && !new_global_list && first_device) {
 			xstrfmtcat(new_local_list, "%s%s%d", local_prefix,
 				   prefix, use_local_dev_index ?
-				   local_inx2++ : first_device->dev_num);
+				   (*local_inx)++ : first_device->dev_num);
 			xstrfmtcat(new_global_list, "%s%s%d", global_prefix,
 				   prefix, first_device->dev_num);
 		}

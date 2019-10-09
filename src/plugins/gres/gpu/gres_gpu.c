@@ -366,7 +366,6 @@ static void _normalize_gres_conf(List gres_list_conf, List gres_list_system)
 					 gres_record->count,
 					 gres_record->cpu_cnt,
 					 gres_record->cpus,
-					 gres_record->cpus_bitmap,
 					 gres_record->file,
 					 gres_record->type_name,
 					 gres_record->links);
@@ -379,7 +378,6 @@ static void _normalize_gres_conf(List gres_list_conf, List gres_list_system)
 					 gres_record->name, 1,
 					 gres_record->cpu_cnt,
 					 gres_record->cpus,
-					 gres_record->cpus_bitmap,
 					 gres_record->file,
 					 gres_record->type_name,
 					 gres_record->links);
@@ -390,7 +388,6 @@ static void _normalize_gres_conf(List gres_list_conf, List gres_list_system)
 						 gres_record->name, 1,
 						 gres_record->cpu_cnt,
 						 gres_record->cpus,
-						 gres_record->cpus_bitmap,
 						 gres_record->file,
 						 gres_record->type_name,
 						 gres_record->links);
@@ -406,8 +403,7 @@ static void _normalize_gres_conf(List gres_list_conf, List gres_list_system)
 			add_gres_to_list(gres_list_conf_single,
 					 gres_record->name, 1,
 					 gres_record->cpu_cnt,
-					 gres_record->cpus,
-					 gres_record->cpus_bitmap, hl_name,
+					 gres_record->cpus, hl_name,
 					 gres_record->type_name,
 					 gres_record->links);
 			free(hl_name);
@@ -578,16 +574,9 @@ static void _add_fake_gpus_from_file(List gres_list_system,
 			      " that the format is <type>|<sys_cpu_count>|"
 			      "<cpu_range>|<links>|<device_file>", line_number);
 
-		bitstr_t *cpu_aff_mac_bitstr = bit_alloc(cpu_count);
-		if (bit_unfmt(cpu_aff_mac_bitstr, cpu_range)) {
-			fatal("Failed to unfmt CPUs spec");
-		}
-
 		// Add the GPU specified by the parsed line
 		add_gres_to_list(gres_list_system, "gpu", 1, cpu_count,
-				 cpu_range, cpu_aff_mac_bitstr, device_file,
-				 type, links);
-		xfree(cpu_aff_mac_bitstr);
+				 cpu_range, device_file, type, links);
 		xfree(cpu_range);
 		xfree(device_file);
 		xfree(type);
@@ -714,7 +703,7 @@ extern void job_set_env(char ***job_env_ptr, void *gres_ptr, int node_inx)
  */
 extern void step_set_env(char ***step_env_ptr, void *gres_ptr)
 {
-	int local_inx = 0;
+	static int local_inx = 0;
 	static bool already_seen = false;
 
 	_set_env(step_env_ptr, gres_ptr, 0, NULL,
@@ -726,10 +715,10 @@ extern void step_set_env(char ***step_env_ptr, void *gres_ptr)
  * based upon the job step's GRES state and assigned CPUs.
  */
 extern void step_reset_env(char ***step_env_ptr, void *gres_ptr,
-			   bitstr_t *usable_gres, int first_local_id)
+			   bitstr_t *usable_gres)
 {
-	int local_inx = first_local_id;
-	static bool already_seen=false;
+	static int local_inx = 0;
+	static bool already_seen = false;
 
 	_set_env(step_env_ptr, gres_ptr, 0, usable_gres,
 		 &already_seen, &local_inx, true, false);
