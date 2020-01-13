@@ -1,4 +1,4 @@
-.TH "slurm.conf" "5" "Slurm Configuration File" "October 2019" "Slurm Configuration File"
+.TH "slurm.conf" "5" "Slurm Configuration File" "November 2019" "Slurm Configuration File"
 
 .SH "NAME"
 slurm.conf \- Slurm configuration file
@@ -2858,7 +2858,7 @@ with more than a few hundred simultaneously executing jobs.
 \fBbf_yield_interval=#\fR
 The backfill scheduler will periodically relinquish locks in order for other
 pending operations to take place.
-This specifies the times when the locks are relinquish in microseconds.
+This specifies the times when the locks are relinquished in microseconds.
 Smaller values may be helpful for high throughput computing when used in
 conjunction with the \fBbf_continue\fR option.
 Also see the \fBbf_yield_sleep\fR option.
@@ -2867,7 +2867,7 @@ Default: 2,000,000 (2 sec), Min: 1, Max: 10,000,000 (10 sec).
 \fBbf_yield_sleep=#\fR
 The backfill scheduler will periodically relinquish locks in order for other
 pending operations to take place.
-This specifies the length of time for which the locks are relinquish in
+This specifies the length of time for which the locks are relinquished in
 microseconds.
 Also see the \fBbf_yield_interval\fR option.
 Default: 500,000 (0.5 sec), Min: 1, Max: 10,000,000 (10 sec).
@@ -3806,7 +3806,7 @@ Fully qualified pathname of a directory into which the Slurm controller,
 \fBslurmctld\fR, saves its state (e.g. "/usr/local/slurm/checkpoint").
 Slurm state will saved here to recover from system failures.
 \fBSlurmUser\fR must be able to create files in this directory.
-If you have a \fBBackupController\fR configured, this location should be
+If you have a secondary \fBSlurmctldHost\fR configured, this location should be
 readable and writable by both systems.
 Since all running and pending job information is stored here, the use of
 a reliable file system (e.g. RAID) is recommended.
@@ -3874,7 +3874,7 @@ Related configuration options include \fBResumeTimeout\fR, \fBResumeProgram\fR,
 
 .TP
 \fBSuspendTime\fR
-Nodes which remain idle for this number of seconds will be placed into
+Nodes which remain idle or down for this number of seconds will be placed into
 power save mode by \fBSuspendProgram\fR.
 For efficient system utilization, it is recommended that the value of
 \fBSuspendTime\fR be at least as large as the sum of \fBSuspendTimeout\fR
@@ -5477,11 +5477,11 @@ Ensure that any nodes added to the cluster have the current
 slurm.conf file installed.
 .LP
 \fBCAUTION:\fR If two nodes are simultaneously configured as the
-primary controller (two nodes on which \fBControlMachine\fR specify
+primary controller (two nodes on which \fBSlurmctldHost\fR specify
 the local host and the \fBslurmctld\fR daemon is executing on each),
 system behavior will be destructive.
-If a compute node has an incorrect \fBControlMachine\fR or
-\fBBackupController\fR parameter, that node may be rendered
+If a compute node has an incorrect \fBSlurmctldHost\fR
+parameter, that node may be rendered
 unusable, but no other harm will result.
 
 .SH "EXAMPLE"

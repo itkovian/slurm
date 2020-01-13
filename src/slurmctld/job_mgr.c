@@ -72,6 +72,7 @@
 #include "src/common/parse_time.h"
 #include "src/common/power.h"
 #include "src/common/slurm_accounting_storage.h"
+#include "src/common/slurm_auth.h"
 #include "src/common/slurm_jobcomp.h"
 #include "src/common/slurm_mcs.h"
 #include "src/common/slurm_priority.h"
@@ -1906,6 +1907,7 @@ static int _load_job_state(Buf buffer, uint16_t protocol_version)
 		}
 		safe_unpack32(&job_ptr->bit_flags, buffer);
 		job_ptr->bit_flags &= ~BACKFILL_TEST;
+		job_ptr->bit_flags |= JOB_MEM_SET;
 		safe_unpackstr_xmalloc(&tres_alloc_str,
 				       &name_len, buffer);
 		safe_unpackstr_xmalloc(&tres_fmt_alloc_str,
@@ -2133,6 +2135,7 @@ static int _load_job_state(Buf buffer, uint16_t protocol_version)
 		}
 		safe_unpack32(&job_ptr->bit_flags, buffer);
 		job_ptr->bit_flags &= ~BACKFILL_TEST;
+		job_ptr->bit_flags |= JOB_MEM_SET;
 		safe_unpackstr_xmalloc(&tres_alloc_str,
 				       &name_len, buffer);
 		safe_unpackstr_xmalloc(&tres_fmt_alloc_str,
@@ -4935,9 +4938,14 @@ extern int job_allocate(job_desc_msg_t * job_specs, int immediate,
 		else
 			defer_sched = 0;
 		if ((tmp_ptr = xstrcasestr(sched_params, "delay_boot="))) {
+			char *tmp_comma;
+			if ((tmp_comma = xstrstr(tmp_ptr, ",")))
+				*tmp_comma = '\0';
 			i = time_str2secs(tmp_ptr + 11);
 			if (i != NO_VAL)
 				delay_boot = i;
+			if (tmp_comma)
+				*tmp_comma = ',';
 		}
 		bf_min_age_reserve = 0;
 		if ((tmp_ptr = xstrcasestr(sched_params,
@@ -5018,16 +5026,14 @@ extern int job_allocate(job_desc_msg_t * job_specs, int immediate,
 	else
 		too_fragmented = false;
 
-	if (defer_sched == 1)
-		too_fragmented = true;
-
-	if (independent && (!too_fragmented))
+	if (independent && (!too_fragmented) && !defer_sched)
 		top_prio = _top_priority(job_ptr, job_specs->pack_job_offset);
 	else
 		top_prio = true;	/* don't bother testing,
 					 * it is not runable anyway */
 
-	if (immediate && (too_fragmented || (!top_prio) || (!independent))) {
+	if (immediate &&
+	    (too_fragmented || (!top_prio) || (!independent) || defer_sched)) {
 		job_ptr->job_state  = JOB_FAILED;
 		job_ptr->exit_code  = 1;
 		job_ptr->state_reason = FAIL_BAD_CONSTRAINTS;
@@ -5048,12 +5054,18 @@ extern int job_allocate(job_desc_msg_t * job_specs, int immediate,
 			       slurm_strerror(ESLURM_FRAGMENTATION));
 			return ESLURM_FRAGMENTATION;
 		}
-		else {
+		else if (!top_prio) {
 			debug2("%s: setting %pJ to \"%s\" because it's not top priority (%s)",
 			       __func__, job_ptr,
 			       job_reason_string(job_ptr->state_reason),
 			       slurm_strerror(ESLURM_NOT_TOP_PRIORITY));
 			return ESLURM_NOT_TOP_PRIORITY;
+		} else {
+			debug2("%s: setting %pJ to \"%s\" due to SchedulerParameters=defer (%s)",
+			       __func__, job_ptr,
+			       job_reason_string(job_ptr->state_reason),
+			       slurm_strerror(ESLURM_CAN_NOT_START_IMMEDIATELY));
+			return ESLURM_CAN_NOT_START_IMMEDIATELY;
 		}
 	}
 
@@ -5079,7 +5091,7 @@ extern int job_allocate(job_desc_msg_t * job_specs, int immediate,
 
 	no_alloc = test_only || too_fragmented || _has_deadline(job_ptr) ||
 		   (!top_prio) || (!independent) || !avail_front_end(job_ptr) ||
-		   (job_specs->pack_job_offset != NO_VAL);
+		   (job_specs->pack_job_offset != NO_VAL) || defer_sched;
 
 	no_alloc = no_alloc || (bb_g_job_test_stage_in(job_ptr, no_alloc) != 1);
 
@@ -12993,10 +13005,6 @@ static int _update_job(struct job_record *job_ptr, job_desc_msg_t * job_specs,
 				   __func__, entity,
 				   (job_specs->pn_min_memory & (~MEM_PER_CPU)),
 				   job_ptr);
-			sched_info("%s: setting min_memory_%s to %"PRIu64
-				   " for job_id %u", __func__, entity,
-				   (job_specs->pn_min_memory & (~MEM_PER_CPU)),
-				   job_ptr->job_id);
 			/*
 			 * Always use the acct_policy_limit_set.*
 			 * since if set by a super user it be set correctly
@@ -13232,6 +13240,23 @@ static int _update_job(struct job_record *job_ptr, job_desc_msg_t * job_specs,
 
 			sched_info("%s: setting name to %s for %pJ",
 				   __func__, job_ptr->name, job_ptr);
+			update_accounting = true;
+		}
+	}
+
+	if (job_specs->work_dir && detail_ptr &&
+	    !xstrcmp(job_specs->work_dir, detail_ptr->work_dir)) {
+		sched_debug("%s: new work_dir identical to old work_dir %s",
+			    __func__, job_specs->work_dir);
+	} else if (job_specs->work_dir) {
+		if (!IS_JOB_PENDING(job_ptr)) {
+			error_code = ESLURM_JOB_NOT_PENDING;
+			goto fini;
+		} else if (detail_ptr) {
+			xfree(detail_ptr->work_dir);
+			detail_ptr->work_dir = xstrdup(job_specs->work_dir);
+			sched_info("%s: setting work_dir to %s for %pJ",
+				   __func__, detail_ptr->work_dir, job_ptr);
 			update_accounting = true;
 		}
 	}
@@ -13590,6 +13615,19 @@ static int _update_job(struct job_record *job_ptr, job_desc_msg_t * job_specs,
 	} else if ((job_ptr->state_reason != WAIT_HELD)
 		   && (job_ptr->state_reason != WAIT_HELD_USER)
 		   && (job_ptr->state_reason != WAIT_RESV_DELETED)
+		   /*
+		    * A job update can come while the prolog is running.
+		    * Don't change state_reason if the prolog is running.
+		    * _is_prolog_finished() relies on state_reason==WAIT_PROLOG
+		    * to know if the prolog is running. If we change it here,
+		    * then slurmctld will think that the prolog isn't running
+		    * anymore and _slurm_rpc_job_ready will tell srun that the
+		    * prolog is done even if it isn't. Then srun can launch a
+		    * job step before the prolog is done, which breaks the
+		    * behavior of PrologFlags=alloc and means that the job step
+		    * could launch before the extern step sets up x11.
+		    */
+		   && (job_ptr->state_reason != WAIT_PROLOG)
 		   && (job_ptr->state_reason != WAIT_MAX_REQUEUE)) {
 		job_ptr->state_reason = WAIT_NO_REASON;
 		xfree(job_ptr->state_desc);
@@ -13872,11 +13910,17 @@ fini:
 extern int update_job(slurm_msg_t *msg, uid_t uid, bool send_msg)
 {
 	job_desc_msg_t *job_specs = (job_desc_msg_t *) msg->data;
+	char *hostname = g_slurm_auth_get_host(msg->auth_cred);
 	struct job_record *job_ptr;
 	int rc;
 
 	xfree(job_specs->job_id_str);
 	xstrfmtcat(job_specs->job_id_str, "%u", job_specs->job_id);
+
+	if (hostname) {
+		xfree(job_specs->alloc_node);
+		job_specs->alloc_node = hostname;
+	}
 
 	job_ptr = find_job_record(job_specs->job_id);
 	if (job_ptr == NULL) {
@@ -13906,6 +13950,7 @@ extern int update_job_str(slurm_msg_t *msg, uid_t uid)
 
 	slurm_msg_t resp_msg;
 	job_desc_msg_t *job_specs = (job_desc_msg_t *) msg->data;
+	char *hostname = g_slurm_auth_get_host(msg->auth_cred);
 	struct job_record *job_ptr, *new_job_ptr, *pack_job;
 	ListIterator iter;
 	long int long_id;
@@ -13921,6 +13966,12 @@ extern int update_job_str(slurm_msg_t *msg, uid_t uid)
 	return_code_msg_t rc_msg;
 
 	job_id_str = job_specs->job_id_str;
+
+	if (hostname) {
+		xfree(job_specs->alloc_node);
+		job_specs->alloc_node = hostname;
+
+	}
 
 	if (max_array_size == NO_VAL)
 		max_array_size = slurmctld_conf.max_array_sz;

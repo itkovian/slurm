@@ -1,6 +1,6 @@
 Name:		slurm
-Version:	19.05.3
-%global rel     3
+Version:	19.05.5
+%global rel 1
 Release:    %{rel}.%{gittag}%{?dist}.ug
 Summary:	Slurm Workload Manager
 
@@ -395,8 +395,7 @@ install -D -m644 etc/layouts.d.power.conf.example %{buildroot}/%{_sysconfdir}/la
 install -D -m644 etc/layouts.d.power_cpufreq.conf.example %{buildroot}/%{_sysconfdir}/layouts.d/power_cpufreq.conf.example
 install -D -m644 etc/layouts.d.unit.conf.example %{buildroot}/%{_sysconfdir}/layouts.d/unit.conf.example
 install -D -m644 etc/slurm.conf.example %{buildroot}/%{_sysconfdir}/slurm.conf.example
-#install -D -m755 etc/slurm.epilog.clean %{buildroot}/%{_sysconfdir}/slurm.epilog.clean
-install -D -m644 etc/slurmdbd.conf.example %{buildroot}/%{_sysconfdir}/slurmdbd.conf.example
+install -D -m600 etc/slurmdbd.conf.example %{buildroot}/%{_sysconfdir}/slurmdbd.conf.example
 install -D -m755 contribs/sjstat %{buildroot}/%{_bindir}/sjstat
 
 # Delete unpackaged files:
