@@ -25,7 +25,7 @@ cp slurm.spec "SPECS"
 
 # TODO: what if more than one cuda is available/installed, then the * thingies will probably not work
 # pmix-3 as rebuild from github src.rpm includes the devel rpms in the rpm
-sudo yum install -y nvidia-driver-devel cuda-nvml-dev-* nvidia-driver-NVML ucx-devel pmix-devel-3.* numactl-devel hwloc-devel
+sudo yum install -y nvidia-driver-devel cuda-nvml-dev-* nvidia-driver-NVML ucx-devel pmix-devel-3.* numactl-devel hwloc-devel python3
 
 # glob expansion in list
 nvmls=(/usr/local/cuda*/targets/x86_64-linux/include)
