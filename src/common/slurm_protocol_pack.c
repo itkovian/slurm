@@ -2503,7 +2503,7 @@ _unpack_kill_job_msg(kill_job_msg_t ** msg, Buf buffer,
 						 buffer, protocol_version))
 			goto unpack_error;
 		safe_unpack32(&(tmp_ptr->job_id),  buffer);
-		safe_unpack32(&(tmp_ptr->pack_jobid),  buffer);
+		safe_unpack32(&(tmp_ptr->het_job_id),  buffer);
 		safe_unpack32(&(tmp_ptr->job_state),  buffer);
 		safe_unpack32(&(tmp_ptr->job_uid), buffer);
 		safe_unpackstr_xmalloc(&(tmp_ptr->nodes),
@@ -2521,7 +2521,7 @@ _unpack_kill_job_msg(kill_job_msg_t ** msg, Buf buffer,
 		safe_unpack_time(&(tmp_ptr->time), buffer);
 	} else if (protocol_version >= SLURM_18_08_PROTOCOL_VERSION) {
 		safe_unpack32(&(tmp_ptr->job_id),  buffer);
-		safe_unpack32(&(tmp_ptr->pack_jobid),  buffer);
+		safe_unpack32(&(tmp_ptr->het_job_id),  buffer);
 		safe_unpack32(&(tmp_ptr->job_state),  buffer);
 		safe_unpack32(&(tmp_ptr->job_uid), buffer);
 		safe_unpackstr_xmalloc(&(tmp_ptr->nodes),

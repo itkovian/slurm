@@ -5517,7 +5517,7 @@ _rpc_terminate_job(slurm_msg_t *msg)
 	job_env.spank_job_env_size = req->spank_job_env_size;
 	job_env.uid = req->job_uid;
 	job_env.gid = req->job_gid;
-	
+
     node_inx = _get_node_inx(req->nodes);
     job_env.job_node_cpus = (node_inx >= 0 ? req->job_node_cpus[node_inx] : 0);
     debug2("Setting job_env.job_cpu_nodes to %d", job_env.job_node_cpus);
