@@ -3964,7 +3964,7 @@ static char *_node_gres_used(void *gres_data, char *gres_name)
 						       gres_node_ptr->
 						       topo_gres_bitmap[j]);
 					}
-				}		
+				}
 			}
 			if (gres_node_ptr->gres_bit_alloc && topo_gres_bitmap &&
 			    (bit_size(topo_gres_bitmap) ==
@@ -4034,7 +4034,7 @@ static void _node_state_log(void *gres_data, char *node_name, char *gres_name)
 	}
 
 	if (gres_node_ptr->no_consume) {
-		info("  gres_cnt found:%s configured:%"PRIu64" "	
+		info("  gres_cnt found:%s configured:%"PRIu64" "
 		     "avail:%"PRIu64" no_consume",
 		     tmp_str, gres_node_ptr->gres_cnt_config,
 		     gres_node_ptr->gres_cnt_avail);
@@ -11469,7 +11469,7 @@ extern List gres_plugin_get_allocated_devices(List gres_list, bool is_job)
 	gres_state_t *gres_ptr;
 	bitstr_t **local_bit_alloc = NULL;
 	uint32_t node_cnt;
-	gres_device_t *gres_device;
+	gres_device_t *gres_device, *gres_device2;
 	List gres_devices;
 	List device_list = NULL;
 
@@ -11555,7 +11555,6 @@ extern List gres_plugin_get_allocated_devices(List gres_list, bool is_job)
 		i = 0;
 		while ((gres_device = list_next(dev_itr))) {
 			if (bit_test(local_bit_alloc[0], i)) {
-				gres_device_t *gres_device2;
 				/*
 				 * search for the device among the unique
 				 * devices list (since two plugins could have

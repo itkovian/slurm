@@ -54,7 +54,7 @@
 #include <unistd.h>
 
 #if HAVE_JSON_C_INC
-#  include <json-c/json.h>
+#  include <json-c12/json.h>
 #elif HAVE_JSON_INC
 #  include <json/json.h>
 #endif

@@ -1,7 +1,7 @@
 Name:		slurm
 Version:	20.02.0
-%define rel	0rc1
-Release:	%{rel}%{?dist}
+%global rel     1
+Release:    %{rel}.%{gittag}%{?dist}.ug
 Summary:	Slurm Workload Manager
 
 Group:		System Environment/Base
@@ -15,7 +15,7 @@ URL:		https://slurm.schedmd.com/
 %global slurm_source_dir %{name}-%{version}-%{rel}
 %endif
 
-Source:		%{slurm_source_dir}.tar.bz2
+Source:		%{slurm_source_dir}.tar.gz
 
 # build options		.rpmmacros options	change to default action
 # ====================  ====================	========================
@@ -65,12 +65,14 @@ Source:		%{slurm_source_dir}.tar.bz2
 %global _hardened_ldflags "-Wl,-z,lazy"
 
 Requires: munge
+Requires: json-c12
 
 %{?systemd_requires}
 BuildRequires: systemd
 BuildRequires: munge-devel munge-libs
 BuildRequires: python3
 BuildRequires: readline-devel
+BuildRequires: json-c12-devel
 Obsoletes: slurm-lua slurm-munge slurm-plugins
 
 # fake systemd support when building rpms on other platforms
@@ -228,7 +230,8 @@ Requires: %{name}%{?_isa} = %{version}-%{release}
 Requires: pmix = %{pmix_version}
 %endif
 %if %{with ucx}
-Requires: ucx = %{ucx_version}
+# only the devel rpm from EPEL provides the reuqired .so files
+Requires: ucx-devel = %{ucx_version}
 %endif
 %description slurmd
 Slurm compute node daemon. Used to launch jobs on compute nodes
@@ -246,7 +249,9 @@ database changes to slurmctld daemons on each cluster
 Summary: Slurm\'s implementation of the pmi libraries
 Group: System Environment/Base
 Requires: %{name}%{?_isa} = %{version}-%{release}
+%if ! %{with pmix}
 Conflicts: pmix-libpmi
+%endif
 %description libpmi
 Slurm\'s version of libpmi. For systems using Slurm, this version
 is preferred over the compatibility libraries shipped by the PMIx project.
@@ -365,6 +370,14 @@ install -D -m644 etc/slurmctld.service %{buildroot}/%{_unitdir}/slurmctld.servic
 install -D -m644 etc/slurmd.service    %{buildroot}/%{_unitdir}/slurmd.service
 install -D -m644 etc/slurmdbd.service  %{buildroot}/%{_unitdir}/slurmdbd.service
 
+# in case of pmix, no conflict with pmix compat libs
+# see Cray comment below
+%if %{with pmix}
+   mkdir %{buildroot}/%{_libdir}/slurmpmi
+   mv %{buildroot}/%{_libdir}/libpmi* %{buildroot}/%{_libdir}/slurmpmi
+%endif
+
+
 # Do not package Slurm's version of libpmi on Cray systems in the usual location.
 # Cray's version of libpmi should be used. Move it elsewhere if the site still
 # wants to use it with other MPI stacks.
@@ -403,7 +416,8 @@ install -D -m644 etc/layouts.d.power.conf.example %{buildroot}/%{_sysconfdir}/la
 install -D -m644 etc/layouts.d.power_cpufreq.conf.example %{buildroot}/%{_sysconfdir}/layouts.d/power_cpufreq.conf.example
 install -D -m644 etc/layouts.d.unit.conf.example %{buildroot}/%{_sysconfdir}/layouts.d/unit.conf.example
 install -D -m644 etc/slurm.conf.example %{buildroot}/%{_sysconfdir}/slurm.conf.example
-install -D -m600 etc/slurmdbd.conf.example %{buildroot}/%{_sysconfdir}/slurmdbd.conf.example
+#install -D -m755 etc/slurm.epilog.clean %{buildroot}/%{_sysconfdir}/slurm.epilog.clean
+install -D -m644 etc/slurmdbd.conf.example %{buildroot}/%{_sysconfdir}/slurmdbd.conf.example
 install -D -m755 contribs/sjstat %{buildroot}/%{_bindir}/sjstat
 
 # Delete unpackaged files:
@@ -510,6 +524,9 @@ rm -rf %{buildroot}
 %{_libdir}/*.so*
 %{_libdir}/slurm/src/*
 %{_libdir}/slurm/*.so
+%if %{with cray}
+%{_libdir}/slurmpmi/*
+%endif
 %exclude %{_libdir}/slurm/accounting_storage_mysql.so
 %exclude %{_libdir}/slurm/job_submit_pbs.so
 %exclude %{_libdir}/slurm/spank_pbs.so
@@ -534,6 +551,7 @@ rm -rf %{buildroot}
 %config %{_sysconfdir}/layouts.d/power_cpufreq.conf.example
 %config %{_sysconfdir}/layouts.d/unit.conf.example
 %config %{_sysconfdir}/slurm.conf.example
+#%config %{_sysconfdir}/slurm.epilog.clean
 %config %{_sysconfdir}/slurmdbd.conf.example
 #############################################################################
 
@@ -583,7 +601,7 @@ rm -rf %{buildroot}
 
 %files libpmi
 %defattr(-,root,root)
-%if %{with cray}
+%if %{with cray} || %{with pmix}
 %{_libdir}/slurmpmi/*
 %else
 %{_libdir}/libpmi*
@@ -592,16 +610,6 @@ rm -rf %{buildroot}
 
 %files torque
 %defattr(-,root,root)
-%{_bindir}/pbsnodes
-%{_bindir}/qalter
-%{_bindir}/qdel
-%{_bindir}/qhold
-%{_bindir}/qrerun
-%{_bindir}/qrls
-%{_bindir}/qstat
-%{_bindir}/qsub
-%{_bindir}/mpiexec
-%{_bindir}/generate_pbs_nodefile
 %{_libdir}/slurm/job_submit_pbs.so
 %{_libdir}/slurm/spank_pbs.so
 #############################################################################

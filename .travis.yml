@@ -29,4 +29,5 @@ before_script:
 script:
   - ./configure --enable-multiple-slurmd --prefix=/tmp/slurm/ > /dev/null
   - make -j > /dev/null
+  - make -j check
   - make -j install > /dev/null

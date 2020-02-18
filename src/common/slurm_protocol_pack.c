@@ -2428,6 +2428,7 @@ _pack_kill_job_msg(kill_job_msg_t * msg, Buf buffer, uint16_t protocol_version)
 					     protocol_version);
 		packstr_array(msg->spank_job_env, msg->spank_job_env_size,
 			      buffer);
+		pack16_array(msg->job_node_cpus, msg->nnodes, buffer);
 		pack_time(msg->start_time, buffer);
 		pack32(msg->step_id, buffer);
 		pack_time(msg->time, buffer);
@@ -2443,6 +2444,7 @@ _pack_kill_job_msg(kill_job_msg_t * msg, Buf buffer, uint16_t protocol_version)
 					     protocol_version);
 		packstr_array(msg->spank_job_env, msg->spank_job_env_size,
 			      buffer);
+		pack16_array(msg->job_node_cpus, msg->nnodes, buffer);
 		pack_time(msg->start_time, buffer);
 		pack32(msg->step_id,  buffer);
 		pack_time(msg->time, buffer);
@@ -2456,6 +2458,7 @@ _pack_kill_job_msg(kill_job_msg_t * msg, Buf buffer, uint16_t protocol_version)
 					     protocol_version);
 		packstr_array(msg->spank_job_env, msg->spank_job_env_size,
 			      buffer);
+		pack16_array(msg->job_node_cpus, msg->nnodes, buffer);
 		pack_time(msg->start_time, buffer);
 		pack32(msg->step_id,  buffer);
 		pack_time(msg->time, buffer);
@@ -2500,10 +2503,9 @@ _unpack_kill_job_msg(kill_job_msg_t ** msg, Buf buffer,
 						 buffer, protocol_version))
 			goto unpack_error;
 		safe_unpack32(&(tmp_ptr->job_id),  buffer);
-		safe_unpack32(&(tmp_ptr->het_job_id),  buffer);
+		safe_unpack32(&(tmp_ptr->pack_jobid),  buffer);
 		safe_unpack32(&(tmp_ptr->job_state),  buffer);
 		safe_unpack32(&(tmp_ptr->job_uid), buffer);
-		tmp_ptr->job_gid = SLURM_AUTH_NOBODY;
 		safe_unpackstr_xmalloc(&(tmp_ptr->nodes),
 				       &uint32_tmp, buffer);
 		if (select_g_select_jobinfo_unpack(&tmp_ptr->select_jobinfo,
@@ -2511,6 +2513,27 @@ _unpack_kill_job_msg(kill_job_msg_t ** msg, Buf buffer,
 			goto unpack_error;
 		safe_unpackstr_array(&(tmp_ptr->spank_job_env),
 				     &tmp_ptr->spank_job_env_size, buffer);
+		safe_unpack16_array(&tmp_ptr->job_node_cpus,
+		             &tmp_ptr->nnodes,
+					 buffer);
+		safe_unpack_time(&(tmp_ptr->start_time), buffer);
+		safe_unpack32(&(tmp_ptr->step_id),  buffer);
+		safe_unpack_time(&(tmp_ptr->time), buffer);
+	} else if (protocol_version >= SLURM_18_08_PROTOCOL_VERSION) {
+		safe_unpack32(&(tmp_ptr->job_id),  buffer);
+		safe_unpack32(&(tmp_ptr->pack_jobid),  buffer);
+		safe_unpack32(&(tmp_ptr->job_state),  buffer);
+		safe_unpack32(&(tmp_ptr->job_uid), buffer);
+		safe_unpackstr_xmalloc(&(tmp_ptr->nodes),
+				       &uint32_tmp, buffer);
+		if (select_g_select_jobinfo_unpack(&tmp_ptr->select_jobinfo,
+						   buffer, protocol_version))
+			goto unpack_error;
+		safe_unpackstr_array(&(tmp_ptr->spank_job_env),
+				     &tmp_ptr->spank_job_env_size, buffer);
+		safe_unpack16_array(&tmp_ptr->job_node_cpus,
+		             &tmp_ptr->nnodes,
+					 buffer);
 		safe_unpack_time(&(tmp_ptr->start_time), buffer);
 		safe_unpack32(&(tmp_ptr->step_id),  buffer);
 		safe_unpack_time(&(tmp_ptr->time), buffer);
@@ -2527,6 +2550,9 @@ _unpack_kill_job_msg(kill_job_msg_t ** msg, Buf buffer,
 			goto unpack_error;
 		safe_unpackstr_array(&(tmp_ptr->spank_job_env),
 				     &tmp_ptr->spank_job_env_size, buffer);
+		safe_unpack16_array(&tmp_ptr->job_node_cpus,
+		             &tmp_ptr->nnodes,
+					 buffer);
 		safe_unpack_time(&(tmp_ptr->start_time), buffer);
 		safe_unpack32(&(tmp_ptr->step_id),  buffer);
 		safe_unpack_time(&(tmp_ptr->time), buffer);
@@ -7257,7 +7283,7 @@ _pack_job_desc_list_msg(List job_req_list, Buf buffer,
 	job_desc_msg_t *req;
 	ListIterator iter;
 	uint16_t cnt = 0;
- 
+
 	if (job_req_list)
 		cnt = list_count(job_req_list);
 	pack16(cnt, buffer);
@@ -7284,7 +7310,6 @@ _unpack_job_desc_list_msg(List *job_req_list, Buf buffer,
 	job_desc_msg_t *req;
 	uint16_t cnt = 0;
 	int i;
- 
 	*job_req_list = NULL;
 
 	safe_unpack16(&cnt, buffer);
@@ -8769,6 +8794,34 @@ static void _pack_prolog_launch_msg(prolog_launch_msg_t *msg,
 
 		packstr_array(msg->spank_job_env, msg->spank_job_env_size,
 			      buffer);
+        xassert(msg->nnodes > 0);
+        pack16_array(msg->job_node_cpus, msg->nnodes, buffer);
+		slurm_cred_pack(msg->cred, buffer, protocol_version);
+		packstr(msg->user_name, buffer);
+	} else if (protocol_version >= SLURM_18_08_PROTOCOL_VERSION) {
+		pack32(msg->job_id, buffer);
+		pack32(msg->pack_job_id, buffer);
+		pack32(msg->uid, buffer);
+		pack32(msg->gid, buffer);
+
+		packstr(msg->alias_list, buffer);
+		packstr(msg->nodes, buffer);
+		packstr(msg->partition, buffer);
+		packstr(msg->std_err, buffer);
+		packstr(msg->std_out, buffer);
+		packstr(msg->work_dir, buffer);
+
+		pack16(msg->x11, buffer);
+		packstr(msg->x11_magic_cookie, buffer);
+		packstr(msg->x11_alloc_host, buffer);
+		pack16(msg->x11_target_port, buffer);
+
+		packstr_array(msg->spank_job_env, msg->spank_job_env_size,
+			      buffer);
+
+        xassert(msg->nnodes > 0);
+        pack16_array(msg->job_node_cpus, msg->nnodes, buffer);
+
 		slurm_cred_pack(msg->cred, buffer, protocol_version);
 		packstr(msg->user_name, buffer);
 	} else if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
@@ -8791,6 +8844,8 @@ static void _pack_prolog_launch_msg(prolog_launch_msg_t *msg,
 
 		packstr_array(msg->spank_job_env, msg->spank_job_env_size,
 			      buffer);
+        xassert(msg->nnodes > 0);
+        pack16_array(msg->job_node_cpus, msg->nnodes, buffer);
 		slurm_cred_pack(msg->cred, buffer, protocol_version);
 		packstr(msg->user_name, buffer);
 	}
@@ -8842,6 +8897,47 @@ static int _unpack_prolog_launch_msg(prolog_launch_msg_t **msg,
 		safe_unpackstr_array(&launch_msg_ptr->spank_job_env,
 				     &launch_msg_ptr->spank_job_env_size,
 				     buffer);
+        safe_unpack16_array(&launch_msg_ptr->job_node_cpus,
+                    &launch_msg_ptr->nnodes,
+                    buffer);
+		if (!(launch_msg_ptr->cred = slurm_cred_unpack(buffer,
+							protocol_version)))
+			goto unpack_error;
+
+		safe_unpackstr_xmalloc(&launch_msg_ptr->user_name, &uint32_tmp,
+				       buffer);
+	} else if (protocol_version >= SLURM_18_08_PROTOCOL_VERSION) {
+		safe_unpack32(&launch_msg_ptr->job_id, buffer);
+		safe_unpack32(&launch_msg_ptr->pack_job_id, buffer);
+		safe_unpack32(&launch_msg_ptr->uid, buffer);
+		safe_unpack32(&launch_msg_ptr->gid, buffer);
+
+		safe_unpackstr_xmalloc(&launch_msg_ptr->alias_list, &uint32_tmp,
+				       buffer);
+		safe_unpackstr_xmalloc(&launch_msg_ptr->nodes, &uint32_tmp,
+				       buffer);
+		safe_unpackstr_xmalloc(&launch_msg_ptr->partition, &uint32_tmp,
+				       buffer);
+		safe_unpackstr_xmalloc(&launch_msg_ptr->std_err, &uint32_tmp,
+				       buffer);
+		safe_unpackstr_xmalloc(&launch_msg_ptr->std_out, &uint32_tmp,
+				       buffer);
+		safe_unpackstr_xmalloc(&launch_msg_ptr->work_dir, &uint32_tmp,
+				       buffer);
+
+		safe_unpack16(&launch_msg_ptr->x11, buffer);
+		safe_unpackstr_xmalloc(&launch_msg_ptr->x11_magic_cookie,
+				       &uint32_tmp, buffer);
+		safe_unpackstr_xmalloc(&launch_msg_ptr->x11_alloc_host,
+				       &uint32_tmp, buffer);
+		safe_unpack16(&launch_msg_ptr->x11_target_port, buffer);
+
+		safe_unpackstr_array(&launch_msg_ptr->spank_job_env,
+				     &launch_msg_ptr->spank_job_env_size,
+				     buffer);
+        safe_unpack16_array(&launch_msg_ptr->job_node_cpus,
+                    &launch_msg_ptr->nnodes,
+                    buffer);
 		if (!(launch_msg_ptr->cred = slurm_cred_unpack(buffer,
 							protocol_version)))
 			goto unpack_error;
@@ -8877,6 +8973,9 @@ static int _unpack_prolog_launch_msg(prolog_launch_msg_t **msg,
 		safe_unpackstr_array(&launch_msg_ptr->spank_job_env,
 				     &launch_msg_ptr->spank_job_env_size,
 				     buffer);
+        safe_unpack16_array(&launch_msg_ptr->job_node_cpus,
+                    &launch_msg_ptr->nnodes,
+                    buffer);
 		if (!(launch_msg_ptr->cred = slurm_cred_unpack(buffer,
 							protocol_version)))
 			goto unpack_error;

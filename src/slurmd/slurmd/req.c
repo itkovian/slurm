@@ -141,6 +141,21 @@ typedef struct {
 	pthread_mutex_t *timer_mutex;
 } timer_struct_t;
 
+typedef struct {
+	char **gres_job_env;
+	uint32_t jobid;
+	uint32_t step_id;
+	char *node_list;
+	uint32_t pack_jobid;
+	char *partition;
+	char *resv_id;
+	char **spank_job_env;
+	uint32_t spank_job_env_size;
+	uid_t uid;
+	char *user_name;
+    uint16_t job_node_cpus;  /* Number of CPUs used by the job on this node */
+} job_env_t;
+
 static int  _abort_step(uint32_t job_id, uint32_t step_id);
 static void _delay_rpc(int host_inx, int host_cnt, int usec_per_rpc);
 static void _free_job_env(job_env_t *env_ptr);
@@ -1194,7 +1209,6 @@ static int _check_job_credential(launch_tasks_request_msg_t *req,
 		step_cpus = 1;
 		job_cpus  = 1;
 	}
-
 	/* Overwrite any memory limits in the RPC with contents of the
 	 * memory limit within the credential.
 	 * Reset the CPU count on this node to correct value. */
@@ -1219,7 +1233,7 @@ static int _check_job_credential(launch_tasks_request_msg_t *req,
 	} else
 		req->job_mem_lim  = arg.job_mem_limit;
 	req->job_core_spec = arg.job_core_spec;
-	req->node_cpus = step_cpus;
+    req->node_cpus = step_cpus;
 #if 0
 	info("%u.%u node_id:%d mem orig:%"PRIu64" cpus:%u limit:%"PRIu64"",
 	     jobid, stepid, node_id, arg.job_mem_limit,
@@ -2184,9 +2198,35 @@ static int _spawn_prolog_stepd(slurm_msg_t *msg)
 	return rc;
 }
 
+static int _get_node_inx(char *hostlist)
+{
+	char *host;
+	int node_inx = -1;
+	hostset_t hset;
+
+	if (!conf->node_name)
+		return node_inx;
+
+	if ((hset = hostset_create(hostlist))) {
+		int inx = 0;
+		while ((host = hostset_shift(hset))) {
+			if (!strcmp(host, conf->node_name)) {
+				node_inx = inx;
+				free(host);
+				break;
+			}
+			inx++;
+			free(host);
+		}
+		hostset_destroy(hset);
+	}
+	return node_inx;
+}
+
 static void _rpc_prolog(slurm_msg_t *msg)
 {
 	int rc = SLURM_SUCCESS, alt_rc = SLURM_ERROR, node_id = 0;
+    int node_inx = -1;
 	prolog_launch_msg_t *req = (prolog_launch_msg_t *)msg->data;
 	job_env_t job_env;
 	bool     first_job_run;
@@ -2236,6 +2276,7 @@ static void _rpc_prolog(slurm_msg_t *msg)
 		job_env.step_id = 0;	/* not available */
 		job_env.node_list = req->nodes;
 		job_env.het_job_id = req->het_job_id;
+        debug("_rpc_prolog: req->nodes = %s", req->nodes);
 		job_env.partition = req->partition;
 		job_env.spank_job_env = req->spank_job_env;
 		job_env.spank_job_env_size = req->spank_job_env_size;
@@ -2251,6 +2292,10 @@ static void _rpc_prolog(slurm_msg_t *msg)
 #else
 		jobid = req->job_id;
 #endif
+
+        node_inx = _get_node_inx(req->nodes);
+		debug("_rpc_prolog: _get_node_inx returned %d", node_inx);
+        job_env.job_node_cpus = (node_inx >= 0 ? req->job_node_cpus[node_inx] : 0);
 
 		if ((rc = container_g_create(jobid)))
 			error("container_g_create(%u): %m", req->job_id);
@@ -5245,6 +5290,7 @@ _rpc_terminate_job(slurm_msg_t *msg)
 	int             nsteps = 0;
 	int		delay;
 	int		node_id = 0;
+	int node_inx = -1;
 	job_env_t       job_env;
 	uint32_t        jobid;
 
@@ -5471,6 +5517,10 @@ _rpc_terminate_job(slurm_msg_t *msg)
 	job_env.spank_job_env_size = req->spank_job_env_size;
 	job_env.uid = req->job_uid;
 	job_env.gid = req->job_gid;
+	
+    node_inx = _get_node_inx(req->nodes);
+    job_env.job_node_cpus = (node_inx >= 0 ? req->job_node_cpus[node_inx] : 0);
+    debug2("Setting job_env.job_cpu_nodes to %d", job_env.job_node_cpus);
 
 	rc = _run_epilog(&job_env);
 	_free_job_env(&job_env);
@@ -5706,6 +5756,92 @@ _rpc_update_time(slurm_msg_t *msg)
 
 done:
 	slurm_send_rc_msg(msg, rc);
+}
+
+/* NOTE: call _destroy_env() to free returned value */
+static char **_build_env(job_env_t *job_env, bool is_epilog)
+{
+	char **env = xmalloc(sizeof(char *));
+	bool user_name_set = 0;
+
+	env[0] = NULL;
+	if (!valid_spank_job_env(job_env->spank_job_env,
+				 job_env->spank_job_env_size,
+				 job_env->uid)) {
+		/* If SPANK job environment is bad, log it and do not use */
+		job_env->spank_job_env_size = 0;
+		job_env->spank_job_env = (char **) NULL;
+	}
+	/*
+	 * User-controlled environment variables, such as those set through
+	 * SPANK, must be prepended with SPANK_ or some other safe prefix.
+	 * Otherwise, a malicious user could cause arbitrary code to execute
+	 * during the prolog/epilog as root.
+	 */
+	if (job_env->spank_job_env_size)
+		env_array_merge(&env, (const char **) job_env->spank_job_env);
+	if (job_env->gres_job_env)
+		env_array_merge(&env, (const char **) job_env->gres_job_env);
+
+	slurm_mutex_lock(&conf->config_mutex);
+	setenvf(&env, "SLURMD_NODENAME", "%s", conf->node_name);
+	setenvf(&env, "SLURM_CONF", "%s", conf->conffile);
+	slurm_mutex_unlock(&conf->config_mutex);
+
+	setenvf(&env, "SLURM_CLUSTER_NAME", "%s", conf->cluster_name);
+	setenvf(&env, "SLURM_JOB_ID", "%u", job_env->jobid);
+	setenvf(&env, "SLURM_JOB_UID", "%u", job_env->uid);
+
+#ifndef HAVE_NATIVE_CRAY
+	/* uid_to_string on a cray is a heavy call, so try to avoid it */
+	if (!job_env->user_name) {
+		job_env->user_name = uid_to_string(job_env->uid);
+		user_name_set = 1;
+	}
+#endif
+
+	setenvf(&env, "SLURM_JOB_USER", "%s", job_env->user_name);
+	if (user_name_set)
+		xfree(job_env->user_name);
+
+	setenvf(&env, "SLURM_JOBID", "%u", job_env->jobid);
+
+	if (job_env->pack_jobid && (job_env->pack_jobid != NO_VAL))
+		setenvf(&env, "SLURM_PACK_JOB_ID", "%u", job_env->pack_jobid);
+
+	setenvf(&env, "SLURM_UID", "%u", job_env->uid);
+
+	if (job_env->node_list)
+		setenvf(&env, "SLURM_NODELIST", "%s", job_env->node_list);
+
+	if (job_env->partition)
+		setenvf(&env, "SLURM_JOB_PARTITION", "%s", job_env->partition);
+
+	if (is_epilog) {
+		setenvf(&env, "SLURM_SCRIPT_CONTEXT", "epilog_slurmd");
+	} else {
+		setenvf(&env, "SLURM_SCRIPT_CONTEXT", "prolog_slurmd");
+	}
+
+    setenvf(&env, "SLURM_JOB_NODE_CPUS", "%d", job_env->job_node_cpus);
+    setenvf(&env, "SLURM_ACTUAL_NODE_CPUS", "%d", conf->actual_cpus);
+
+	return env;
+}
+
+static void
+_destroy_env(char **env)
+{
+	int i = 0;
+
+	if (env) {
+		for (i = 0; env[i]; i++) {
+			xfree(env[i]);
+		}
+		xfree(env);
+	}
+
+	return;
 }
 
 static void _free_job_env(job_env_t *env_ptr)
