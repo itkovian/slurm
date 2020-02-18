@@ -77,6 +77,7 @@ typedef struct {
 	uid_t uid;
 	gid_t gid;
 	char *user_name;
+    uint16_t job_node_cpus;  /* Number of CPUs used by the job on this node */
 } job_env_t;
 
 /*
@@ -86,7 +87,7 @@ typedef struct slurmd_config {
 	char         *prog;		/* Program basename		   */
 	char         ***argv;           /* pointer to argument vector      */
 	int          *argc;             /* pointer to argument count       */
-	char         *auth_info;	/* AuthInfo for msg authentication */ 
+	char         *auth_info;	/* AuthInfo for msg authentication */
 	Buf          buf;               /* packed version of this lite config */
 	char         *cluster_name; 	/* conf ClusterName		   */
 	char         *hostname;	 	/* local hostname		   */
