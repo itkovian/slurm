@@ -8800,7 +8800,7 @@ static void _pack_prolog_launch_msg(prolog_launch_msg_t *msg,
 		packstr(msg->user_name, buffer);
 	} else if (protocol_version >= SLURM_18_08_PROTOCOL_VERSION) {
 		pack32(msg->job_id, buffer);
-		pack32(msg->pack_job_id, buffer);
+		pack32(msg->het_job_id, buffer);
 		pack32(msg->uid, buffer);
 		pack32(msg->gid, buffer);
 
@@ -8908,7 +8908,7 @@ static int _unpack_prolog_launch_msg(prolog_launch_msg_t **msg,
 				       buffer);
 	} else if (protocol_version >= SLURM_18_08_PROTOCOL_VERSION) {
 		safe_unpack32(&launch_msg_ptr->job_id, buffer);
-		safe_unpack32(&launch_msg_ptr->pack_job_id, buffer);
+		safe_unpack32(&launch_msg_ptr->het_job_id, buffer);
 		safe_unpack32(&launch_msg_ptr->uid, buffer);
 		safe_unpack32(&launch_msg_ptr->gid, buffer);
 
