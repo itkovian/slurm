@@ -1,7 +1,7 @@
 Name:		slurm
 Version:	19.05.7
 %global rel 2
-Release:    %{rel}.%{gittag}%{?dist}.ug
+Release:    %{rel}.%{gittag}%{?dist}.nogpu.ug
 Summary:	Slurm Workload Manager
 
 Group:		System Environment/Base
@@ -57,15 +57,21 @@ Source:		%{slurm_source_dir}.tar.gz
 # Build with PAM by default on linux
 %bcond_without pam
 
+# Disable hardened builds. -z,now or -z,relro breaks the plugin stack
+%undefine _hardened_build
+%global _hardened_cflags "-Wl,-z,lazy"
+%global _hardened_ldflags "-Wl,-z,lazy"
+
+
 Requires: munge
-Requires: json-c12
+Requires: json-c
 
 %{?systemd_requires}
 BuildRequires: systemd
 BuildRequires: munge-devel munge-libs
-BuildRequires: python
+BuildRequires: python2
 BuildRequires: readline-devel
-BuildRequires: json-c12-devel
+BuildRequires: json-c-devel
 Obsoletes: slurm-lua slurm-munge slurm-plugins
 
 # fake systemd support when building rpms on other platforms
@@ -126,12 +132,12 @@ BuildRequires: numactl-devel
 
 %if %{with pmix}
 BuildRequires: pmix
-%global pmix_version %(rpm -q pmix --qf "%{VERSION}")
+%global pmix_version %(rpm -q pmix --qf "%%{VERSION}")
 %endif
 
 %if %{with ucx}
 BuildRequires: ucx-devel
-%global ucx_version %(rpm -q ucx-devel --qf "%{VERSION}")
+%global ucx_version %(rpm -q ucx-devel --qf "%%{VERSION}")
 %endif
 
 #  Allow override of sysconfdir via _slurm_sysconfdir.
@@ -395,7 +401,8 @@ install -D -m644 etc/layouts.d.power.conf.example %{buildroot}/%{_sysconfdir}/la
 install -D -m644 etc/layouts.d.power_cpufreq.conf.example %{buildroot}/%{_sysconfdir}/layouts.d/power_cpufreq.conf.example
 install -D -m644 etc/layouts.d.unit.conf.example %{buildroot}/%{_sysconfdir}/layouts.d/unit.conf.example
 install -D -m644 etc/slurm.conf.example %{buildroot}/%{_sysconfdir}/slurm.conf.example
-install -D -m600 etc/slurmdbd.conf.example %{buildroot}/%{_sysconfdir}/slurmdbd.conf.example
+#install -D -m755 etc/slurm.epilog.clean %{buildroot}/%{_sysconfdir}/slurm.epilog.clean
+install -D -m644 etc/slurmdbd.conf.example %{buildroot}/%{_sysconfdir}/slurmdbd.conf.example
 install -D -m755 contribs/sjstat %{buildroot}/%{_bindir}/sjstat
 
 # Delete unpackaged files:
