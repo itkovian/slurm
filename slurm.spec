@@ -1,7 +1,7 @@
 Name:		slurm
 Version:	20.11.6
-%global rel	1
-Release:    %{rel}.%{gittag}%{?dist}.ug
+%define rel	1
+Release:        %{rel}.%{gittag}%{?dist}%{?gpu}.ug
 Summary:	Slurm Workload Manager
 
 Group:		System Environment/Base
@@ -67,14 +67,12 @@ Source:		%{slurm_source_dir}.tar.gz
 %global _hardened_ldflags "-Wl,-z,lazy"
 
 Requires: munge
-Requires: json-c
 
 %{?systemd_requires}
 BuildRequires: systemd
 BuildRequires: munge-devel munge-libs
 BuildRequires: python3
 BuildRequires: readline-devel
-BuildRequires: json-c-devel
 Obsoletes: slurm-lua slurm-munge slurm-plugins
 
 # fake systemd support when building rpms on other platforms
@@ -135,12 +133,12 @@ BuildRequires: numactl-devel
 
 %if %{with pmix} && "%{_with_pmix}" == "--with-pmix"
 BuildRequires: pmix
-%global pmix_version %(rpm -q pmix --qf "%{VERSION}")
+%global pmix_version %(rpm -q pmix --qf "%%{VERSION}")
 %endif
 
 %if %{with ucx} && "%{_with_ucx}" == "--with-ucx"
 BuildRequires: ucx-devel
-%global ucx_version %(rpm -q ucx-devel --qf "%{VERSION}")
+%global ucx_version %(rpm -q ucx-devel --qf "%%{VERSION}")
 %endif
 
 #  Allow override of sysconfdir via _slurm_sysconfdir.
@@ -311,7 +309,13 @@ BuildRequires: http-parser-devel
 %if %{defined suse_version}
 BuildRequires: libjson-c-devel
 %else
+%if 0%{?fedora} || 0%{?rhel} > 7
 BuildRequires: json-c-devel
+Requires: json-c
+%else
+BuildRequires: json-c12-devel
+Requires: json-c12
+%endif
 %endif
 %description slurmrestd
 Provides a REST interface to Slurm.
@@ -525,9 +529,6 @@ rm -rf %{buildroot}
 %{_libdir}/*.so*
 %{_libdir}/slurm/src/*
 %{_libdir}/slurm/*.so
-%if %{with cray}
-%{_libdir}/slurmpmi/*
-%endif
 %exclude %{_libdir}/slurm/accounting_storage_mysql.so
 %exclude %{_libdir}/slurm/job_submit_pbs.so
 %exclude %{_libdir}/slurm/spank_pbs.so
@@ -551,7 +552,6 @@ rm -rf %{buildroot}
 %config %{_sysconfdir}/job_submit.lua.example
 %config %{_sysconfdir}/prolog.example
 %config %{_sysconfdir}/slurm.conf.example
-#%config %{_sysconfdir}/slurm.epilog.clean
 %config %{_sysconfdir}/slurmdbd.conf.example
 %config %{_sysconfdir}/cli_filter.lua.example
 #############################################################################
@@ -611,6 +611,16 @@ rm -rf %{buildroot}
 
 %files torque
 %defattr(-,root,root)
+#%{_bindir}/pbsnodes
+#%{_bindir}/qalter
+#%{_bindir}/qdel
+#%{_bindir}/qhold
+#%{_bindir}/qrerun
+#%{_bindir}/qrls
+#%{_bindir}/qstat
+#%{_bindir}/qsub
+#%{_bindir}/mpiexec
+#%{_bindir}/generate_pbs_nodefile
 %{_libdir}/slurm/job_submit_pbs.so
 %{_libdir}/slurm/spank_pbs.so
 #############################################################################
