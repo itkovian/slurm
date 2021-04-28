@@ -139,10 +139,12 @@ typedef struct {
 typedef struct {
 	Buf       buffer;
 	uint32_t  filter_uid;
+	bool has_qos_lock;
 	uint32_t *jobs_packed;
 	uint16_t  protocol_version;
 	uint16_t  show_flags;
 	uid_t     uid;
+	slurmdb_user_rec_t user_rec;
 } _foreach_pack_job_info_t;
 
 typedef struct {
@@ -8565,6 +8567,8 @@ static bool _valid_pn_min_mem(job_desc_msg_t *job_desc_msg,
 			    (job_desc_msg->max_cpus < job_desc_msg->min_cpus)) {
 				job_desc_msg->max_cpus = job_desc_msg->min_cpus;
 			}
+		} else {
+			job_desc_msg->pn_min_cpus = job_desc_msg->cpus_per_task;
 		}
 		return true;
 	}
@@ -9563,6 +9567,7 @@ static void _list_delete_job(void *job_entry)
 	xfree(job_ptr->batch_features);
 	xfree(job_ptr->batch_host);
 	xfree(job_ptr->burst_buffer);
+	xfree(job_ptr->burst_buffer_state);
 	xfree(job_ptr->comment);
 	xfree(job_ptr->clusters);
 	xfree(job_ptr->cpus_per_tres);
@@ -9751,7 +9756,7 @@ end_it:
 }
 
 /* Determine if ALL partitions associated with a job are hidden */
-static bool _all_parts_hidden(job_record_t *job_ptr, uid_t uid)
+static bool _all_parts_hidden(job_record_t *job_ptr, slurmdb_user_rec_t *user)
 {
 	bool rc;
 	ListIterator part_iterator;
@@ -9761,7 +9766,7 @@ static bool _all_parts_hidden(job_record_t *job_ptr, uid_t uid)
 		rc = true;
 		part_iterator = list_iterator_create(job_ptr->part_ptr_list);
 		while ((part_ptr = list_next(part_iterator))) {
-			if (part_is_visible(part_ptr, uid)) {
+			if (part_is_visible_user_rec(part_ptr, user)) {
 				rc = false;
 				break;
 			}
@@ -9770,7 +9775,8 @@ static bool _all_parts_hidden(job_record_t *job_ptr, uid_t uid)
 		return rc;
 	}
 
-	if (job_ptr->part_ptr && part_is_visible(job_ptr->part_ptr, uid))
+	if (job_ptr->part_ptr &&
+	    part_is_visible_user_rec(job_ptr->part_ptr, user))
 		return false;
 	return true;
 }
@@ -9792,6 +9798,25 @@ static bool _hide_job(job_record_t *job_ptr, uid_t uid, uint16_t show_flags)
 	return false;
 }
 
+/* Determine if a given job should be seen by a specific user */
+static bool _hide_job_user_rec(job_record_t *job_ptr, slurmdb_user_rec_t *user,
+			       uint16_t show_flags)
+{
+	if (!(show_flags & SHOW_ALL) && IS_JOB_REVOKED(job_ptr))
+		return true;
+
+	if ((slurm_conf.private_data & PRIVATE_DATA_JOBS) &&
+	    (job_ptr->user_id != user->uid) &&
+	    !validate_operator_user_rec(user) &&
+	    (((slurm_mcs_get_privatedata() == 0) &&
+	      !assoc_mgr_is_user_acct_coord_user_rec(acct_db_conn, user,
+						     job_ptr->account)) ||
+	     ((slurm_mcs_get_privatedata() == 1) &&
+	      (mcs_g_check_mcs_label(user->uid, job_ptr->mcs_label) != 0))))
+		return true;
+	return false;
+}
+
 static int _pack_job(void *object, void *arg)
 {
 	job_record_t *job_ptr = (job_record_t *)object;
@@ -9805,14 +9830,16 @@ static int _pack_job(void *object, void *arg)
 
 	if (((pack_info->show_flags & SHOW_ALL) == 0) &&
 	    (pack_info->uid != 0) &&
-	    _all_parts_hidden(job_ptr, pack_info->uid))
+	    _all_parts_hidden(job_ptr, &pack_info->user_rec))
 		return SLURM_SUCCESS;
 
-	if (_hide_job(job_ptr, pack_info->uid, pack_info->show_flags))
+	if (_hide_job_user_rec(job_ptr, &pack_info->user_rec,
+			       pack_info->show_flags))
 		return SLURM_SUCCESS;
 
 	pack_job(job_ptr, pack_info->show_flags, pack_info->buffer,
-		 pack_info->protocol_version, pack_info->uid);
+		 pack_info->protocol_version, pack_info->uid,
+		 pack_info->has_qos_lock);
 
 	(*pack_info->jobs_packed)++;
 
@@ -9851,6 +9878,7 @@ extern void pack_all_jobs(char **buffer_ptr, int *buffer_size,
 	uint32_t jobs_packed = 0, tmp_offset;
 	_foreach_pack_job_info_t pack_info = {0};
 	Buf buffer;
+	assoc_mgr_lock_t locks = { .user = READ_LOCK, .qos = READ_LOCK };
 
 	buffer_ptr[0] = NULL;
 	*buffer_size = 0;
@@ -9869,8 +9897,14 @@ extern void pack_all_jobs(char **buffer_ptr, int *buffer_size,
 	pack_info.protocol_version = protocol_version;
 	pack_info.show_flags       = show_flags;
 	pack_info.uid              = uid;
+	pack_info.has_qos_lock = true;
+	pack_info.user_rec.uid = uid;
 
+	assoc_mgr_lock(&locks);
+	assoc_mgr_fill_in_user(acct_db_conn, &pack_info.user_rec,
+			       accounting_enforce, NULL, true);
 	list_for_each(job_list, _pack_job, &pack_info);
+	assoc_mgr_unlock(&locks);
 
 	/* put the real record count in the message body header */
 	tmp_offset = get_buf_offset(buffer);
@@ -9903,6 +9937,7 @@ extern void pack_spec_jobs(char **buffer_ptr, int *buffer_size, List job_ids,
 	uint32_t jobs_packed = 0, tmp_offset;
 	_foreach_pack_job_info_t pack_info = {0};
 	Buf buffer;
+	assoc_mgr_lock_t locks = { .user = READ_LOCK, .qos = READ_LOCK };
 
 	xassert(job_ids);
 
@@ -9923,8 +9958,14 @@ extern void pack_spec_jobs(char **buffer_ptr, int *buffer_size, List job_ids,
 	pack_info.protocol_version = protocol_version;
 	pack_info.show_flags       = show_flags;
 	pack_info.uid              = uid;
+	pack_info.has_qos_lock = true;
+	pack_info.user_rec.uid = uid;
 
+	assoc_mgr_lock(&locks);
+	assoc_mgr_fill_in_user(acct_db_conn, &pack_info.user_rec,
+			       accounting_enforce, NULL, true);
 	list_for_each(job_ids, _foreach_pack_jobid, &pack_info);
+	assoc_mgr_unlock(&locks);
 
 	/* put the real record count in the message body header */
 	tmp_offset = get_buf_offset(buffer);
@@ -9947,7 +9988,7 @@ static int _pack_het_job(job_record_t *job_ptr, uint16_t show_flags,
 	while ((het_job_ptr = list_next(iter))) {
 		if (het_job_ptr->het_job_id == job_ptr->het_job_id) {
 			pack_job(het_job_ptr, show_flags, buffer,
-				 protocol_version, uid);
+				 protocol_version, uid, false);
 			job_cnt++;
 		} else {
 			error("%s: Bad het_job_list for %pJ",
@@ -10002,7 +10043,7 @@ extern int pack_one_job(char **buffer_ptr, int *buffer_size,
 		/* Pack regular (not array) job */
 		if (!_hide_job(job_ptr, uid, show_flags)) {
 			pack_job(job_ptr, show_flags, buffer, protocol_version,
-				 uid);
+				 uid, false);
 			jobs_packed++;
 		}
 	} else {
@@ -10013,7 +10054,7 @@ extern int pack_one_job(char **buffer_ptr, int *buffer_size,
 			packed_head = true;
 			if (!_hide_job(job_ptr, uid, show_flags)) {
 				pack_job(job_ptr, show_flags, buffer,
-					 protocol_version, uid);
+					 protocol_version, uid, false);
 				jobs_packed++;
 			}
 		}
@@ -10026,7 +10067,7 @@ extern int pack_one_job(char **buffer_ptr, int *buffer_size,
 				if (_hide_job(job_ptr, uid, show_flags))
 					break;
 				pack_job(job_ptr, show_flags, buffer,
-					 protocol_version, uid);
+					 protocol_version, uid, false);
 				jobs_packed++;
 			}
 			job_ptr = job_ptr->job_array_next_j;
@@ -10075,13 +10116,14 @@ static void _pack_job_gres(job_record_t *dump_job_ptr, Buf buffer,
  *	  whenever the data format changes
  */
 void pack_job(job_record_t *dump_job_ptr, uint16_t show_flags, Buf buffer,
-	      uint16_t protocol_version, uid_t uid)
+	      uint16_t protocol_version, uid_t uid, bool has_qos_lock)
 {
 	struct job_details *detail_ptr;
 	time_t accrue_time = 0, begin_time = 0, start_time = 0, end_time = 0;
 	uint32_t time_limit;
 	char *nodelist = NULL;
 	assoc_mgr_lock_t locks = { .qos = READ_LOCK };
+	xassert(!has_qos_lock || verify_assoc_lock(QOS_LOCK, READ_LOCK));
 
 	if (protocol_version >= SLURM_20_02_PROTOCOL_VERSION) {
 		detail_ptr = dump_job_ptr->details;
@@ -10210,7 +10252,8 @@ void pack_job(job_record_t *dump_job_ptr, uint16_t show_flags, Buf buffer,
 		packstr(dump_job_ptr->burst_buffer_state, buffer);
 		packstr(dump_job_ptr->system_comment, buffer);
 
-		assoc_mgr_lock(&locks);
+		if (!has_qos_lock)
+			assoc_mgr_lock(&locks);
 		if (dump_job_ptr->qos_ptr)
 			packstr(dump_job_ptr->qos_ptr->name, buffer);
 		else {
@@ -10231,7 +10274,8 @@ void pack_job(job_record_t *dump_job_ptr, uint16_t show_flags, Buf buffer,
 		} else {
 			pack_time(0, buffer);
 		}
-		assoc_mgr_unlock(&locks);
+		if (!has_qos_lock)
+			assoc_mgr_unlock(&locks);
 
 		packstr(dump_job_ptr->licenses, buffer);
 		packstr(dump_job_ptr->state_desc, buffer);
@@ -10439,7 +10483,8 @@ void pack_job(job_record_t *dump_job_ptr, uint16_t show_flags, Buf buffer,
 		packstr(dump_job_ptr->burst_buffer_state, buffer);
 		packstr(dump_job_ptr->system_comment, buffer);
 
-		assoc_mgr_lock(&locks);
+		if (!has_qos_lock)
+			assoc_mgr_lock(&locks);
 		if (dump_job_ptr->qos_ptr)
 			packstr(dump_job_ptr->qos_ptr->name, buffer);
 		else {
@@ -10460,7 +10505,8 @@ void pack_job(job_record_t *dump_job_ptr, uint16_t show_flags, Buf buffer,
 		} else {
 			pack_time(0, buffer);
 		}
-		assoc_mgr_unlock(&locks);
+		if (!has_qos_lock)
+			assoc_mgr_unlock(&locks);
 
 		packstr(dump_job_ptr->licenses, buffer);
 		packstr(dump_job_ptr->state_desc, buffer);
@@ -10723,8 +10769,13 @@ static void _pack_default_job_details(job_record_t *job_ptr, Buf buffer,
 				pack32(detail_ptr->num_tasks, buffer);
 			else if (IS_JOB_PENDING(job_ptr))
 				pack32(detail_ptr->min_nodes, buffer);
+			else if (job_ptr->tres_alloc_cnt)
+				pack32((uint32_t)
+				       job_ptr->tres_alloc_cnt[TRES_ARRAY_NODE],
+				       buffer);
 			else
 				pack32(job_ptr->node_cnt, buffer);
+
 			pack16(shared, buffer);
 			pack32(detail_ptr->cpu_freq_min, buffer);
 			pack32(detail_ptr->cpu_freq_max, buffer);

@@ -1,4 +1,4 @@
-.TH "slurm.conf" "5" "Slurm Configuration File" "March 2021" "Slurm Configuration File"
+.TH "slurm.conf" "5" "Slurm Configuration File" "April 2021" "Slurm Configuration File"
 
 .SH "NAME"
 slurm.conf \- Slurm configuration file
@@ -1207,8 +1207,11 @@ allocation may affect other processes and/or machine health.
 task/cgroup as a TaskPlugin and making use of ConstrainRAMSpace=yes in the
 cgroup.conf instead of using this JobAcctGather mechanism for memory
 enforcement. With OverMemoryKill, memory limit is applied against each process
-individually and is not applied to the step as a whole as it is with
-ConstrainRAMSpace=yes. Using JobAcctGather is polling based and there is a
+individually and is not applied to the step as a whole. This means that when
+jobs have a process that consumes too much memory, the process will be killed
+but the step will continue to run. When using cgroups with
+ConstrainRAMSpace=yes, a process that consumes too much memory will result in
+the job step being killed. Using JobAcctGather is polling based and there is a
 delay before a job is killed, which could lead to system Out of Memory events.
 .RE
 
@@ -1284,16 +1287,20 @@ Also see \fBDefaultStorageUser\fR.
 Identifies the plugin to be used for job tracking.
 The slurmd daemon must be restarted for a change in JobContainerType
 to take effect.
-NOTE: The \fBJobContainerType\fR applies to a job allocation, while
+\fBNOTE\fR: The \fBJobContainerType\fR applies to a job allocation, while
 \fBProctrackType\fR applies to job steps.
 Acceptable values at present include:
 .RS
 .TP 20
 \fBjob_container/cncu\fR
-used only for Cray systems (CNCU = Compute Node Clean Up)
+Used only for Cray systems (CNCU = Compute Node Clean Up)
 .TP
 \fBjob_container/none\fR
-used for all other system types
+Used for all other system types
+.TP
+\fBjob_container/tmpfs\fR
+Used to create a private namespace on the filesystem for jobs, which houses
+temporary file systems (/tmp and /dev/shm) for each job.
 .RE
 
 .TP
@@ -1498,13 +1505,13 @@ exist but "/usr/bin/mail" does exist).
 
 .TP
 \fBMaxArraySize\fR
-The maximum job array size.
 The maximum job array task index value will be one less than MaxArraySize
 to allow for an index value of zero.
 Configure MaxArraySize to 0 in order to disable job array use.
 The value may not exceed 4000001.
 The value of \fBMaxJobCount\fR should be much larger than \fBMaxArraySize\fR.
 The default value is 1001.
+See also \fBmax_array_tasks\fR in SchedulerParameters.
 
 .TP
 \fBMaxDBDMsgs\fR
@@ -4290,16 +4297,15 @@ systems. The value may not exceed 65533.
 If the processes in a job step are determined to be unkillable for a period
 of time specified by the \fBUnkillableStepTimeout\fR variable, the program
 specified by \fBUnkillableStepProgram\fR will be executed.
-This program can be used to take special actions to clean up the unkillable
-processes and/or notify computer administrators.
-The program will be run \fBSlurmdUser\fR (usually "root") on the compute node.
 By default no program is run.
+
+See section \fBUNKILLABLE STEP PROGRAM SCRIPT\fR for more information.
 
 .TP
 \fBUnkillableStepTimeout\fR
 The length of time, in seconds, that Slurm will wait before deciding that
 processes in a job step are unkillable (after they have been signaled with
-SIGKILL) and execute \fBUnkillableStepProgram\fR as described above.
+SIGKILL) and execute \fBUnkillableStepProgram\fR.
 The default timeout value is 60 seconds.
 If exceeded, the compute node will be drained to prevent future jobs from being
 scheduled on the node.
@@ -5626,6 +5632,21 @@ User name of the job's owner.
 .TP
 \fBSLURM_SCRIPT_CONTEXT\fR
 Identifies which epilog or prolog program is currently running.
+
+.SH "UNKILLABLE STEP PROGRAM SCRIPT"
+This program can be used to take special actions to clean up the unkillable
+processes and/or notify system administrators.
+The program will be run as \fBSlurmdUser\fR (usually "root") on the compute
+node where \fBUnkillableStepTimeout\fR was triggered.
+
+Information about the unkillable job step is passed to the script using
+environment variables.
+.TP
+\fBSLURM_JOB_ID\fR
+Job ID.
+.TP
+\fBSLURM_STEP_ID\fR
+Job Step ID.
 
 .SH "NETWORK TOPOLOGY"
 Slurm is able to optimize job allocations to minimize network contention.

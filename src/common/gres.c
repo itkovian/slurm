@@ -8470,6 +8470,7 @@ extern void gres_plugin_job_core_filter3(gres_mc_data_t *mc_ptr,
 		req_cores = *max_tasks_this_node;
 		if (mc_ptr->cpus_per_task) {
 			int threads_per_core, removed_tasks = 0;
+			int efctv_cpt = mc_ptr->cpus_per_task;
 
 			if (mc_ptr->threads_per_core)
 				threads_per_core =
@@ -8478,7 +8479,14 @@ extern void gres_plugin_job_core_filter3(gres_mc_data_t *mc_ptr,
 			else
 				threads_per_core = cpus_per_core;
 
-			req_cores *= mc_ptr->cpus_per_task;
+			if ((mc_ptr->ntasks_per_core == 1) &&
+			    (efctv_cpt % threads_per_core)) {
+				efctv_cpt /= threads_per_core;
+				efctv_cpt++;
+				efctv_cpt *= threads_per_core;
+			}
+
+			req_cores *= efctv_cpt;
 
 			while (*max_tasks_this_node >= *min_tasks_this_node) {
 				/* round up by full threads per core */
@@ -8500,7 +8508,7 @@ extern void gres_plugin_job_core_filter3(gres_mc_data_t *mc_ptr,
 				removed_tasks++;
 				(*max_tasks_this_node)--;
 				req_cores = *max_tasks_this_node;
-				req_cores *= mc_ptr->cpus_per_task;
+				req_cores *= efctv_cpt;
 			}
 		}
 		if (cpus_per_gres) {
@@ -11830,7 +11838,8 @@ extern void gres_plugin_job_set_env(char ***job_env_ptr, List job_gres_list,
  */
 extern void gres_plugin_job_set_defs(List job_gres_list, char *gres_name,
 				     uint64_t cpu_per_gpu, uint64_t mem_per_gpu,
-				     char **cpus_per_tres, char **mem_per_tres)
+				     char **cpus_per_tres, char **mem_per_tres,
+				     uint16_t *cpus_per_task)
 {
 	uint32_t plugin_id;
 	ListIterator gres_iter;
@@ -11868,6 +11877,11 @@ extern void gres_plugin_job_set_defs(List job_gres_list, char *gres_name,
 			if (mem_per_gpu)
 				xstrfmtcat(*mem_per_tres, "gpu:%"PRIu64,
 					   mem_per_gpu);
+		}
+		if (cpu_per_gpu && job_gres_data->gres_per_task) {
+			*cpus_per_task = MAX(*cpus_per_task,
+					     (job_gres_data->gres_per_task *
+					      cpu_per_gpu));
 		}
 	}
 	list_iterator_destroy(gres_iter);

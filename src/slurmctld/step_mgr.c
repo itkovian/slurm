@@ -1723,8 +1723,9 @@ static void _pick_step_cores(step_record_t *step_ptr,
 		use_all_cores = false;
 
 		if (step_ptr->cpus_per_task > 0) {
-			cpu_cnt *= step_ptr->cpus_per_task + cpus_per_core - 1;
-			cpu_cnt	/= cpus_per_core;
+			cpu_cnt *= step_ptr->cpus_per_task;
+			cpu_cnt += (cpus_per_core - 1);
+			cpu_cnt /= cpus_per_core;
 		}
 	}
 
@@ -1992,6 +1993,12 @@ static void _step_dealloc_lps(step_record_t *step_ptr)
 	int job_node_inx = -1, step_node_inx = -1;
 
 	xassert(job_resrcs_ptr);
+	if (!job_resrcs_ptr) {
+		error("%s: job_resrcs is NULL for %pS; this should never happen",
+		      __func__, step_ptr);
+		return;
+	}
+
 	xassert(job_resrcs_ptr->cpus);
 	xassert(job_resrcs_ptr->cpus_used);
 
