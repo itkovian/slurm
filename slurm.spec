@@ -1,7 +1,7 @@
 Name:		slurm
 Version:	20.11.5
 %define rel	1
-Release:	%{rel}%{?dist}
+Release:        %{rel}.%{gittag}%{?dist}%{?gpu}.ug
 Summary:	Slurm Workload Manager
 
 Group:		System Environment/Base
@@ -15,7 +15,7 @@ URL:		https://slurm.schedmd.com/
 %global slurm_source_dir %{name}-%{version}-%{rel}
 %endif
 
-Source:		%{slurm_source_dir}.tar.bz2
+Source:		%{slurm_source_dir}.tar.gz
 
 # build options		.rpmmacros options	change to default action
 # ====================  ====================	========================
@@ -133,12 +133,12 @@ BuildRequires: numactl-devel
 
 %if %{with pmix} && "%{_with_pmix}" == "--with-pmix"
 BuildRequires: pmix
-%global pmix_version %(rpm -q pmix --qf "%{VERSION}")
+%global pmix_version %(rpm -q pmix --qf "%%{VERSION}")
 %endif
 
 %if %{with ucx} && "%{_with_ucx}" == "--with-ucx"
 BuildRequires: ucx-devel
-%global ucx_version %(rpm -q ucx-devel --qf "%{VERSION}")
+%global ucx_version %(rpm -q ucx-devel --qf "%%{VERSION}")
 %endif
 
 #  Allow override of sysconfdir via _slurm_sysconfdir.
@@ -248,7 +248,9 @@ database changes to slurmctld daemons on each cluster
 Summary: Slurm\'s implementation of the pmi libraries
 Group: System Environment/Base
 Requires: %{name}%{?_isa} = %{version}-%{release}
+%if ! %{with pmix}
 Conflicts: pmix-libpmi
+%endif
 %description libpmi
 Slurm\'s version of libpmi. For systems using Slurm, this version
 is preferred over the compatibility libraries shipped by the PMIx project.
@@ -307,7 +309,13 @@ BuildRequires: http-parser-devel
 %if %{defined suse_version}
 BuildRequires: libjson-c-devel
 %else
+%if 0%{?fedora} || 0%{?rhel} > 7
 BuildRequires: json-c-devel
+Requires: json-c
+%else
+BuildRequires: json-c12-devel
+Requires: json-c12
+%endif
 %endif
 %description slurmrestd
 Provides a REST interface to Slurm.
@@ -603,16 +611,16 @@ rm -rf %{buildroot}
 
 %files torque
 %defattr(-,root,root)
-%{_bindir}/pbsnodes
-%{_bindir}/qalter
-%{_bindir}/qdel
-%{_bindir}/qhold
-%{_bindir}/qrerun
-%{_bindir}/qrls
-%{_bindir}/qstat
-%{_bindir}/qsub
-%{_bindir}/mpiexec
-%{_bindir}/generate_pbs_nodefile
+#%{_bindir}/pbsnodes
+#%{_bindir}/qalter
+#%{_bindir}/qdel
+#%{_bindir}/qhold
+#%{_bindir}/qrerun
+#%{_bindir}/qrls
+#%{_bindir}/qstat
+#%{_bindir}/qsub
+#%{_bindir}/mpiexec
+#%{_bindir}/generate_pbs_nodefile
 %{_libdir}/slurm/job_submit_pbs.so
 %{_libdir}/slurm/spank_pbs.so
 #############################################################################

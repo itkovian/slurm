@@ -33,11 +33,11 @@ AC_DEFUN([X_AC_JSON], [
         for d in $_x_ac_json_dirs; do
           test -d "$d" || continue
           test -d "$d/include" || continue
-          test -f "$d/include/json-c/json_object.h" || test -f "$d/include/json/json_object.h" || continue
+          test -f "$d/include/json-c12/json_object.h" || test -f "$d/include/json/json_object.h" || continue
           for bit in $_x_ac_json_libs; do
             test -d "$d/$bit" || continue
             _x_ac_json_libs_save="$LIBS"
-            LIBS="-L$d/$bit -ljson-c $LIBS"
+            LIBS="-L$d/$bit -ljson-c12 $LIBS"
             AC_LINK_IFELSE(
               [AC_LANG_CALL([], json_tokener_parse)],
               AS_VAR_SET(x_ac_cv_json_dir, $d))
@@ -51,7 +51,7 @@ AC_DEFUN([X_AC_JSON], [
     if test -z "$x_ac_cv_json_dir"; then
       AC_MSG_WARN([unable to locate json parser library])
     else
-      if test -f "$d/include/json-c/json_object.h" ; then
+      if test -f "$d/include/json-c12/json_object.h" ; then
         AC_DEFINE([HAVE_JSON_C_INC], [1], [Define if headers in include/json-c.])
       fi
       if test -f "$d/include/json/json_object.h" ; then
@@ -59,7 +59,7 @@ AC_DEFUN([X_AC_JSON], [
       fi
       AC_DEFINE([HAVE_JSON], [1], [Define if you are compiling with json.])
       JSON_CPPFLAGS="-I$x_ac_cv_json_dir/include"
-      JSON_LDFLAGS="-L$x_ac_cv_json_dir/$bit -ljson-c"
+      JSON_LDFLAGS="-L$x_ac_cv_json_dir/$bit -ljson-c12"
     fi
   
     AC_SUBST(JSON_CPPFLAGS)

@@ -261,6 +261,7 @@ extern void deallocate_nodes(job_record_t *job_ptr, bool timeout,
 	agent_arg_t *agent_args = NULL;
 	int down_node_cnt = 0;
 	node_record_t *node_ptr;
+	job_resources_t *job_resrcs_ptr;
 #ifdef HAVE_FRONT_END
 	front_end_record_t *front_end_ptr;
 #endif
@@ -303,6 +304,9 @@ extern void deallocate_nodes(job_record_t *job_ptr, bool timeout,
 	kill_job->spank_job_env = xduparray(job_ptr->spank_job_env_size,
 					    job_ptr->spank_job_env);
 	kill_job->spank_job_env_size = job_ptr->spank_job_env_size;
+	job_resrcs_ptr = job_ptr->job_resrcs;
+    kill_job->nnodes = job_resrcs_ptr->nhosts;
+	kill_job->job_node_cpus = job_resrcs_ptr->cpus;
 
 #ifdef HAVE_FRONT_END
 	if (job_ptr->batch_host &&
@@ -2856,6 +2860,8 @@ extern void launch_prolog(job_record_t *job_ptr)
 	}
 #endif
 
+	xassert(job_ptr->job_resrcs);
+	job_resrcs_ptr = job_ptr->job_resrcs;
 	prolog_msg_ptr = xmalloc(sizeof(prolog_launch_msg_t));
 
 	/* Locks: Write job */
@@ -2874,6 +2880,8 @@ extern void launch_prolog(job_record_t *job_ptr)
 	prolog_msg_ptr->user_name = xstrdup(job_ptr->user_name);
 	prolog_msg_ptr->alias_list = xstrdup(job_ptr->alias_list);
 	prolog_msg_ptr->nodes = xstrdup(job_ptr->nodes);
+    prolog_msg_ptr->nnodes = job_resrcs_ptr->nhosts;
+    prolog_msg_ptr->job_node_cpus = job_resrcs_ptr->cpus;
 	prolog_msg_ptr->partition = xstrdup(job_ptr->partition);
 	prolog_msg_ptr->std_err = xstrdup(job_ptr->details->std_err);
 	prolog_msg_ptr->std_out = xstrdup(job_ptr->details->std_out);
@@ -2891,8 +2899,6 @@ extern void launch_prolog(job_record_t *job_ptr)
 	prolog_msg_ptr->spank_job_env = xduparray(job_ptr->spank_job_env_size,
 						  job_ptr->spank_job_env);
 
-	xassert(job_ptr->job_resrcs);
-	job_resrcs_ptr = job_ptr->job_resrcs;
 	memset(&cred_arg, 0, sizeof(slurm_cred_arg_t));
 	cred_arg.step_id.job_id = job_ptr->job_id;
 	cred_arg.step_id.step_id = SLURM_EXTERN_CONT;

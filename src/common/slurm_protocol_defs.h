@@ -992,6 +992,8 @@ typedef struct kill_job_msg {
 	time_t   start_time;	/* time of job start, track job requeue */
 	slurm_step_id_t step_id;
 	time_t   time;		/* slurmctld's time of request */
+	uint32_t nnodes; /* Number of nodes allocated to the job */
+	uint16_t *job_node_cpus; /* Number of CPUs required on the nodes for the job */
 } kill_job_msg_t;
 
 typedef struct reattach_tasks_request_msg {
@@ -1031,6 +1033,7 @@ typedef struct prolog_launch_msg {
 	char *std_err;			/* pathname of stderr */
 	char *std_out;			/* pathname of stdout */
 	uint32_t uid;
+    uint16_t *job_node_cpus; /* Number of CPUs required on the nodes for the job */
 	char *user_name;		/* job's user name */
 	char *work_dir;			/* full pathname of working directory */
 	uint16_t x11;			/* X11 forwarding setup flags */

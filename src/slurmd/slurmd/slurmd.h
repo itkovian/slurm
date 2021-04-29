@@ -69,6 +69,7 @@ typedef struct {
 	uid_t uid;
 	gid_t gid;
 	char *user_name;
+    uint16_t job_node_cpus;  /* Number of CPUs used by the job on this node */
 } job_env_t;
 
 /*

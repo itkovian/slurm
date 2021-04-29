@@ -134,6 +134,8 @@ typedef struct {
 	pthread_mutex_t *timer_mutex;
 } timer_struct_t;
 
+static int  _abort_step(uint32_t job_id, uint32_t step_id);
+static char **_build_env(job_env_t *job_env, bool is_epilog);
 static void _delay_rpc(int host_inx, int host_cnt, int usec_per_rpc);
 static void _free_job_env(job_env_t *env_ptr);
 static bool _is_batch_job_finished(uint32_t job_id);
@@ -1175,7 +1177,6 @@ static int _check_job_credential(launch_tasks_request_msg_t *req,
 		step_cpus = 1;
 		job_cpus  = 1;
 	}
-
 	/* Overwrite any memory limits in the RPC with contents of the
 	 * memory limit within the credential.
 	 * Reset the CPU count on this node to correct value. */
@@ -1200,7 +1201,7 @@ static int _check_job_credential(launch_tasks_request_msg_t *req,
 	} else
 		req->job_mem_lim  = arg.job_mem_limit;
 	req->job_core_spec = arg.job_core_spec;
-	req->node_cpus = step_cpus;
+    req->node_cpus = step_cpus;
 #if 0
 	info("%ps node_id:%d mem orig:%"PRIu64" cpus:%u limit:%"PRIu64"",
 	     &req->step_id, node_id, arg.job_mem_limit,
@@ -2200,9 +2201,35 @@ static int _spawn_prolog_stepd(slurm_msg_t *msg)
 	return rc;
 }
 
+static int _get_node_inx(char *hostlist)
+{
+	char *host;
+	int node_inx = -1;
+	hostset_t hset;
+
+	if (!conf->node_name)
+		return node_inx;
+
+	if ((hset = hostset_create(hostlist))) {
+		int inx = 0;
+		while ((host = hostset_shift(hset))) {
+			if (!strcmp(host, conf->node_name)) {
+				node_inx = inx;
+				free(host);
+				break;
+			}
+			inx++;
+			free(host);
+		}
+		hostset_destroy(hset);
+	}
+	return node_inx;
+}
+
 static void _rpc_prolog(slurm_msg_t *msg)
 {
 	int rc = SLURM_SUCCESS, alt_rc = SLURM_ERROR, node_id = 0;
+    int node_inx = -1;
 	prolog_launch_msg_t *req = (prolog_launch_msg_t *)msg->data;
 	job_env_t job_env;
 	bool     first_job_run;
@@ -2274,6 +2301,10 @@ static void _rpc_prolog(slurm_msg_t *msg)
 #else
 		jobid = req->job_id;
 #endif
+
+        node_inx = _get_node_inx(req->nodes);
+		debug("_rpc_prolog: _get_node_inx returned %d", node_inx);
+        job_env.job_node_cpus = (node_inx >= 0 ? req->job_node_cpus[node_inx] : 0);
 
 		if ((rc = container_g_create(jobid)))
 			error("container_g_create(%u): %m", req->job_id);
@@ -4727,7 +4758,7 @@ static int _epilog_complete(uint32_t jobid, int rc)
 		error("Unable to send epilog complete message: %m");
 		return SLURM_ERROR;
 	}
-	
+
 	debug("JobId=%u: sent epilog complete msg: rc = %d", jobid, rc);
 
 	return SLURM_SUCCESS;
@@ -5112,6 +5143,7 @@ _rpc_terminate_job(slurm_msg_t *msg)
 	int             nsteps = 0;
 	int		delay;
 	int		node_id = 0;
+	int node_inx = -1;
 	job_env_t       job_env;
 	uint32_t        jobid;
 
@@ -5331,6 +5363,10 @@ _rpc_terminate_job(slurm_msg_t *msg)
 	job_env.spank_job_env_size = req->spank_job_env_size;
 	job_env.uid = req->job_uid;
 	job_env.gid = req->job_gid;
+
+    node_inx = _get_node_inx(req->nodes);
+    job_env.job_node_cpus = (node_inx >= 0 ? req->job_node_cpus[node_inx] : 0);
+    debug2("Setting job_env.job_cpu_nodes to %d", job_env.job_node_cpus);
 
 	rc = _run_epilog(&job_env);
 	_free_job_env(&job_env);
