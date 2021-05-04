@@ -617,7 +617,7 @@ rm -rf %{buildroot}
 
 %files libpmi
 %defattr(-,root,root)
-%if %{with cray} || %{with cray_shasta}
+%if %{with cray} || %{with cray_shasta} || %{with pmix}
 %{_libdir}/slurmpmi/*
 %else
 %{_libdir}/libpmi*
