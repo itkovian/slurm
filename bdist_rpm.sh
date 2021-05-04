@@ -67,6 +67,7 @@ echo "BUILDING NON GPU VERSION"
 # TODO: what if more than one cuda is available/installed, then the * thingies will probably not work
 # pmix-3 as rebuild from github src.rpm includes the devel rpms in the rpm
 sudo yum remove -y nvidia-driver-devel cuda-nvml-dev-10-2 nvidia-driver-NVML cuda-nvml-dev-10-1
+sudo yum remove -y nvidia-driver-devel nvidia-driver-NVML cuda-nvml-devel-11-3-11.3.58-1.x86_64
 
 
 rpmbuild --define "gittag ${GITTAG}" --define "_topdir $PWD" --with pmix --with numa --with hwloc --with mysql --with x11 --with ucx --define "gpu .nogpu" -ba SPECS/slurm.spec
