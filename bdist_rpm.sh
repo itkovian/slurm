@@ -44,6 +44,7 @@ sudo yum install -y ucx-devel "pmix-devel > 3.0.0" numactl-devel hwloc-devel
 sudo yum remove -y cuda-nvml-dev-10-1 cuda-nvml-dev-10-2
 sudo yum install -y nvidia-driver-devel nvidia-driver-NVML cuda-nvml-devel-11-3-11.3.58-1.x86_64
 
+
 # glob expansion in list
 nvmls=(/usr/local/cuda*/targets/x86_64-linux/include)
 if [ "${#nvmls[@]}" -ne 1 ]; then
