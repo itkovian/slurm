@@ -1,5 +1,5 @@
 Name:		slurm
-Version:	20.11.5
+Version:	20.11.6
 %define rel	1
 Release:        %{rel}.%{gittag}%{?dist}%{?gpu}.ug
 Summary:	Slurm Workload Manager
@@ -132,7 +132,11 @@ BuildRequires: numactl-devel
 %endif
 
 %if %{with pmix} && "%{_with_pmix}" == "--with-pmix"
+%if 0%{?fedora} || 0%{?rhel} > 7
+BuildRequires: pmix-pmi-devel
+%else
 BuildRequires: pmix
+%endif
 %global pmix_version %(rpm -q pmix --qf "%%{VERSION}")
 %endif
 
@@ -227,7 +231,11 @@ Summary: Slurm compute node daemon
 Group: System Environment/Base
 Requires: %{name}%{?_isa} = %{version}-%{release}
 %if %{with pmix} && "%{_with_pmix}" == "--with-pmix"
+%if 0%{?fedora} || 0%{?rhel} > 7
+Requires: pmix-pmi = %{pmix_version}
+%else
 Requires: pmix = %{pmix_version}
+%endif
 %endif
 %if %{with ucx} && "%{_with_ucx}" == "--with-ucx"
 Requires: ucx = %{ucx_version}
@@ -368,7 +376,7 @@ export QA_RPATHS=0x5
 # Strip out some dependencies
 
 cat > find-requires.sh <<'EOF'
-exec %{__find_requires} "$@" | egrep -v '^libpmix.so|libevent|libnvidia-ml'
+exec %{__find_requires} "$@" | egrep -v '^libpmix.so|libevent'
 EOF
 chmod +x find-requires.sh
 %global _use_internal_dependency_generator 0
@@ -384,6 +392,13 @@ install -D -m644 etc/slurmdbd.service  %{buildroot}/%{_unitdir}/slurmdbd.service
 
 %if %{with slurmrestd}
 install -D -m644 etc/slurmrestd.service  %{buildroot}/%{_unitdir}/slurmrestd.service
+%endif
+
+# in case of pmix, no conflict with pmix compat libs
+# see Cray comment below
+%if %{with pmix}
+   mkdir %{buildroot}/%{_libdir}/slurmpmi
+   mv %{buildroot}/%{_libdir}/libpmi* %{buildroot}/%{_libdir}/slurmpmi
 %endif
 
 # Do not package Slurm's version of libpmi on Cray systems in the usual location.
@@ -602,7 +617,7 @@ rm -rf %{buildroot}
 
 %files libpmi
 %defattr(-,root,root)
-%if %{with cray} || %{with cray_shasta}
+%if %{with cray} || %{with cray_shasta} || %{with pmix}
 %{_libdir}/slurmpmi/*
 %else
 %{_libdir}/libpmi*
