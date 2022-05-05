@@ -417,6 +417,7 @@ extern void deallocate_nodes(job_record_t *job_ptr, bool timeout,
 	}
 
 	agent_args->msg_args = kill_job;
+	set_agent_arg_r_uid(agent_args, SLURM_AUTH_UID_ANY);
 	agent_queue_request(agent_args);
 	return;
 }
@@ -2967,6 +2968,7 @@ extern void launch_prolog(job_record_t *job_ptr)
 	}
 
 	/* Launch the RPC via agent */
+	set_agent_arg_r_uid(agent_arg_ptr, SLURM_AUTH_UID_ANY);
 	agent_queue_request(agent_arg_ptr);
 }
 
@@ -4297,6 +4299,7 @@ extern void re_kill_job(job_record_t *job_ptr)
 	last_job_id = job_ptr->job_id;
 	hostlist_destroy(kill_hostlist);
 	agent_args->msg_args = kill_job;
+	set_agent_arg_r_uid(agent_args, SLURM_AUTH_UID_ANY);
 	agent_queue_request(agent_args);
 	return;
 }
