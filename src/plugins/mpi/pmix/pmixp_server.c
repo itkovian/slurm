@@ -500,8 +500,8 @@ static int _auth_cred_create(Buf buf)
 	void *auth_cred = NULL;
 	int rc = SLURM_SUCCESS;
 
-	auth_cred = g_slurm_auth_create(AUTH_DEFAULT_INDEX,
-					slurm_conf.authinfo);
+	auth_cred = g_slurm_auth_create(AUTH_DEFAULT_INDEX, slurm_conf.authinfo,
+					slurm_conf.slurmd_user_id, NULL, 0);
 	if (!auth_cred) {
 		PMIXP_ERROR("Creating authentication credential: %m");
 		return errno;
@@ -537,8 +537,16 @@ static int _auth_cred_verify(Buf buf)
 
 	rc = g_slurm_auth_verify(auth_cred, slurm_conf.authinfo);
 
-	if (rc)
+	if (rc) {
 		PMIXP_ERROR("Verifying authentication credential: %m");
+	} else {
+		uid_t auth_uid;
+		auth_uid = g_slurm_auth_get_uid(auth_cred);
+		if (auth_uid != slurm_conf.slurmd_user_id) {
+			PMIXP_ERROR("Credential from uid %u", auth_uid);
+			rc = SLURM_ERROR;
+		}
+	}
 	g_slurm_auth_destroy(auth_cred);
 	return rc;
 }
