@@ -31,7 +31,8 @@ fi
 
 # TODO? also, specify python2 as python to require
 
-sudo yum install -y ucx-devel "pmix-devel > 3.0.0" numactl-devel hwloc-devel
+# commenting this out since it tries to update things :/ 
+# sudo yum install -y ucx-devel "pmix-devel > 3.0.0" numactl-devel hwloc-devel
 
 # there's no option to pass nvml, it is only autodetected
 # nvidia-driver-devel provides the libnividia-ml.so symlnk, the real .so.1 comes from nvidia-driver-NVML
