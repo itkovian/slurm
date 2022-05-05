@@ -30,19 +30,18 @@
 ############################################################################
 source ./globals
 
-set file_in      "test$test_id.input"
+set file_in      "$test_dir/input"
 set job_cnt      10
 set delay        10
-set job_name     "test$test_id"
+set job_name     $test_name
 set sleep_time   300
 set task_cnt     60
-set jobs_list    [list]
+set job_list    [list]
 
 proc cleanup {} {
-	global bin_rm file_in jobs_list
+	global job_list
 
-	exec $bin_rm -f $file_in
-	cancel_job $jobs_list
+	cancel_job $job_list
 }
 
 if {![param_contains [get_config_param "SelectTypeParameters"] "CR_*MEMORY"]} {
@@ -80,13 +79,12 @@ $srun -N1 -n1 --mem=0 --overlap $bin_sleep $sleep_time
 #
 # Initiate $job_cnt batch jobs
 #
-set start_cnt 0
 set timeout 30
 for {set inx 0} {$inx < $job_cnt} {incr inx} {
 	set job_id [submit_job -fail "--gres=craynetwork:0 --job-name=$job_name --mem-per-cpu=[expr $mem_per_step * 10] --output=/dev/null --error=/dev/null -t5 $file_in"]
-	lappend jobs_list $job_id
+	lappend job_list $job_id
 }
-log_debug "All $start_cnt jobs submitted"
+log_debug "All $job_cnt jobs submitted"
 
 # Wait for at least $job_cnt jobs to be started
 # Because we want an external variable set with the match count, it is
@@ -115,7 +113,7 @@ set desired_tasks [expr $task_cnt * 2 / 3]
 
 # We want to see a decent number of steps running
 if [
-	wait_for -timeout $delay {$step_count >= $desired_tasks} {
+	wait_for {$step_count >= $desired_tasks} {
 		set step_count [
 			regexp -all sleep [
 				run_command_output -fail "$squeue --steps --name $job_name"

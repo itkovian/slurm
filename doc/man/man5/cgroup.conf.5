@@ -1,4 +1,4 @@
-.TH "cgroup.conf" "5" "Slurm Configuration File" "April 2021" "Slurm Configuration File"
+.TH "cgroup.conf" "5" "Slurm Configuration File" "June 2021" "Slurm Configuration File"
 
 .SH "NAME"
 cgroup.conf \- Slurm configuration file for the cgroup support
@@ -20,7 +20,7 @@ Slurm daemons, daemon receipt of the SIGHUP signal, or execution
 of the command "scontrol reconfigure" unless otherwise noted.
 
 .LP
-For general Slurm Cgroups information, see the Cgroups Guide at
+For general Slurm cgroups information, see the Cgroups Guide at
 <https://slurm.schedmd.com/cgroups.html>.
 
 .LP
@@ -62,7 +62,7 @@ The percentage supplied may be expressed as floating point number, e.g. 101.5.
 Sets the cgroup soft memory limit at the allocated memory size and then sets the
 job/step hard memory limit at the (AllowedRAMSpace/100) * allocated memory. If
 the job/step exceeds the hard limit, then it might trigger Out Of Memory (OOM)
-events (including oom-kill) which will be logged to kernel log ringbuffer
+events (including oom-kill) which will be logged to kernel log ring buffer
 (dmesg in Linux). Setting AllowedRAMSpace above 100 may cause system Out of
 Memory (OOM) events as it allows job/step to allocate more memory than
 configured to the nodes.  Reducing configured node available memory to avoid
@@ -191,7 +191,15 @@ is immediately killed due to lack of RAM. The default limit is 30M.
 If configured to "yes" then set a default task affinity to bind each step
 task to a subset of the allocated cores using \fBsched_setaffinity\fP.
 The default value is "no".
-Note: This feature requires the Portable Hardware Locality (hwloc) library
+
+\fBNOTE\fR: The recommended configuration to bind steps to tasks is to set
+\fBTaskPlugin=task/affinity,task/cgroup\fR in the slurm.conf and set
+\fBTaskAffinity=no\fR with \fBConstrainCores=yes\fR in the cgroup.conf.
+This setup uses the \fBtask/affinity\fR plugin for setting the affinity of the
+tasks and uses the \fBtask/cgroup\fR plugin to fence tasks into the specified
+resources, combining the best of both pieces.
+
+\fBNOTE\fR: This feature requires the Portable Hardware Locality (hwloc) library
 to be installed.
 
 .SH "DISTRIBUTION\-SPECIFIC NOTES"
@@ -209,7 +217,7 @@ after updating the file.
 .TP
 \fB/etc/slurm/cgroup.conf\fR:
 This example cgroup.conf file shows a configuration that enables the more
-commonly used cgroup enforcment mechanisms.
+commonly used cgroup enforcement mechanisms.
 
 .nf
 ###
