@@ -167,6 +167,9 @@ static char **_build_env(job_env_t *job_env, slurm_cred_t *cred,
 	else
 		setenvf(&env, "SLURM_SCRIPT_CONTEXT", "prolog_slurmd");
 
+    setenvf(&env, "SLURM_JOB_NODE_CPUS", "%d", job_env->job_node_cpus);
+    setenvf(&env, "SLURM_ACTUAL_NODE_CPUS", "%d", conf->actual_cpus); 
+
 	if (cred) {
 		slurm_cred_arg_t cred_arg;
 		slurm_cred_get_args(cred, &cred_arg);
