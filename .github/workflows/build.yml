@@ -2,9 +2,9 @@ name: slurm C/C++ build
 
 on:
   push:
-    branches: [ 20.11.ug ]
+    branches: [ 20.11.ug, 22.05.ug ]
   pull_request:
-    branches: [ 20.11.ug ]
+    branches: [ 20.11.ug, 22.05.ug ]
 
 jobs:
   build:
