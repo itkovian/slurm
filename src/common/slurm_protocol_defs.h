@@ -1025,8 +1025,8 @@ typedef struct kill_job_msg {
 	slurm_step_id_t step_id;
 	time_t   time;		/* slurmctld's time of request */
 	char *work_dir;
-	uint32_t nnodes; /* Number of nodes allocated to the job */
-	uint16_t *job_node_cpus; /* Number of CPUs required on the nodes for the job */
+    uint32_t nnodes; /* Number of nodes allocated to the job */
+    uint16_t *job_node_cpus; /* Number of CPUs required on the nodes for the job */
 } kill_job_msg_t;
 
 typedef struct reattach_tasks_request_msg {
