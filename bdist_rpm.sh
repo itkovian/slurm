@@ -41,6 +41,8 @@ else
     sudo yum install -y ucx-devel-1.9.0-1.el8.x86_64 "pmix-devel > 3.0.0" numactl-devel pmix-pmi-devel hwloc-devel-0:1.11.9-3.el8.x86_64
 fi
 
+sudo yum install munge-devel mysql-devel pam-devel readline-devel
+
 # there's no option to pass nvml, it is only autodetected
 # nvidia-driver-devel provides the libnividia-ml.so symlnk, the real .so.1 comes from nvidia-driver-NVML
 # cuda-nvml-dev provides the nvml.h (put is part of the cuda rpms so has cud version in the name, hence the *)
