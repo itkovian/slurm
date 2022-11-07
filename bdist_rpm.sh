@@ -49,19 +49,19 @@ fi
 
 # TODO: what if more than one cuda is available/installed, then the * thingies will probably not work
 # pmix-3 as rebuild from github src.rpm includes the devel rpms in the rpm
-sudo yum remove -y cuda-nvml-dev-10-1 cuda-nvml-dev-10-2 cuda-nvml-devel-11-6
-sudo yum install -y nvidia-driver-devel nvidia-driver-NVML cuda-nvml-devel-11-6
+#sudo yum remove -y cuda-nvml-dev-10-1 cuda-nvml-dev-10-2 cuda-nvml-devel-11-6
+#sudo yum install -y nvidia-driver-devel nvidia-driver-NVML cuda-nvml-devel-11-6
 
 
 # glob expansion in list
-nvmls=(/usr/local/cuda*/targets/x86_64-linux/include)
-if [ "${#nvmls[@]}" -ne 1 ]; then
-    echo "0 or more than one nvml.h found: ${nvmls[@]}. Unsupported."
-    exit 1
-fi
-echo "nvml.h found in $nvmls[0]"
+#nvmls=(/usr/local/cuda*/targets/x86_64-linux/include)
+#if [ "${#nvmls[@]}" -ne 1 ]; then
+    #echo "0 or more than one nvml.h found: ${nvmls[@]}. Unsupported."
+    #exit 1
+#fi
+#echo "nvml.h found in $nvmls[0]"
 
-rpmbuild --define "gittag ${GITTAG}" --define "_topdir $PWD" --with numa --with pmix --with hwloc --with mysql --with x11 --with ucx -ba SPECS/slurm.spec --define "_configure ./configure CPATH=${nvmls[0]}" --define "_smp_mflags CPATH=${nvmls[0]}"
+#rpmbuild --define "gittag ${GITTAG}" --define "_topdir $PWD" --with numa --with pmix --with hwloc --with mysql --with x11 --with ucx -ba SPECS/slurm.spec --define "_configure ./configure CPATH=${nvmls[0]}" --define "_smp_mflags CPATH=${nvmls[0]}"
 
 
 echo "BUILDING NON GPU VERSION"
