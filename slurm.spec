@@ -239,9 +239,9 @@ Summary: Slurm compute node daemon
 Group: System Environment/Base
 Requires: %{name}%{?_isa} = %{version}-%{release}
 %if %{with pmix} && "%{_with_pmix}" == "--with-pmix"
-+%if 0%{?fedora} || 0%{?rhel} > 7
-+Requires: pmix-pmi = %{pmix_version}
-+%else
+%if 0%{?fedora} || 0%{?rhel} > 7
+Requires: pmix-pmi = %{pmix_version}
+%else
 Requires: pmix = %{pmix_version}
 %endif
 %endif
@@ -264,7 +264,7 @@ database changes to slurmctld daemons on each cluster
 Summary: Slurm\'s implementation of the pmi libraries
 Group: System Environment/Base
 Requires: %{name}%{?_isa} = %{version}-%{release}
-+%if ! %{with pmix}
+%if ! %{with pmix}
 Conflicts: pmix-libpmi
 %endif
 %description libpmi
