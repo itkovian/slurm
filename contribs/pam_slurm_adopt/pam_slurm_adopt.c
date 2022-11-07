@@ -769,7 +769,7 @@ PAM_EXTERN int _adopt_and_or_check(pam_handle_t *pamh, int flags
 	step_loc_t *stepd = NULL;
 	struct passwd pwd, *pwd_result;
 	char *buf = NULL;
-	slurm_cgroup_conf_t *cg_conf;
+	cgroup_conf_t *cg_conf;
 
 	_init_opts();
 	_parse_opts(pamh, argc, argv);
