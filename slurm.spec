@@ -413,7 +413,7 @@ install -D -m644 etc/slurmrestd.service  %{buildroot}/%{_unitdir}/slurmrestd.ser
 # Do not package Slurm's version of libpmi on Cray systems in the usual location.
 # Cray's version of libpmi should be used. Move it elsewhere if the site still
 # wants to use it with other MPI stacks.
-%if %{with cray} || %{with cray_shasta} || %{with pmix}
+%if %{with cray} || %{with cray_shasta}
    mkdir %{buildroot}/%{_libdir}/slurmpmi
    mv %{buildroot}/%{_libdir}/libpmi* %{buildroot}/%{_libdir}/slurmpmi
 %endif
@@ -625,7 +625,7 @@ rm -rf %{buildroot}
 
 %files libpmi
 %defattr(-,root,root)
-%if %{with cray} || %{with cray_shasta}
+%if %{with cray} || %{with cray_shasta} || %{with pmix}
 %{_libdir}/slurmpmi/*
 %else
 %{_libdir}/libpmi*
