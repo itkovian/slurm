@@ -340,10 +340,6 @@ extern void deallocate_nodes(job_record_t *job_ptr, bool timeout,
 	if (!job_ptr->details->prolog_running)
 		hostlist = hostlist_create(NULL);
 
-	// XXX: verify
-	job_resrcs_ptr = job_ptr->job_resrcs;
-    kill_job->nnodes = job_resrcs_ptr->nhosts;
-	kill_job->job_node_cpus = job_resrcs_ptr->cpus;
 
 #ifdef HAVE_FRONT_END
 	if (job_ptr->batch_host &&
@@ -507,8 +503,13 @@ extern void deallocate_nodes(job_record_t *job_ptr, bool timeout,
 	agent_args->node_count = node_count;
 
 	last_node_update = time(NULL);
-	kill_job = create_kill_job_msg(job_ptr, use_protocol_version);
+    kill_job = create_kill_job_msg(job_ptr, use_protocol_version);
 	kill_job->nodes = xstrdup(job_ptr->nodes);
+
+	// XXX: verify
+	job_resrcs_ptr = job_ptr->job_resrcs;
+    kill_job->nnodes = job_resrcs_ptr->nhosts;
+	kill_job->job_node_cpus = job_resrcs_ptr->cpus;
 
 	agent_args->msg_args = kill_job;
 	set_agent_arg_r_uid(agent_args, SLURM_AUTH_UID_ANY);
