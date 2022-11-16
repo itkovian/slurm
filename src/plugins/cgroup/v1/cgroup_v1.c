@@ -982,29 +982,38 @@ extern int cgroup_p_constrain_set(cgroup_ctl_type_t sub, cgroup_level_t level,
 
 		if (level == CG_LEVEL_JOB ||
 		    level ==  CG_LEVEL_STEP) {
-			if (common_cgroup_set_uint64_param(
-				    &int_cg[sub][level],
-				    "memory.soft_limit_in_bytes",
-				    limits->soft_limit_in_bytes)
-			    != SLURM_SUCCESS)
-				rc = SLURM_ERROR;
-
-			if (limits->kmem_limit_in_bytes != NO_VAL64)
-				if (common_cgroup_set_uint64_param(
-					    &int_cg[sub][level],
-					    "memory.kmem.limit_in_bytes",
-					    limits->kmem_limit_in_bytes)
-				    != SLURM_SUCCESS)
-					rc = SLURM_ERROR;
 
 			if (limits->memsw_limit_in_bytes != NO_VAL64)
 				if (common_cgroup_set_uint64_param(
 					    &int_cg[sub][level],
 					    "memory.memsw.limit_in_bytes",
 					    limits->memsw_limit_in_bytes)
-				    != SLURM_SUCCESS)
+				    != SLURM_SUCCESS) {
 					rc = SLURM_ERROR;
+					break;
+			}
+
+			if (common_cgroup_set_uint64_param(
+				    &int_cg[sub][level],
+				    "memory.soft_limit_in_bytes",
+				    limits->soft_limit_in_bytes)
+			    != SLURM_SUCCESS) {
+				rc = SLURM_ERROR;
+				break;
+			}
+
+			if (limits->kmem_limit_in_bytes != NO_VAL64)
+				if (common_cgroup_set_uint64_param(
+					    &int_cg[sub][level],
+					    "memory.kmem.limit_in_bytes",
+					    limits->kmem_limit_in_bytes)
+				    != SLURM_SUCCESS) {
+					rc = SLURM_ERROR;
+					break;
+				}
+
 		}
+
 		if (level == CG_LEVEL_JOB ||
 		    level ==  CG_LEVEL_STEP ||
 		    level == CG_LEVEL_SYSTEM) {
@@ -1014,7 +1023,9 @@ extern int cgroup_p_constrain_set(cgroup_ctl_type_t sub, cgroup_level_t level,
 				    limits->limit_in_bytes)
 			    != SLURM_SUCCESS)
 				rc = SLURM_ERROR;
+				break;
 		}
+
 		break;
 	case CG_DEVICES:
 		dev_str = gres_device_id2str(&limits->device);
