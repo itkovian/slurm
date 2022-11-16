@@ -981,17 +981,6 @@ extern int cgroup_p_constrain_set(cgroup_ctl_type_t sub, cgroup_level_t level,
 		}
 
 		if (level == CG_LEVEL_JOB ||
-		    level ==  CG_LEVEL_STEP ||
-		    level == CG_LEVEL_SYSTEM) {
-			if (common_cgroup_set_uint64_param(
-				    &int_cg[sub][level],
-				    "memory.limit_in_bytes",
-				    limits->limit_in_bytes)
-			    != SLURM_SUCCESS)
-				rc = SLURM_ERROR;
-		}
-
-		if (level == CG_LEVEL_JOB ||
 		    level ==  CG_LEVEL_STEP) {
 			if (common_cgroup_set_uint64_param(
 				    &int_cg[sub][level],
@@ -1015,6 +1004,16 @@ extern int cgroup_p_constrain_set(cgroup_ctl_type_t sub, cgroup_level_t level,
 					    limits->memsw_limit_in_bytes)
 				    != SLURM_SUCCESS)
 					rc = SLURM_ERROR;
+		}
+		if (level == CG_LEVEL_JOB ||
+		    level ==  CG_LEVEL_STEP ||
+		    level == CG_LEVEL_SYSTEM) {
+			if (common_cgroup_set_uint64_param(
+				    &int_cg[sub][level],
+				    "memory.limit_in_bytes",
+				    limits->limit_in_bytes)
+			    != SLURM_SUCCESS)
+				rc = SLURM_ERROR;
 		}
 		break;
 	case CG_DEVICES:
