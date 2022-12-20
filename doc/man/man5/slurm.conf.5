@@ -1,4 +1,4 @@
-.TH "slurm.conf" "5" "Slurm Configuration File" "October 2022" "Slurm Configuration File"
+.TH "slurm.conf" "5" "Slurm Configuration File" "December 2022" "Slurm Configuration File"
 
 .SH "NAME"
 slurm.conf \- Slurm configuration file
@@ -4263,9 +4263,9 @@ Enable the use of scrontab to submit and manage periodic repeating jobs.
 .TP
 \fBSelectType\fR
 Identifies the type of resource selection algorithm to be used.
-A restart of slurmctld is required for changes to this parameter to take effect.
-When changed, all job information (running and pending) will be lost,
-since the job state save format used by each plugin is different.
+A restart of slurmctld and slurmd is required for changes to this parameter to
+take effect. When changed, all job information (running and pending) will be
+lost, since the job state save format used by each plugin is different.
 The only exception to this is when changing from cons_res to cons_tres or from
 cons_tres to cons_res. However, if a job contains cons_tres\-specific features
 and then SelectType is changed to cons_res, the job will be canceled, since
@@ -6993,8 +6993,10 @@ power save mode by \fBSuspendProgram\fR.
 For nodes that are in multiple partitions with this option set,
 the highest time will take effect. If not set on any partition, the node will
 use the \fBSuspendTime\fR value set for the entire cluster.
-Setting \fBSuspendTime\fR to anything but "INFINITE" will enable power save
-mode.
+Setting \fBSuspendTime\fR to INFINITE will disable suspending of nodes in this
+partition.
+Setting \fBSuspendTime\fR to anything but INFINITE (or \-1) will enable power
+save mode.
 .IP
 
 .TP
@@ -7503,7 +7505,8 @@ A distinct file must exist on each compute node.
 
 .TP
 \fBSlurmdSpoolDir\fR
-Must be writable by user root.
+Must be writable by user root. Permissions must be set to 755 so that
+job scripts can be executed from this directory.
 A distinct file must exist on each compute node.
 .IP
 
