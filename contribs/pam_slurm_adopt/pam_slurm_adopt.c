@@ -768,7 +768,6 @@ PAM_EXTERN int _adopt_and_or_check(pam_handle_t *pamh, int flags
 	step_loc_t *stepd = NULL;
 	struct passwd pwd, *pwd_result;
 	char *buf = NULL;
-	cgroup_conf_t *cg_conf;
 
 	_init_opts();
 	_parse_opts(pamh, argc, argv);
@@ -799,9 +798,6 @@ PAM_EXTERN int _adopt_and_or_check(pam_handle_t *pamh, int flags
 	if (user_name == NULL || retval != PAM_SUCCESS)  {
 		pam_syslog(pamh, LOG_ERR, "No username in PAM_USER? Fail!");
 		return PAM_SESSION_ERR;
-	}
-	if (opts.action_adopt==CALLERID_ACTION_ADOPT_AND_CHECK ){
-	   cg_conf = xcgroup_get_slurm_cgroup_conf();
 	}
 
 	/* Check for an unsafe config that might lock out root. This is a very
