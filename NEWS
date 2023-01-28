@@ -1,6 +1,29 @@
 This file describes changes in recent versions of Slurm. It primarily
 documents those changes that are of interest to users and administrators.
 
+* Changes in Slurm 22.05.8
+==========================
+ -- Fix potential deadlock at slurmctld startup when job has invalid qos.
+ -- Avoid unnecessary call to clusteracct_storage_g_cluster_tres() when pinging
+    dynamic nodes. This avoids significant slowdowns for slurmctld when
+    ping_nodes() calls all nodes to re-register.
+ -- openapi/dbv0.0.3[6-8] - fix segfault that could arrise from Slurm database
+    connnection failing.
+ -- Fix regression introduced in 22.05.0rc1 when updating a NodeName=<nodelist>
+    with NodeAddr and/or NodeHostname if the specified nodelist wasn't sorted.
+ -- openapi/v0.0.38 - change type of nice field for job submissions to integer
+    from string.
+ -- openapi/v0.0.38 - add oversubscribe option to job submission properties.
+ -- openapi/v0.0.38 - fix incorrect data used to populate "time/start" field
+    for jobs.
+ -- openapi/dbv0.0.38 - avoid dumping failure if preempt qos with level 0 is
+    provided by slurmdbd query.
+ -- Avoid an fd leak when lib dir for sbcast fails to be created.
+ -- common/slurmdbd_pack - fix env and script hash when unpacking a 21.08
+    dbd_job_start_msg_t.
+ -- Fix a race between job_container/tmpfs, cncu, x11 setup and adoption of pids
+    in cray with pam_slurm_adopt.
+
 * Changes in Slurm 22.05.7
 ==========================
  -- Fix slurmctlds in a federation not recovering a lost connection until a

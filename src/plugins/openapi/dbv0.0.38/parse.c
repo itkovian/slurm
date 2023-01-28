@@ -343,7 +343,7 @@ static const parser_t parse_job[] = {
 	_add_parse(UINT32, resvid, "reservation/id"),
 	_add_parse(UINT32, resv_name, "reservation/name"),
 	/* skipping show_full */
-	_add_parse(UINT32, eligible, "time/start"),
+	_add_parse(UINT32, start, "time/start"),
 	_add_parse(JOB_STATE, state, "state/current"),
 	_add_parse(JOB_REASON, state_reason_prev, "state/reason"),
 	_add_parse(UINT32, submit, "time/submission"),
@@ -1415,8 +1415,13 @@ static int _dump_qos_preempt_list(const parser_t *const parse, void *obj,
 	if (!*preempt_bitstr)
 		return SLURM_SUCCESS;
 
+	if (bit_ffs(*preempt_bitstr) == -1) {
+		/* ignore if there are no bits set */
+		return SLURM_SUCCESS;
+	}
+
 	/* based on get_qos_complete_str_bitstr() */
-	for (int i = 0; (i < bit_size(*preempt_bitstr)); i++) {
+	for (int i = 1; (i < bit_size(*preempt_bitstr)); i++) {
 		slurmdb_qos_rec_t *ptr_qos;
 
 		if (!bit_test(*preempt_bitstr, i))
