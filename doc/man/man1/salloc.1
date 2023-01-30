@@ -1,4 +1,4 @@
-.TH salloc "1" "Slurm Commands" "September 2022" "Slurm Commands"
+.TH salloc "1" "Slurm Commands" "December 2022" "Slurm Commands"
 
 .SH "NAME"
 salloc \- Obtain a Slurm job allocation (a set of nodes), execute a command,
@@ -348,6 +348,9 @@ If a value of zero is designated and the Slurm configuration option
 AllowSpecResourcesUsage is enabled, the job will be allowed to override
 CoreSpecCount and use the specialized resources on nodes it is allocated.
 This option can not be used with the \fB\-\-thread\-spec\fR option.
+
+\fBNOTE\fR: Explicitly setting a job's specialized core value implicitly sets
+its --exclusive option, reserving entire nodes for the job.
 .IP
 
 .TP
@@ -546,7 +549,17 @@ satisfied completed.
 <\fItype:job_id[:job_id][?type:job_id[:job_id]]\fR>.
 All dependencies must be satisfied if the "," separator is used.
 Any dependency may be satisfied if the "?" separator is used.
-Only one separator may be used.
+Only one separator may be used. For instance:
+.nf
+-d afterok:20:21,afterany:23
+.fi
+means that the job can run only after a 0 return code of jobs 20 and 21
+AND completion of job 23. However:
+.nf
+-d afterok:20:21?afterany:23
+.fi
+means that any of the conditions (afterok:20 OR afterok:21 OR afterany:23)
+will be enough to release the job.
 Many jobs can share the same dependency and these jobs may even belong to
 different  users. The  value may be changed after job submission using the
 scontrol command.
@@ -568,6 +581,7 @@ start or cancellation.
 .TP
 \fBafterany:job_id[:jobid...]\fR
 This job can begin execution after the specified jobs have terminated.
+This is the default dependency type.
 .IP
 
 .TP
@@ -890,12 +904,11 @@ all GPUs in that NUMA environment).
 \fBmap_gpu:<list>\fR
 Bind by setting GPU masks on tasks (or ranks) as specified where <list> is
 <gpu_id_for_task_0>,<gpu_id_for_task_1>,... GPU IDs are interpreted as decimal
-values unless they are preceded with '0x' in which case they interpreted as
-hexadecimal values. If the number of tasks (or ranks) exceeds the number of
-elements in this list, elements in the list will be reused as needed starting
-from the beginning of the list. To simplify support for large task counts,
-the lists may follow a map with an asterisk and repetition count.
-For example "map_gpu:0*4,1*4".
+values.
+If the number of tasks (or ranks) exceeds the number of elements in this list,
+elements in the list will be reused as needed starting from the beginning of the
+list. To simplify support for large task counts, the lists may follow a map with
+an asterisk and repetition count. For example "map_gpu:0*4,1*4".
 If the task/cgroup plugin is used and ConstrainDevices is set in cgroup.conf,
 then the GPU IDs are zero\-based indexes relative to the GPUs allocated to the
 job (e.g. the first GPU is 0, even if the global ID is 3). Otherwise, the GPU
@@ -1518,12 +1531,15 @@ Silence salloc's use of the terminal bell. Also see the option \fB\-\-bell\fR.
 \fB\-k\fR, \fB\-\-no\-kill\fR[=off]
 Do not automatically terminate a job if one of the nodes it has been
 allocated fails.  The user will assume the responsibilities for fault\-tolerance
-should a node fail.  When there is a node failure, any active job steps (usually
-MPI jobs) on that node will almost certainly suffer a fatal error, but with
-\fB\-\-no\-kill\fR, the job allocation will not be revoked so the user may
-launch new job steps on the remaining nodes in their allocation.
+should a node fail.
+The job allocation will not be revoked so the user may launch new
+job steps on the remaining nodes in their allocation.
+This option does not set the \fBSLURM_NO_KILL\fR environment variable.
+Therefore, when a node fails, steps running on that node will be killed unless
+the \fBSLURM_NO_KILL\fR environment variable was explicitly set or srun calls
+within the job allocation explicitly requested \-\-no\-kill.
 
-Specify an optional argument of "off" disable the effect of the
+Specify an optional argument of "off" to disable the effect of the
 \fBSALLOC_NO_KILL\fR environment variable.
 
 By default Slurm terminates the entire job allocation if any node fails in its
@@ -1877,6 +1893,9 @@ Count of specialized threads per node reserved by the job for system operations
 and not used by the application. The application will not use these threads,
 but will be charged for their allocation.
 This option can not be used with the \fB\-\-core\-spec\fR option.
+
+\fBNOTE\fR: Explicitly setting a job's specialized thread value implicitly sets
+its --exclusive option, reserving entire nodes for the job.
 .IP
 
 .TP
@@ -2531,6 +2550,11 @@ Set to \fB1\fR if \fB\-\-overcommit\fR was specified.
 .TP
 \fBSLURM_PROFILE\fR
 Same as \fB\-\-profile\fR
+.IP
+
+.TP
+\fBSLURM_SHARDS_ON_NODE\fR
+Number of GPU Shards available to the step on this node.
 .IP
 
 .TP

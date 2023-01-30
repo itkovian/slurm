@@ -542,26 +542,6 @@ static avail_res_t *_allocate_sc(job_record_t *job_ptr, bitstr_t *core_map,
 	    !job_ptr->cpus_per_tres)
 		num_tasks = MIN(num_tasks, details_ptr->ntasks_per_node);
 
-	if (cpus_per_task < 2) {
-		avail_cpus = num_tasks;
-	} else if ((ntasks_per_core == 1) &&
-		   (cpus_per_task > threads_per_core)) {
-		/* find out how many cores a task will use */
-		int task_cores = (cpus_per_task + threads_per_core - 1) /
-			threads_per_core;
-		int task_cpus  = task_cores * threads_per_core;
-		/* find out how many tasks can fit on a node */
-		int tasks = avail_cpus / task_cpus;
-		/* how many cpus the job would use on the node */
-		avail_cpus = tasks * task_cpus;
-		/* subtract out the extra cpus. */
-		avail_cpus -= (tasks * (task_cpus - cpus_per_task));
-	} else {
-		j = avail_cpus / cpus_per_task;
-		num_tasks = MIN(num_tasks, j);
-		avail_cpus = num_tasks * cpus_per_task;
-	}
-
 	/*
 	 * If there's an auto adjustment then use the max between the required
 	 * CPUs according to required task number, or to the autoadjustment.
@@ -1759,7 +1739,7 @@ extern int select_p_select_nodeinfo_set_all(void)
 	part_res_record_t *p_ptr;
 	node_record_t *node_ptr = NULL;
 	int i, n;
-	uint32_t alloc_cpus, alloc_cores, total_node_cores;
+	uint32_t alloc_cpus, alloc_cores, total_node_cores, efctv_node_cores;
 	bitstr_t **alloc_core_bitmap = NULL;
 	List gres_list;
 
@@ -1832,13 +1812,23 @@ extern int select_p_select_nodeinfo_set_all(void)
 
 			total_node_cores = end - start;
 		}
+		efctv_node_cores = total_node_cores - node_ptr->core_spec_cnt;
 
 		/*
-		 * Administrator could resume suspended jobs and oversubscribe
-		 * cores, avoid reporting more cores in use than configured
+		 * Avoid reporting more cores in use than configured.
+		 *
+		 * This could happen if an administrator resumes suspended jobs
+		 * and thus oversubscribes cores.
+		 *
+		 * Or, if a job requests specialized CPUs (with --core-spec or
+		 * --thread-spec), then --exclusive is implied, so all the CPUs
+		 *  on the node are allocated (even if the job does not have
+		 *  access to all of those CPUs). However, specialized CPUs are
+		 *  not counted in configured CPUs, so we need to subtract
+		 *  those from allocated CPUs.
 		 */
-		if (alloc_cores > total_node_cores)
-			alloc_cpus = total_node_cores;
+		if (alloc_cores > efctv_node_cores)
+			alloc_cpus = efctv_node_cores;
 		else
 			alloc_cpus = alloc_cores;
 

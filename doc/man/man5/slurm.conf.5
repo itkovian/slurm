@@ -1,4 +1,4 @@
-.TH "slurm.conf" "5" "Slurm Configuration File" "October 2022" "Slurm Configuration File"
+.TH "slurm.conf" "5" "Slurm Configuration File" "December 2022" "Slurm Configuration File"
 
 .SH "NAME"
 slurm.conf \- Slurm configuration file
@@ -645,7 +645,8 @@ accounting database.  This is needed distinguish accounting records
 when multiple clusters report to the same database. Because of limitations
 in some databases, any upper case letters in the name will be silently mapped
 to lower case. In order to avoid confusion, it is recommended that the name
-be lower case.
+be lower case. The cluster name must be 40 characters or less in order to
+comply with the limit on the maximum length for table names in MySQL/MariaDB.
 .IP
 
 .TP
@@ -1177,6 +1178,9 @@ in every cluster in the federation.
 If a job has an invalid dependency and it can never run terminate it
 and set its state to be JOB_CANCELLED. By default the job stays pending
 with reason DependencyNeverSatisfied.
+.IP
+
+.TP
 \fBmax_depend_depth=#\fR
 Maximum number of jobs to test for a circular job dependency. Stop testing
 after this number of job dependencies have been tested. The default value is
@@ -3960,6 +3964,16 @@ socket count, but \fBnot\fR optimize resource allocations on the NUMA nodes.
 because of that if Slurm is build with hwloc 2.0 or above Slurm will treat
 HWLOC_OBJ_PACKAGE as Socket, you can change this behavior using
 \fBSlurmdParameters\fR=l3cache_as_socket.
+.IP
+
+.TP
+\fBignore_prefer_validation\fR
+If set, and a job requests --prefer any features in the request that would
+create an invalid request with the current system will not generate an error.
+This is helpful for dynamic systems where nodes with features come and go.
+Please note using this option will not protect you from typos.
+.IP
+
 .TP
 \fBmax_array_tasks\fR
 Specify the maximum number of tasks that can be included in a job array.
@@ -4250,9 +4264,9 @@ Enable the use of scrontab to submit and manage periodic repeating jobs.
 .TP
 \fBSelectType\fR
 Identifies the type of resource selection algorithm to be used.
-A restart of slurmctld is required for changes to this parameter to take effect.
-When changed, all job information (running and pending) will be lost,
-since the job state save format used by each plugin is different.
+A restart of slurmctld and slurmd is required for changes to this parameter to
+take effect. When changed, all job information (running and pending) will be
+lost, since the job state save format used by each plugin is different.
 The only exception to this is when changing from cons_res to cons_tres or from
 cons_tres to cons_res. However, if a job contains cons_tres\-specific features
 and then SelectType is changed to cons_res, the job will be canceled, since
@@ -5845,11 +5859,12 @@ The default value is 1.
 .TP
 \fBCoreSpecCount\fR
 Number of cores reserved for system use.
-These cores will not be available for allocation to user jobs.
 Depending upon the \fBTaskPluginParam\fR option of \fBSlurmdOffSpec\fR,
 the Slurm daemon slurmd may either be confined to these
 resources (the default) or prevented from using these resources.
 Isolation of slurmd from user jobs may improve application performance.
+A job can use these cores if AllowSpecResourcesUsage=yes and the user
+explicitly requests less than the configured CoreSpecCount.
 If this option and \fBCpuSpecList\fR are both designated for a
 node, an error is generated.  For information on the algorithm used by Slurm
 to select the cores refer to the core specialization documentation
@@ -5889,11 +5904,12 @@ node. If \fBCPUs\fR is omitted, its default will be set equal to the product of
 \fBCpuSpecList\fR
 A comma\-delimited list of Slurm abstract CPU IDs reserved for system use.
 The list will be expanded to include all other CPUs, if any, on the same cores.
-These cores will not be available for allocation to user jobs.
 Depending upon the \fBTaskPluginParam\fR option of \fBSlurmdOffSpec\fR,
 the Slurm daemon slurmd may either be confined to these
 resources (the default) or prevented from using these resources.
 Isolation of slurmd from user jobs may improve application performance.
+A job can use these cores if AllowSpecResourcesUsage=yes and the user
+explicitly requests less than the number of CPUs in this list.
 If this option and \fBCoreSpecCount\fR are both designated for a node,
 an error is generated.
 This option has no effect unless cgroup job confinement is also configured
@@ -6978,8 +6994,10 @@ power save mode by \fBSuspendProgram\fR.
 For nodes that are in multiple partitions with this option set,
 the highest time will take effect. If not set on any partition, the node will
 use the \fBSuspendTime\fR value set for the entire cluster.
-Setting \fBSuspendTime\fR to anything but "INFINITE" will enable power save
-mode.
+Setting \fBSuspendTime\fR to INFINITE will disable suspending of nodes in this
+partition.
+Setting \fBSuspendTime\fR to anything but INFINITE (or \-1) will enable power
+save mode.
 .IP
 
 .TP
@@ -7488,7 +7506,8 @@ A distinct file must exist on each compute node.
 
 .TP
 \fBSlurmdSpoolDir\fR
-Must be writable by user root.
+Must be writable by user root. Permissions must be set to 755 so that
+job scripts can be executed from this directory.
 A distinct file must exist on each compute node.
 .IP
 

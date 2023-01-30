@@ -272,7 +272,7 @@ static int _check_cg_version()
 
 /*
  * Pick a random job belonging to this user.
- * Unlike when using cgroup/v1, we will pick here the job with the lowest JobID
+ * Unlike when using cgroup/v1, we will pick here the job with the highest JobID
  * instead of getting the job which has the earliest cgroup creation time.
  */
 static int _indeterminate_multiple_v2(pam_handle_t *pamh, List steps, uid_t uid,
@@ -281,14 +281,13 @@ static int _indeterminate_multiple_v2(pam_handle_t *pamh, List steps, uid_t uid,
 	int rc = PAM_PERM_DENIED;
 	ListIterator itr = NULL;
 	step_loc_t *stepd = NULL;
-	uint32_t most_recent = NO_VAL;
+	uint32_t most_recent = 0;
 
 	itr = list_iterator_create(steps);
 	while ((stepd = list_next(itr))) {
 		if ((stepd->step_id.step_id == SLURM_EXTERN_CONT) &&
 		    (uid == _get_job_uid(stepd))) {
-			if (stepd->step_id.job_id == NO_VAL ||
-			    stepd->step_id.job_id > most_recent) {
+			if (stepd->step_id.job_id > most_recent) {
 				most_recent = stepd->step_id.job_id;
 				*out_stepd = stepd;
 				rc = PAM_SUCCESS;
@@ -769,7 +768,6 @@ PAM_EXTERN int _adopt_and_or_check(pam_handle_t *pamh, int flags
 	step_loc_t *stepd = NULL;
 	struct passwd pwd, *pwd_result;
 	char *buf = NULL;
-	cgroup_conf_t *cg_conf;
 
 	_init_opts();
 	_parse_opts(pamh, argc, argv);
@@ -800,9 +798,6 @@ PAM_EXTERN int _adopt_and_or_check(pam_handle_t *pamh, int flags
 	if (user_name == NULL || retval != PAM_SUCCESS)  {
 		pam_syslog(pamh, LOG_ERR, "No username in PAM_USER? Fail!");
 		return PAM_SESSION_ERR;
-	}
-	if (opts.action_adopt==CALLERID_ACTION_ADOPT_AND_CHECK ){
-	   cg_conf = xcgroup_get_slurm_cgroup_conf();
 	}
 
 	/* Check for an unsafe config that might lock out root. This is a very

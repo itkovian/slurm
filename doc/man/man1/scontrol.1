@@ -1,4 +1,4 @@
-.TH scontrol "1" "Slurm Commands" "October 2022" "Slurm Commands"
+.TH scontrol "1" "Slurm Commands" "January 2023" "Slurm Commands"
 
 .SH "NAME"
 scontrol \- view or modify Slurm configuration and state.
@@ -463,25 +463,18 @@ Shows configured frontend nodes.
 
 .TP
 \fBhostlist\fR
-Takes a list of host names and prints the hostlist
-expression for them (the inverse of \fBhostnames\fR).
-\fBhostlist\fR can also take the absolute pathname of a file
-(beginning with the character '/') containing a list of hostnames.
-Multiple node names may be specified using simple node range expressions
-(e.g. "lx[10\-20]"). All other \fIID\fP values must identify a single
-element. The job step ID is of the form "job_id.step_id", (e.g. "1234.1").
-\fBslurmd\fR reports the current status of the slurmd daemon executing
-on the same node from which the scontrol command is executed (the
-local host). It can be useful to diagnose problems.
-By default \fBhostlist\fR does not sort the node list or make it
-unique (e.g. tux2,tux1,tux2 = tux[2,1\-2]).  If you wanted a sorted
-list use \fBhostlistsorted\fR (e.g. tux2,tux1,tux2 = tux[1\-2,2]).
-By default, all elements of the entity type specified are printed.
+Takes a list of host names and prints the hostlist expression for them (the
+inverse of \fBhostnames\fR). \fBhostlist\fR can also take the absolute pathname
+of a file (beginning with the character '/') containing a list of hostnames.
+Multiple node names may be specified using simple node range expressions (e.g.
+"lx[10\-20]"). By default \fBhostlist\fR does not sort the node list or make it
+unique (e.g. tux2,tux1,tux2 = tux[2,1\-2]). If you wanted a sorted list use
+\fBhostlistsorted\fR (e.g. tux2,tux1,tux2 = tux[1\-2,2]).
 .IP
 
 .TP
 \fBhostlistsorted\fR
-Takes a list of host names and prints a sorted, unique hostlist
+Takes a list of host names and prints a sorted (but not unique) hostlist
 expression for them. See \fBhostlist\fR.
 .IP
 
@@ -1939,6 +1932,22 @@ that node to be terminated.
 .SH "PARTITIONS \- SPECIFICATIONS FOR CREATE, UPDATE, AND DELETE COMMANDS"
 
 .TP
+\fBAllocNodes\fR=<\fIname\fR>
+Comma separated list of nodes from which users can execute jobs in the
+partition.
+Node names may be specified using the node range expression syntax
+described above.
+The default value is "ALL".
+.IP
+
+.TP
+\fBAllowAccounts\fR=<\fIname\fR>
+Identify the Accounts which may use this partition.
+Multiple Accounts may be specified in a comma separated list.
+To permit all Accounts to use the partition specify "AllowAccounts=ALL".
+.IP
+
+.TP
 \fBAllowGroups\fR=<\fIname\fR>
 Identify the user groups which may use this partition.
 Multiple groups may be specified in a comma separated list.
@@ -1946,12 +1955,10 @@ To permit all groups to use the partition specify "AllowGroups=ALL".
 .IP
 
 .TP
-\fBAllocNodes\fR=<\fIname\fR>
-Comma separated list of nodes from which users can execute jobs in the
-partition.
-Node names may be specified using the node range expression syntax
-described above.
-The default value is "ALL".
+\fBAllowQOS\fR=<\fIname\fR>
+Identify the QOS's which may use this partition.
+Multiple QOS's may be specified in a comma separated list.
+To permit all QOS's to use the partition specify "AllowQOS=ALL".
 .IP
 
 .TP
@@ -1997,9 +2004,27 @@ The memory size is specified in megabytes.
 .IP
 
 .TP
+\fBDenyAccounts\fR=<\fIname\fR>
+Identify the Accounts which should be denied access to this partition.
+Multiple Accounts may be specified in a comma separated list.
+.IP
+
+.TP
+\fBDenyQOS\fR=<\fIname\fR>
+Identify the QOS's which should be denied access to this partition.
+Multiple QOS's may be specified in a comma separated list.
+.IP
+
+.TP
 \fBDisableRootJobs\fR={yes|no}
 Specify if jobs can be executed as user root.
 Possible values are "YES" and "NO".
+.IP
+
+.TP
+\fBExclusiveUser\fR={yes|no}
+When enabled nodes will be exclusively allocated to users. Multiple jobs can
+be run simultaneously, but those jobs must be from a single user.
 .IP
 
 .TP
@@ -2034,6 +2059,17 @@ Default number of CPUs per allocated GPU.
 \fBDefMemPerGPU\fR
 Default memory limit (in megabytes) per allocated GPU.
 .RE
+.IP
+
+.TP
+\fBMaxCPUsPerNode\fR=<\fIcount\fR>
+Set the maximum number of CPUs that can be allocated per node to all jobs
+in this partition.
+.IP
+
+.TP
+\fBLLN\fR={yes|no}
+Schedule jobs on the least loaded nodes (based on the number of idle CPUs).
 .IP
 
 .TP
@@ -2091,6 +2127,15 @@ have already begun execution.
 .IP
 
 .TP
+\fBOverSubscribe\fR={yes|no|exclusive|force}[:<\fIjob_count\fR>]
+Specify if compute resources (i.e. individual CPUs) in this partition can be
+shared by multiple jobs.
+Possible values are "YES", "NO", "EXCLUSIVE" and "FORCE".
+An optional job count specifies how many jobs can be allocated to use
+each resource.
+.IP
+
+.TP
 \fBOverTimeLimit\fR=<\fIcount\fR>
 Number of minutes by which a job can exceed its time limit before
 being canceled.
@@ -2105,15 +2150,6 @@ If not specified, the global \fIOverTimeLimit\fP value will take precedence.
 May not exceed 65533 minutes.
 An input value of "UNLIMITED" will clear any previously configured
 partition\-specific \fIOverTimeLimit\fP value.
-.IP
-
-.TP
-\fBOverSubscribe\fR={yes|no|exclusive|force}[:<\fIjob_count\fR>]
-Specify if compute resources (i.e. individual CPUs) in this partition can be
-shared by multiple jobs.
-Possible values are "YES", "NO", "EXCLUSIVE" and "FORCE".
-An optional job count specifies how many jobs can be allocated to use
-each resource.
 .IP
 
 .TP
@@ -2162,17 +2198,17 @@ leave the option blank.
 .IP
 
 .TP
-\fBRootOnly\fR={yes|no}
-Specify if only allocation requests initiated by user root will be satisfied.
-This can be used to restrict control of the partition to some meta\-scheduler.
-Possible values are "YES" and "NO".
-.IP
-
-.TP
 \fBReqResv\fR={yes|no}
 Specify if only allocation requests designating a reservation will be
 satisfied.  This is used to restrict partition usage to be allowed only
 within a reservation.
+Possible values are "YES" and "NO".
+.IP
+
+.TP
+\fBRootOnly\fR={yes|no}
+Specify if only allocation requests initiated by user root will be satisfied.
+This can be used to restrict control of the partition to some meta\-scheduler.
 Possible values are "YES" and "NO".
 .IP
 

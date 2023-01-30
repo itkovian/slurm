@@ -307,7 +307,9 @@ static void _add_nodes_with_feature(hostlist_t hl, char *feature)
 	}
 }
 
-extern hostlist_t nodespec_to_hostlist(const char *nodes, char **nodesets)
+extern hostlist_t nodespec_to_hostlist(const char *nodes,
+				       bool uniq,
+				       char **nodesets)
 {
 	int count;
 	slurm_conf_nodeset_t *ptr, **ptr_array;
@@ -354,7 +356,8 @@ extern hostlist_t nodespec_to_hostlist(const char *nodes, char **nodesets)
 		}
 	}
 
-	hostlist_uniq(hl);
+	if (uniq)
+		hostlist_uniq(hl);
 	return hl;
 }
 
@@ -760,7 +763,7 @@ static int _build_single_partitionline_info(slurm_conf_partition_t *part)
 	if (part->preempt_mode != NO_VAL16)
 		part_ptr->preempt_mode = part->preempt_mode;
 
-	if (part->disable_root_jobs == NO_VAL16) {
+	if (part->disable_root_jobs == NO_VAL8) {
 		if (slurm_conf.conf_flags & CTL_CONF_DRJ)
 			part_ptr->flags |= PART_FLAG_NO_ROOT;
 	} else if (part->disable_root_jobs) {
@@ -2996,9 +2999,24 @@ static int _sync_nodes_to_active_job(job_record_t *job_ptr)
 
 		node_flags = node_ptr->node_state & NODE_STATE_FLAGS;
 
-		node_ptr->run_job_cnt++; /* NOTE:
-				* This counter moved to comp_job_cnt
-				* by _sync_nodes_to_comp_job() */
+		if (IS_JOB_COMPLETING(job_ptr) && job_ptr->epilog_running) {
+			/*
+			 * _sync_nodes_to_comp_job() won't call
+			 * deallocate_nodes()/make_node_comp() if the
+			 * EpilogSlurmctld is still running to decrement
+			 * run_job_cnt and increment comp_job_cnt, so just
+			 * increment comp_job_cnt now.
+			 */
+			node_ptr->comp_job_cnt++;
+		} else {
+			/*
+			 * run_job_cnt will be decremented by
+			 * deallocate_nodes()/make_node_comp() in
+			 * _sync_nodes_to_comp_job().
+			 */
+			node_ptr->run_job_cnt++;
+		}
+
 		if ((job_ptr->details) && (job_ptr->details->share_res == 0))
 			node_ptr->no_share_job_cnt++;
 
@@ -3104,8 +3122,21 @@ static void _restore_job_accounting(void)
 				job_claim_resv(job_ptr);
 			} else if (IS_JOB_PENDING(job_ptr) &&
 				   job_ptr->details &&
-				   job_ptr->details->accrue_time)
+				   job_ptr->details->accrue_time) {
+				/*
+				 * accrue usage was cleared above with
+				 * assoc_mgr_clear_used_info(). Clear accrue
+				 * time so that _handle_add_accrue() will add
+				 * the usage back.
+				 */
+				time_t save_accrue_time =
+					job_ptr->details->accrue_time;
+				job_ptr->details->accrue_time = 0;
 				acct_policy_add_accrue_time(job_ptr, false);
+				if (job_ptr->details->accrue_time)
+					job_ptr->details->accrue_time =
+						save_accrue_time;
+			}
 		}
 
 		license_list = license_validate(job_ptr->licenses, false, false,

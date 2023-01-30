@@ -1,4 +1,4 @@
-.TH sbatch "1" "Slurm Commands" "September 2022" "Slurm Commands"
+.TH sbatch "1" "Slurm Commands" "December 2022" "Slurm Commands"
 
 .SH "NAME"
 sbatch \- Submit a batch script to Slurm.
@@ -388,6 +388,9 @@ If a value of zero is designated and the Slurm configuration option
 AllowSpecResourcesUsage is enabled, the job will be allowed to override
 CoreSpecCount and use the specialized resources on nodes it is allocated.
 This option can not be used with the \fB\-\-thread\-spec\fR option.
+
+\fBNOTE\fR: Explicitly setting a job's specialized core value implicitly sets
+its --exclusive option, reserving entire nodes for the job.
 .IP
 
 .TP
@@ -586,7 +589,18 @@ satisfied completed.
 <\fItype:job_id[:job_id][?type:job_id[:job_id]]\fR>.
 All dependencies must be satisfied if the "," separator is used.
 Any dependency may be satisfied if the "?" separator is used.
-Only one separator may be used.
+Only one separator may be used. For instance:
+.nf
+-d afterok:20:21,afterany:23
+.fi
+.IP
+means that the job can run only after a 0 return code of jobs 20 and 21
+AND the completion of job 23. However:
+.nf
+-d afterok:20:21?afterany:23
+.fi
+means that any of the conditions (afterok:20 OR afterok:21 OR afterany:23)
+will be enough to release the job.
 Many jobs can share the same dependency and these jobs may even belong to
 different  users. The  value may be changed after job submission using the
 scontrol command.
@@ -608,6 +622,7 @@ start or cancellation.
 .TP
 \fBafterany:job_id[:jobid...]\fR
 This job can begin execution after the specified jobs have terminated.
+This is the default dependency type.
 .IP
 
 .TP
@@ -1631,12 +1646,15 @@ value increases the priority, otherwise decreases it. The adjustment range is
 \fB\-k\fR, \fB\-\-no\-kill\fR[=off]
 Do not automatically terminate a job if one of the nodes it has been
 allocated fails.  The user will assume the responsibilities for fault\-tolerance
-should a node fail.  When there is a node failure, any active job steps (usually
-MPI jobs) on that node will almost certainly suffer a fatal error, but with
-\fB\-\-no\-kill\fR, the job allocation will not be revoked so the user may
-launch new job steps on the remaining nodes in their allocation.
+should a node fail.
+The job allocation will not be revoked so the user may launch new
+job steps on the remaining nodes in their allocation.
+This option does not set the \fBSLURM_NO_KILL\fR environment variable.
+Therefore, when a node fails, steps running on that node will be killed unless
+the \fBSLURM_NO_KILL\fR environment variable was explicitly set or srun calls
+within the job allocation explicitly requested \-\-no\-kill.
 
-Specify an optional argument of "off" disable the effect of the
+Specify an optional argument of "off" to disable the effect of the
 \fBSBATCH_NO_KILL\fR environment variable.
 
 By default Slurm terminates the entire job allocation if any node fails in its
@@ -2106,6 +2124,9 @@ Count of specialized threads per node reserved by the job for system operations
 and not used by the application. The application will not use these threads,
 but will be charged for their allocation.
 This option can not be used with the \fB\-\-core\-spec\fR option.
+
+\fBNOTE\fR: Explicitly setting a job's specialized thread value implicitly sets
+its --exclusive option, reserving entire nodes for the job.
 .IP
 
 .TP
@@ -3008,6 +3029,11 @@ Same as \fB\-\-profile\fR
 If the job has been restarted due to system failure or has been
 explicitly requeued, this will be sent to the number of times
 the job has been restarted.
+.IP
+
+.TP
+\fBSLURM_SHARDS_ON_NODE\fR
+Number of GPU Shards available to the step on this node.
 .IP
 
 .TP

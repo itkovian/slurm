@@ -233,6 +233,9 @@ def repeat_until(callable, condition, timeout=default_polling_timeout, poll_inte
             depends on the timeout used, but varies between .1 and 1 seconds.
         fatal (boolean): If True, a timeout will result in the test failing.
 
+    Returns:
+        True if the condition is met by the timeout, False otherwise.
+
     Example:
         >>> repeat_until(lambda : random.randint(1,10), lambda n: n == 5, timeout=30, poll_interval=1)
         True
@@ -256,6 +259,7 @@ def repeat_until(callable, condition, timeout=default_polling_timeout, poll_inte
     if fatal:
         pytest.fail(f"Condition was not met within the {timeout} second timeout")
     else:
+        logging.warning(f"Condition was not met within the {timeout} second timeout")
         return False
 
 
@@ -414,17 +418,23 @@ def stop_slurmctld(quiet=False):
         pytest.fail("Slurmctld is still running")
 
 
-def stop_slurm(quiet=False):
-    """Stops all applicable slurm daemons.
+def stop_slurm(fatal=True, quiet=False):
+    """Stops all applicable Slurm daemons.
 
-    This function examines the slurm configuration files in order to
+    This function examines the Slurm configuration files in order to
     determine which daemons need to be stopped.
 
     This function may only be used in auto-config mode.
 
     Args:
+        fatal (boolean): If True, a failure to stop all daemons will result in the test failing.
         quiet (boolean): If True, logging is performed at the TRACE log level.
+
+    Returns:
+        True if all Slurm daemons were stopped, False otherwise.
     """
+
+    failures = []
 
     if not properties['auto-config']:
         require_auto_config("wants to stop slurm")
@@ -433,33 +443,47 @@ def stop_slurm(quiet=False):
     if get_config_parameter('AccountingStorageType', live=False, quiet=quiet) == 'accounting_storage/slurmdbd':
 
         # Stop slurmdbd
-        run_command("sacctmgr shutdown", user=properties['slurm-user'], quiet=quiet)
+        results = run_command("sacctmgr shutdown", user=properties['slurm-user'], quiet=quiet)
+        if results['exit_code'] != 0:
+            failures.append(f"Command \"sacctmgr shutdown\" failed with rc={results['exit_code']}")
 
         # Verify that slurmdbd is not running (we might have to wait for rollups to complete)
         if not repeat_until(lambda : pids_from_exe(f"{properties['slurm-sbin-dir']}/slurmdbd"), lambda pids: len(pids) == 0, timeout=60):
-            pytest.fail("Slurmdbd is still running")
+            failures.append("Slurmdbd is still running")
 
     # Stop slurmctld and slurmds
-    run_command("scontrol shutdown", user=properties['slurm-user'], quiet=quiet)
+    results = run_command("scontrol shutdown", user=properties['slurm-user'], quiet=quiet)
+    if results['exit_code'] != 0:
+        failures.append(f"Command \"scontrol shutdown\" failed with rc={results['exit_code']}")
 
     # Verify that slurmctld is not running
     if not repeat_until(lambda : pids_from_exe(f"{properties['slurm-sbin-dir']}/slurmctld"), lambda pids: len(pids) == 0):
-        pytest.fail("Slurmctld is still running")
+        failures.append("Slurmctld is still running")
 
     # Build list of slurmds
     slurmd_list = []
     output = run_command_output(f"perl -nle 'print $1 if /^NodeName=(\\S+)/' {properties['slurm-config-dir']}/slurm.conf", quiet=quiet)
     if not output:
-        pytest.fail("Unable to determine the slurmd node names")
-    for node_name_expression in output.rstrip().split('\n'):
-        if node_name_expression != 'DEFAULT':
-            slurmd_list.extend(node_range_to_list(node_name_expression))
+        failures.append("Unable to determine the slurmd node names")
+    else:
+        for node_name_expression in output.rstrip().split('\n'):
+            if node_name_expression != 'DEFAULT':
+                slurmd_list.extend(node_range_to_list(node_name_expression))
 
     # Verify that slurmds are not running
     if not repeat_until(lambda : pids_from_exe(f"{properties['slurm-sbin-dir']}/slurmd"), lambda pids: len(pids) == 0):
         pids = pids_from_exe(f"{properties['slurm-sbin-dir']}/slurmd")
         run_command(f"pgrep -f {properties['slurm-sbin-dir']}/slurmd -a", quiet=quiet)
-        pytest.fail(f"Some slurmds are still running ({pids})")
+        failures.append(f"Some slurmds are still running ({pids})")
+
+    if failures:
+        if (fatal):
+            pytest.fail(failures[0])
+        else:
+            logging.warning(failures[0])
+            return False
+    else:
+        return True
 
 
 def restart_slurmctld(clean=False, quiet=False):
@@ -495,6 +519,9 @@ def require_slurm_running():
 
     In local-config mode, the test is skipped if slurm is not running.
     In auto-config mode, slurm is started if necessary.
+
+    In order to avoid multiple restarts of Slurm (in auto-config), this function
+    should be called at the end of the setup preconditions.
     """
 
     global nodes
@@ -729,7 +756,7 @@ def set_config_parameter(parameter_name, parameter_value, source='slurm', restar
         When setting a complex parameter (one which may be repeated and has
         its own subparameters, such as with nodes, partitions and gres),
         the parameter_value should be a dictionary of dictionaries.
- 
+
     Example:
         >>> set_config_parameter('ClusterName', 'cluster1')
     """
@@ -867,7 +894,7 @@ def require_config_parameter(parameter_name, parameter_value, condition=None, so
         When requiring a complex parameter (one which may be repeated and has
         its own subparameters, such as with nodes, partitions and gres),
         the parameter_value should be a dictionary of dictionaries.
- 
+
     Examples:
         >>> require_config_parameter('SelectType', 'select/cons_tres')
         >>> require_config_parameter('SlurmdTimeout', 5, lambda v: v <= 5)
@@ -1051,10 +1078,7 @@ def cancel_all_jobs(timeout=default_polling_timeout, poll_interval=.1, fatal=Fal
 
     user_name = get_user_name()
 
-    results = run_command(f"scancel -u {user_name}", quiet=quiet)
-    # Have to account for het scancel bug until bug 11806 is fixed
-    if results['exit_code'] != 0 and results['exit_code'] != 60:
-        pytest.fail(f"Failure cancelling jobs: {results['stderr']}")
+    run_command(f"scancel -u {user_name}", fatal=fatal, quiet=quiet)
 
     return repeat_command_until(f"squeue -u {user_name} --noheader", lambda results: results['stdout'] == '', timeout=timeout, poll_interval=poll_interval, fatal=fatal, quiet=quiet)
 
@@ -1277,7 +1301,7 @@ def set_node_parameter(node_name, new_parameter_name, new_parameter_value):
                 remainder_node_expression = node_list_to_range(node_list)
                 remainder_node_line = f"NodeName={remainder_node_expression}"
                 if node_index < len(port_list):
-                    port_list.pop(node_index, None)
+                    port_list.pop(node_index)
                 if port_list:
                     remainder_port_expression = list_to_range(port_list)
                     remainder_node_line += f" Port={remainder_port_expression}"
@@ -1335,8 +1359,6 @@ def submit_job(sbatch_args="--wrap \"sleep 60\"", **run_command_kwargs):
     output = run_command_output(f"sbatch {sbatch_args}", **run_command_kwargs)
 
     if match := re.search(r'Submitted \S+ job (\d+)', output):
-        if not properties['jobs-submitted']:
-            properties['jobs-submitted'] = True
         job_id = int(match.group(1))
         return job_id
     else:
@@ -1360,10 +1382,6 @@ def run_job(srun_args, **run_command_kwargs):
     """
 
     results = run_command(f"srun {srun_args}", **run_command_kwargs)
-
-    if results['exit_code'] == errno.ETIMEDOUT:
-        if not properties['jobs-submitted']:
-            properties['jobs-submitted'] = True
 
     return results
 
@@ -1473,8 +1491,6 @@ def alloc_job_id(salloc_args, **run_command_kwargs):
 
     results = run_command(f"salloc {salloc_args}", **run_command_kwargs)
     if match := re.search(r'Granted job allocation (\d+)', results['stderr']):
-        if not properties['jobs-submitted']:
-            properties['jobs-submitted'] = True
         job_id = int(match.group(1))
         return job_id
     else:

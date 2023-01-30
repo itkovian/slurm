@@ -98,6 +98,7 @@ typedef struct {
 	pid_t *pids;
 } foreach_pid_array_t;
 
+extern bool cgroup_p_has_feature(cgroup_ctl_feature_t f);
 extern int cgroup_p_task_addto(cgroup_ctl_type_t ctl, stepd_step_rec_t *job,
 			       pid_t pid, uint32_t task_id);
 
@@ -213,7 +214,7 @@ static int _enable_subtree_control(char *path, bitstr_t *ctl_bitmap)
 
 		xstrfmtcat(content, "+%s", ctl_names[i]);
 		rc = common_file_write_content(file_path, content,
-					       sizeof(content));
+					       strlen(content));
 		xfree(content);
 		if (rc != SLURM_SUCCESS) {
 			error("Cannot enable %s in %s",
@@ -454,6 +455,7 @@ static int _find_pid_task(void *x, void *key)
 		}
 	}
 
+	xfree(pids);
 	return found;
 }
 
@@ -1118,8 +1120,6 @@ extern int cgroup_p_step_create(cgroup_ctl_type_t ctl, stepd_step_rec_t *job)
 		rc = SLURM_ERROR;
 	}
 
-	/* Use slurmstepd pid as the identifier of the container. */
-	job->cont_id = (uint64_t)job->jmgr_pid;
 endit:
 	xfree(new_path);
 	if (rc != SLURM_SUCCESS)
@@ -1338,10 +1338,13 @@ extern bool cgroup_p_has_pid(pid_t pid)
 		return false;
 
 	for (i = 0; i < npids_slurm; i++) {
-		if (pids_slurm[i] == pid)
+		if (pids_slurm[i] == pid) {
+			xfree(pids_slurm);
 			return true;
+		}
 	}
 
+	xfree(pids_slurm);
 	return false;
 }
 
@@ -1351,7 +1354,7 @@ extern int cgroup_p_constrain_set(cgroup_ctl_type_t ctl, cgroup_level_t level,
 	int rc = SLURM_SUCCESS;
 	bpf_program_t *program = NULL;
 	task_cg_info_t *task_cg_info;
-	char *dev_id_str = gres_device_id2str(&limits->device);
+	char *dev_id_str = NULL;
 	uint32_t bpf_dev_type = NO_VAL;
 
 	/*
@@ -1456,12 +1459,14 @@ extern int cgroup_p_constrain_set(cgroup_ctl_type_t ctl, cgroup_level_t level,
 			return SLURM_ERROR;
 		}
 
+		dev_id_str = gres_device_id2str(&limits->device);
 		if (limits->allow_device)
 			log_flag(CGROUP, "Allowing access to device (%s)",
 				 dev_id_str);
 		else
 			log_flag(CGROUP, "Denying access to device (%s)",
 				 dev_id_str);
+		xfree(dev_id_str);
 
 		/* Determine the correct BPF device type. */
 		if (limits->device.type == DEV_TYPE_BLOCK)
@@ -1480,7 +1485,6 @@ extern int cgroup_p_constrain_set(cgroup_ctl_type_t ctl, cgroup_level_t level,
 		break;
 	}
 
-	xfree(dev_id_str);
 	return rc;
 }
 
@@ -1745,26 +1749,12 @@ extern cgroup_oom_t *cgroup_p_step_stop_oom_mgr(stepd_step_rec_t *job)
 		error("Cannot read %s/memory.events",
 		      int_cg[CG_LEVEL_STEP_USER].path);
 
-	if (common_cgroup_get_param(&int_cg[CG_LEVEL_STEP_USER],
-				    "memory.swap.events",
-				    &mem_swap_events, &sz) != SLURM_SUCCESS)
-		error("Cannot read %s/memory.swap.events",
-		      int_cg[CG_LEVEL_STEP_USER].path);
-
 	if (mem_events) {
 		if ((ptr = xstrstr(mem_events, "oom_kill "))) {
 			if (sscanf(ptr, "oom_kill %"PRIu64, &step_kills) != 1)
 				error("Cannot read step's oom_kill counter from memory.events file.");
 		}
 		xfree(mem_events);
-	}
-
-	if (mem_swap_events) {
-		if ((ptr = xstrstr(mem_swap_events, "fail "))) {
-			if (sscanf(ptr, "fail %"PRIu64, &step_swkills) != 1)
-				error("Cannot read step's fail counter from memory.swap.events file.");
-		}
-		xfree(mem_swap_events);
 	}
 
 	/* Get stats for the job */
@@ -1774,12 +1764,6 @@ extern cgroup_oom_t *cgroup_p_step_stop_oom_mgr(stepd_step_rec_t *job)
 		error("Cannot read %s/memory.events",
 		      int_cg[CG_LEVEL_STEP_USER].path);
 
-	if (common_cgroup_get_param(&int_cg[CG_LEVEL_JOB], "memory.swap.events",
-				    &mem_swap_events, &sz) != SLURM_SUCCESS)
-		error("Cannot read %s/memory.swap.events",
-		      int_cg[CG_LEVEL_STEP_USER].path);
-
-
 	if (mem_events) {
 		if ((ptr = xstrstr(mem_events, "oom_kill "))) {
 			if (sscanf(ptr, "oom_kill %"PRIu64, &job_kills) != 1)
@@ -1788,12 +1772,39 @@ extern cgroup_oom_t *cgroup_p_step_stop_oom_mgr(stepd_step_rec_t *job)
 		xfree(mem_events);
 	}
 
-	if (mem_swap_events) {
-		if ((ptr = xstrstr(mem_swap_events, "fail "))) {
-			if (sscanf(ptr, "fail %"PRIu64, &job_swkills) != 1)
-				error("Cannot read job's fail counter from memory.swap.events file.");
+	if (cgroup_p_has_feature(CG_MEMCG_SWAP)) {
+		/* Get latest swap stats for the step */
+		if (common_cgroup_get_param(&int_cg[CG_LEVEL_STEP_USER],
+					    "memory.swap.events",
+					    &mem_swap_events,
+					    &sz) != SLURM_SUCCESS)
+			error("Cannot read %s/memory.swap.events",
+			      int_cg[CG_LEVEL_STEP_USER].path);
+
+		if (mem_swap_events) {
+			if ((ptr = xstrstr(mem_swap_events, "fail "))) {
+				if (sscanf(ptr, "fail %"PRIu64,
+					   &step_swkills) != 1)
+					error("Cannot read step's fail counter from memory.swap.events file.");
+			}
+			xfree(mem_swap_events);
 		}
-		xfree(mem_swap_events);
+
+		/* Get swap stats for the job */
+		if (common_cgroup_get_param(&int_cg[CG_LEVEL_JOB], "memory.swap.events",
+					    &mem_swap_events,
+					    &sz) != SLURM_SUCCESS)
+			error("Cannot read %s/memory.swap.events",
+			      int_cg[CG_LEVEL_STEP_USER].path);
+
+		if (mem_swap_events) {
+			if ((ptr = xstrstr(mem_swap_events, "fail "))) {
+				if (sscanf(ptr, "fail %"PRIu64,
+					   &job_swkills) != 1)
+					error("Cannot read job's fail counter from memory.swap.events file.");
+			}
+			xfree(mem_swap_events);
+		}
 	}
 
 	/* Return stats */

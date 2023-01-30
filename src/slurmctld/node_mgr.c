@@ -488,6 +488,7 @@ extern int load_all_node_state ( bool state_only )
 			config_ptr = create_config_record();
 			config_ptr->boards = boards;
 			config_ptr->cores = cores;
+			config_ptr->cpu_spec_list = xstrdup(cpu_spec_list);
 			config_ptr->cpus = cpus;
 			config_ptr->feature = xstrdup(features);
 			config_ptr->gres = xstrdup(gres);
@@ -1367,14 +1368,18 @@ int update_node(update_node_msg_t *update_node_msg, uid_t auth_uid)
 	hostlist_t host_list, hostaddr_list = NULL, hostname_list = NULL;
 	uint32_t base_state = 0, node_flags, state_val;
 	time_t now = time(NULL);
+	bool uniq = true;
 
 	if (update_node_msg->node_names == NULL ) {
 		info("%s: invalid node name", __func__);
 		return ESLURM_INVALID_NODE_NAME;
 	}
 
+	if (update_node_msg->node_addr || update_node_msg->node_hostname)
+		uniq = false;
+
 	if (!(host_list = nodespec_to_hostlist(update_node_msg->node_names,
-					       NULL)))
+					       uniq, NULL)))
 		return ESLURM_INVALID_NODE_NAME;
 
 	if (!(node_cnt = hostlist_count(host_list))) {
@@ -1667,6 +1672,7 @@ int update_node(update_node_msg_t *update_node_msg, uid_t auth_uid)
 				_make_node_down(node_ptr, now);
 				kill_running_job_by_node_name (this_node_name);
 				if (state_val == NODE_STATE_FUTURE) {
+					bool dyn_norm_node = false;
 					if (IS_NODE_DYNAMIC_FUTURE(node_ptr)) {
 						/* Reset comm and hostname */
 						set_node_comm_name(
@@ -1674,8 +1680,17 @@ int update_node(update_node_msg_t *update_node_msg, uid_t auth_uid)
 							node_ptr->name,
 							node_ptr->name);
 					}
+					/*
+					 * Preserve dynamic norm state until
+					 * node is deleted.
+					 */
+					if (IS_NODE_DYNAMIC_NORM(node_ptr))
+						dyn_norm_node = true;
 					node_ptr->node_state =
 						NODE_STATE_FUTURE;
+					if (dyn_norm_node)
+						node_ptr->node_state |=
+							NODE_STATE_DYNAMIC_NORM;
 					bit_set(future_node_bitmap,
 						node_ptr->index);
 					clusteracct_storage_g_node_down(
@@ -1788,20 +1803,13 @@ int update_node(update_node_msg_t *update_node_msg, uid_t auth_uid)
 					     this_node_name);
 				}
 
-				if (IS_NODE_POWERED_DOWN(node_ptr)) {
-					node_ptr->node_state &=
-						(~NODE_STATE_POWERED_DOWN);
-					info("power down request repeating "
-					     "for node %s", this_node_name);
-				} else if (IS_NODE_POWERING_DOWN(node_ptr)) {
+				if (IS_NODE_POWERING_DOWN(node_ptr)) {
 					info("ignoring power down request for node %s, already powering down",
 					     this_node_name);
 					node_ptr->next_state = NO_VAL;
 					free(this_node_name);
 					continue;
-				} else
-					info("powering down node %s",
-					     this_node_name);
+				}
 
 				if (state_val & NODE_STATE_POWERED_DOWN) {
 					/* Force power down */
@@ -1824,6 +1832,15 @@ int update_node(update_node_msg_t *update_node_msg, uid_t auth_uid)
 					node_ptr->node_state &=
 						(~NODE_STATE_POWERING_UP);
 				}
+
+				if (IS_NODE_POWERED_DOWN(node_ptr)) {
+					info("power down request repeating for node %s",
+					     this_node_name);
+					node_ptr->node_state &=
+						(~NODE_STATE_POWERED_DOWN);
+				} else
+					info("powering down node %s",
+					     this_node_name);
 
 				node_ptr->node_state |=
 					NODE_STATE_POWER_DOWN;
@@ -3982,7 +3999,7 @@ void push_reconfig_to_slurmd(char **slurmd_config_files)
 	prev_args->hostlist = hostlist_create(NULL);
 	prev_args->protocol_version = SLURM_ONE_BACK_PROTOCOL_VERSION;
 	prev_config = xmalloc(sizeof(*prev_config));
-	load_config_response_msg(prev_config, CONFIG_REQUEST_SLURMD);
+	load_config_response_list(prev_config, slurmd_config_files);
 	prev_args->msg_args = prev_config;
 
 	old_args = xmalloc(sizeof(*old_args));
@@ -4712,9 +4729,6 @@ extern int create_dynamic_reg_node(slurm_msg_t *msg)
 		return ESLURM_ACCESS_DENIED;
 	}
 
-	if (find_node_record2(reg_msg->node_name))
-		return SLURM_SUCCESS;
-
 	if (reg_msg->dynamic_conf) {
 		slurm_conf_node_t *conf_node;
 		s_p_hashtbl_t *node_hashtbl = NULL;
@@ -4857,7 +4871,7 @@ extern int delete_nodes(char *names, char **err_msg)
 
 	lock_slurmctld(write_lock);
 
-	if (!(to_delete = nodespec_to_hostlist(names, NULL))) {
+	if (!(to_delete = nodespec_to_hostlist(names, true, NULL))) {
 		ret_rc = ESLURM_INVALID_NODE_NAME;
 		goto cleanup;
 	}

@@ -1448,11 +1448,6 @@ _rpc_launch_tasks(slurm_msg_t *msg)
 		goto done;
 	}
 
-	if (_set_node_alias(req)) {
-		errnum = ESLURM_INVALID_NODE_NAME;
-		goto done;
-	}
-
 	slurm_get_ip_str(cli, host, sizeof(host));
 	port = slurm_get_port(cli);
 	if (req->het_job_id && (req->het_job_id != NO_VAL)) {
@@ -1490,6 +1485,11 @@ _rpc_launch_tasks(slurm_msg_t *msg)
 #ifndef HAVE_FRONT_END
 		slurm_mutex_unlock(&prolog_mutex);
 #endif
+		goto done;
+	}
+
+	if (_set_node_alias(req)) {
+		errnum = ESLURM_INVALID_NODE_NAME;
 		goto done;
 	}
 
@@ -3341,6 +3341,11 @@ static void _rpc_acct_gather_energy(slurm_msg_t *msg)
 					      ENERGY_DATA_SENSOR_CNT,
 					      &sensor_cnt);
 
+		if (!sensor_cnt) {
+			error("Can't get energy data. No power sensors are available. Try later.");
+			return;
+		}
+
 		/* If we polled later than delta seconds then force a
 		   new poll.
 		*/
@@ -4364,7 +4369,7 @@ static int _file_bcast_register_file(slurm_msg_t *msg,
 				     file_bcast_info_t *key)
 {
 	file_bcast_msg_t *req = msg->data;
-	int fd, flags, rc;
+	int fd = -1, flags, rc;
 	file_bcast_info_t *file_info;
 	libdir_rec_t *libdir = NULL;
 
@@ -4397,6 +4402,14 @@ static int _file_bcast_register_file(slurm_msg_t *msg,
 		if (rc != SLURM_SUCCESS) {
 			error("Unable to create directory %s: %s",
 			      directory, strerror(rc));
+			/*
+			 * fd might be opened from the previous call to
+			 * _open_as_other() for the file that is being
+			 * transmitted and won't be cleaned up otherwise, so
+			 * close it here.
+			 */
+			if (fd > 0)
+				close(fd);
 			return rc;
 		}
 
