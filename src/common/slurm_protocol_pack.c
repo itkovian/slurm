@@ -2544,6 +2544,7 @@ _pack_kill_job_msg(kill_job_msg_t * msg, buf_t *buffer, uint16_t protocol_versio
 					     protocol_version);
 		packstr_array(msg->spank_job_env, msg->spank_job_env_size,
 			      buffer);
+    pack32(msg->nnodes, buffer);
 		pack16_array(msg->job_node_cpus, msg->nnodes, buffer);
 		pack_time(msg->start_time, buffer);
 		pack_time(msg->time, buffer);
@@ -2561,6 +2562,7 @@ _pack_kill_job_msg(kill_job_msg_t * msg, buf_t *buffer, uint16_t protocol_versio
 					     protocol_version);
 		packstr_array(msg->spank_job_env, msg->spank_job_env_size,
 			      buffer);
+    pack32(msg->nnodes, buffer);
 		pack16_array(msg->job_node_cpus, msg->nnodes, buffer);
 		pack_time(msg->start_time, buffer);
 		pack_time(msg->time, buffer);
@@ -2578,6 +2580,7 @@ _pack_kill_job_msg(kill_job_msg_t * msg, buf_t *buffer, uint16_t protocol_versio
 					     protocol_version);
 		packstr_array(msg->spank_job_env, msg->spank_job_env_size,
 			      buffer);
+    pack32(msg->nnodes, buffer);
 		pack16_array(msg->job_node_cpus, msg->nnodes, buffer);
 		pack_time(msg->start_time, buffer);
 		pack_time(msg->time, buffer);
@@ -2624,6 +2627,7 @@ _unpack_kill_job_msg(kill_job_msg_t ** msg, buf_t *buffer,
 			goto unpack_error;
 		safe_unpackstr_array(&tmp_ptr->spank_job_env,
 				     &tmp_ptr->spank_job_env_size, buffer);
+    safe_unpack32(&tmp_ptr->nnodes, buffer);
 		safe_unpack16_array(&tmp_ptr->job_node_cpus,
 		             &tmp_ptr->nnodes,
 					 buffer);
@@ -2648,6 +2652,7 @@ _unpack_kill_job_msg(kill_job_msg_t ** msg, buf_t *buffer,
 			goto unpack_error;
 		safe_unpackstr_array(&tmp_ptr->spank_job_env,
 				     &tmp_ptr->spank_job_env_size, buffer);
+    safe_unpack32(&tmp_ptr->nnodes, buffer);
 		safe_unpack16_array(&tmp_ptr->job_node_cpus,
 		             &tmp_ptr->nnodes,
 					 buffer);
@@ -2672,6 +2677,7 @@ _unpack_kill_job_msg(kill_job_msg_t ** msg, buf_t *buffer,
 			goto unpack_error;
 		safe_unpackstr_array(&tmp_ptr->spank_job_env,
 				     &tmp_ptr->spank_job_env_size, buffer);
+    safe_unpack32(&tmp_ptr->nnodes, buffer);
 		safe_unpack16_array(&tmp_ptr->job_node_cpus,
 		             &tmp_ptr->nnodes,
 					 buffer);
