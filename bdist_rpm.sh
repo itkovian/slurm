@@ -37,11 +37,13 @@ if grep "release 7" /etc/redhat-release; then
     sudo yum install -y ucx-devel-1.5.2-1.el7.x86_64 "pmix-devel > 3.0.0" numactl-devel pmix-pmi-devel hwloc-devel-1.11.8-4.el7.x86_64
 elif grep "release 8.6" /etc/redhat-release; then
     sudo yum install -y ucx-devel-1.11.2-2.el8.x86_64 "pmix-devel > 3.1.4" numactl-devel pmix-pmi-devel hwloc-devel-2.2.0-3.el8.x86_64
+elif grep "release 8.8" /etc/redhat-release; then
+    sudo yum install -y ucx-devel-1.13.1-2.el8.x86_64 "pmix-devel > 3.1.4" numactl-devel pmix-pmi-devel hwloc-devel-2.2.0-3.el8.x86_64
 else
     sudo yum install -y ucx-devel-1.9.0-1.el8.x86_64 "pmix-devel > 3.0.0" numactl-devel pmix-pmi-devel hwloc-devel-0:1.11.9-3.el8.x86_64
 fi
 
-sudo yum install munge-devel mariadb-devel pam-devel readline-devel
+sudo yum install -y munge-devel mariadb-devel pam-devel readline-devel
 
 # there's no option to pass nvml, it is only autodetected
 # nvidia-driver-devel provides the libnividia-ml.so symlnk, the real .so.1 comes from nvidia-driver-NVML
@@ -51,8 +53,8 @@ sudo yum install munge-devel mariadb-devel pam-devel readline-devel
 
 # TODO: what if more than one cuda is available/installed, then the * thingies will probably not work
 # pmix-3 as rebuild from github src.rpm includes the devel rpms in the rpm
-sudo yum remove -y cuda-nvml-dev-10-1 cuda-nvml-dev-10-2 cuda-nvml-devel-11-6
-sudo yum install -y nvidia-driver-devel nvidia-driver-NVML cuda-nvml-devel-11-6
+sudo yum remove -y cuda-nvml-dev-10-1 cuda-nvml-dev-10-2 cuda-nvml-devel-11-6 cuda-nvml-devel-12-2
+sudo yum install -y nvidia-driver-devel nvidia-driver-NVML cuda-nvml-devel-12-2
 
 
 # glob expansion in list
@@ -77,8 +79,8 @@ echo "BUILDING NON GPU VERSION"
 
 # TODO: what if more than one cuda is available/installed, then the * thingies will probably not work
 # pmix-3 as rebuild from github src.rpm includes the devel rpms in the rpm
-sudo yum remove -y nvidia-driver-devel cuda-nvml-dev-10-2 nvidia-driver-NVML cuda-nvml-dev-10-1
-sudo yum remove -y nvidia-driver-devel nvidia-driver-NVML cuda-nvml-devel-11-3-11.3.58-1.x86_64
+sudo yum remove -y nvidia-driver-devel cuda-nvml-dev-10-2 nvidia-driver-NVML cuda-nvml-dev-10-1 cuda-nvml-devel-11-6 cuda-nvml-devel-12-2
+sudo yum remove -y nvidia-driver-NVML cuda-nvml-devel-11-3-11.3.58-1.x86_64
 
 
 rpmbuild --define "gittag ${GITTAG}" --define "_topdir $PWD" --with pmix --with numa --with hwloc --with mysql --with x11 --with ucx --define "gpu .nogpu" -ba SPECS/slurm.spec
