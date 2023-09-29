@@ -27,8 +27,11 @@ To run the testsuites using the unified test-runner:
   Review and edit testsuite.conf as necessary.
 * pytest (pytest-3) must be installed in order to run the python testsuite.
 * expect must be installed in order to run the expect testsuite.
-* If perldoc is installed, ./run-tests --man can be used to display a man page
-  for the test-runner.
+* Set the SLURM_CLUSTER environment variable to set up a custom directory
+  in the 'results' dir that will hold unique logs and test data.
+  You can name this whatever you'd like, it will be created if needed.
+  This is a useful way to archive results from run-tests with things like
+  different dates, commits, or configs.
 * Execute run-tests with the desired options to run the testsuites.
 
 testsuite.conf:
@@ -107,7 +110,6 @@ test1.36   Test parallel launch of srun (e.g. "srun srun hostname")
 test1.37   Test of srun --ntasks-per-node option.
 test1.38   Test srun handling of SIGINT to get task status or kill the job
 	   (--quit-on-interrupt option).
-test1.39   Test of linux light-weight core files.
 test1.40   Test of job account (--account option).
 test1.41   Validate Slurm debugger infrastructure (--debugger-test option).
 test1.43   Test of slurm_job_will_run API, (srun --test-only option).
@@ -820,6 +822,7 @@ test_102_2   /commands/sacctmgr/test_--usage.py
 test_103_#   Testing of salloc options.
 =======================================
 test_103_1   /commands/salloc/test_--usage.py
+test_103_2   Test salloc with default command
 
 test_104_#   Testing of sattach options.
 ========================================
@@ -946,7 +949,7 @@ test_119_#   Testing of contribs.
 test_119_1   /contribs/openlava/test_lsid.py
 test_119_2   /contribs/torque/qsub/test_basic.py
 
-test_121_#   Testing of gres.
+test_121_#   Testing of mps.
 =============================
 test_121_1   /features/gres/test_mps_options.py
 test_121_2   /features/gres/test_mps--gres=mps_by_job.py
@@ -954,10 +957,12 @@ test_121_2   /features/gres/test_mps--gres=mps_by_job.py
 test_122_#   Testing of job_arrays.
 ===================================
 test_122_1   /features/job_arrays/test_basics.py
+test_122_2   Test job array with gres
 
 test_123_#   Testing of reservations.
 =====================================
 test_123_1   /features/reservations/test_flags.py
+test_123_4   Test reservation access
 
 test_124_#   Testing of AccountingStorageEnforce.
 =================================================
@@ -1017,7 +1022,13 @@ test_137_1   /plugins/node_features/helpers/test_plugin.py
 test_138_#   Testing stressing cases.
 =====================================
 test_138_1   /stress/test_stdin_broadcast.py
+test_138_2   Test parallel performance of squeue
 
 test_143_#   Testing --switches.
 ================================
 test_143_1   Test switches with topology/tree + select/cons_tres
+
+test_144_#   Testing of gres.
+================================
+test_144_4   Test gres with file or type and --overlap
+test_144_6   Test gres with no_consume flag
