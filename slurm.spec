@@ -1,7 +1,7 @@
 Name:		slurm
 Version:	23.02.5
 %define rel	1
-Release:	%{rel}%{?dist}
+Release:        %{rel}.%{gittag}%{?dist}%{?gpu}.ug
 Summary:	Slurm Workload Manager
 
 Group:		System Environment/Base
@@ -15,7 +15,7 @@ URL:		https://slurm.schedmd.com/
 %global slurm_source_dir %{name}-%{version}-%{rel}
 %endif
 
-Source:		%{slurm_source_dir}.tar.bz2
+Source:		%{slurm_source_dir}.tar.gz
 
 # build options		.rpmmacros options	change to default action
 # ====================  ====================	========================
@@ -263,7 +263,9 @@ database changes to slurmctld daemons on each cluster
 Summary: Slurm\'s implementation of the pmi libraries
 Group: System Environment/Base
 Requires: %{name}%{?_isa} = %{version}-%{release}
+%if ! %{with pmix}
 Conflicts: pmix-libpmi
+%endif
 %description libpmi
 Slurm\'s version of libpmi. For systems using Slurm, this version
 is preferred over the compatibility libraries shipped by the PMIx project.
@@ -324,7 +326,13 @@ BuildRequires: http-parser-devel
 %if %{defined suse_version}
 BuildRequires: libjson-c-devel
 %else
+%if 0%{?fedora} || 0%{?rhel} > 7
 BuildRequires: json-c-devel
+Requires: json-c
+%else
+BuildRequires: json-c12-devel
+Requires: json-c12
+%endif
 %endif
 %description slurmrestd
 Provides a REST interface to Slurm.
@@ -377,7 +385,7 @@ export QA_RPATHS=0x5
 # Strip out some dependencies
 
 cat > find-requires.sh <<'EOF'
-exec %{__find_requires} "$@" | egrep -v '^libpmix.so|libevent|libnvidia-ml'
+exec %{__find_requires} "$@" | egrep -v '^libpmix.so|libevent'
 EOF
 chmod +x find-requires.sh
 %global _use_internal_dependency_generator 0
@@ -393,6 +401,13 @@ install -D -m644 etc/slurmdbd.service  %{buildroot}/%{_unitdir}/slurmdbd.service
 
 %if %{with slurmrestd}
 install -D -m644 etc/slurmrestd.service  %{buildroot}/%{_unitdir}/slurmrestd.service
+%endif
+
+# in case of pmix, no conflict with pmix compat libs
+# see Cray comment below
+%if %{with pmix}
+   mkdir %{buildroot}/%{_libdir}/slurmpmi
+   mv %{buildroot}/%{_libdir}/libpmi* %{buildroot}/%{_libdir}/slurmpmi
 %endif
 
 # Do not package Slurm's version of libpmi on Cray systems in the usual location.
@@ -610,7 +625,7 @@ rm -rf %{buildroot}
 
 %files libpmi
 %defattr(-,root,root)
-%if %{with cray} || %{with cray_shasta}
+%if %{with cray} || %{with cray_shasta} || %{with pmix}
 %{_libdir}/slurmpmi/*
 %else
 %{_libdir}/libpmi*
@@ -619,16 +634,16 @@ rm -rf %{buildroot}
 
 %files torque
 %defattr(-,root,root)
-%{_bindir}/pbsnodes
-%{_bindir}/qalter
-%{_bindir}/qdel
-%{_bindir}/qhold
-%{_bindir}/qrerun
-%{_bindir}/qrls
-%{_bindir}/qstat
-%{_bindir}/qsub
-%{_bindir}/mpiexec
-%{_bindir}/generate_pbs_nodefile
+#%{_bindir}/pbsnodes
+#%{_bindir}/qalter
+#%{_bindir}/qdel
+#%{_bindir}/qhold
+#%{_bindir}/qrerun
+#%{_bindir}/qrls
+#%{_bindir}/qstat
+#%{_bindir}/qsub
+#%{_bindir}/mpiexec
+#%{_bindir}/generate_pbs_nodefile
 %{_libdir}/slurm/job_submit_pbs.so
 %{_libdir}/slurm/spank_pbs.so
 #############################################################################
