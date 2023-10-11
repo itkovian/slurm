@@ -35,6 +35,26 @@ documents those changes that are of interest to users and administrators.
  -- Fix sacct printing ReqMem field when memory doesn't exist in requested TRES.
  -- Fix how heterogenous steps in an allocation with CR_PACK_NODE or -mpack are
     created.
+ -- Fix slurmctld crash from race condition within job_submit_throttle plugin.
+ -- Fix --with-systemdsystemunitdir when requesting a default location.
+ -- Fix not being able to cancel an array task by the jobid (i.e. not
+    <jobid>_<taskid>) through scancel, job launch failure or prolog failure.
+ -- Fix cancelling the whole array job when the array task is the meta job and
+    it fails job or prolog launch and is not requeable. Cancel only the
+    specific task instead.
+ -- Fix regression in 21.08.2 where MailProg did not run for mail-type=end for
+    jobs with non-zero exit codes.
+ -- Fix incorrect setting of memory.swap.max in cgroup/v2.
+ -- Fix jobacctgather/cgroup collection of disk/io, gpumem, gpuutil TRES values.
+ -- Fix -d singleton for heterogeneous jobs.
+ -- Downgrade info logs about a job meeting a "maximum node limit" in the
+    select plugin to DebugFlags=SelectType. These info logs could spam the
+    slurmctld log file under certain circumstances.
+ -- prep/script - Fix [Srun|Task]<Prolog|Epilog> missing SLURM_JOB_NODELIST.
+ -- gres - Rebuild GRES core bitmap for nodes at startup. This fixes error:
+    "Core bitmaps size mismatch on node [HOSTNAME]", which causes jobs to enter
+    state "Requested node configuration is not available".
+ -- slurmctd - Allow startup with zero nodes.
 
 * Changes in Slurm 23.02.5
 ==========================

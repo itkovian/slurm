@@ -1,4 +1,4 @@
-.TH "slurm.conf" "5" "Slurm Configuration File" "September 2023" "Slurm Configuration File"
+.TH "slurm.conf" "5" "Slurm Configuration File" "October 2023" "Slurm Configuration File"
 
 .SH "NAME"
 slurm.conf \- Slurm configuration file
@@ -1991,6 +1991,10 @@ distribution, in the directory contribs/lua. Slurmctld will fatal on startup if
 the configured lua script is invalid. Slurm will try to load the script for each
 job submission. If the script is broken or removed while slurmctld is running,
 Slurm will fallback to the previous working version of the script.
+\fBWarning\fR: slurmctld runs this script while holding internal locks, and
+only a single copy of this script can run at a time. This blocks most
+concurrency in slurmctld. Therefore, this script should run to completion as
+quickly as possible.
 .IP
 
 .TP
@@ -6018,6 +6022,9 @@ SIGKILL) and execute \fBUnkillableStepProgram\fR.
 The default timeout value is 60 seconds.
 If exceeded, the compute node will be drained to prevent future jobs from being
 scheduled on the node.
+
+\fBNOTE\fR: Ensure that UnkillableStepTimeout is at least 5 times larger than
+MessageTimeout, otherwise it can lead to unexpected draining of nodes.
 .IP
 
 .TP

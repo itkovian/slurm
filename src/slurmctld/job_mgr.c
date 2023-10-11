@@ -6115,9 +6115,18 @@ extern int job_str_signal(char *job_id_str, uint16_t signal, uint16_t flags,
 		}
 		if (job_ptr && job_ptr->het_job_id && IS_JOB_PENDING(job_ptr))
 			return ESLURM_NOT_WHOLE_HET_JOB;/* Hetjob child */
-		if (job_ptr && (job_ptr->array_task_id == NO_VAL) &&
-		    (job_ptr->array_recs == NULL)) {
-			/* This is a regular job, not a job array */
+
+		if (job_ptr &&
+		    (((job_ptr->array_task_id == NO_VAL) &&
+		      (job_ptr->array_recs == NULL)) ||
+		     ((job_ptr->array_task_id != NO_VAL) &&
+		      ((job_ptr->array_job_id != job_id) ||
+		       (flags & KILL_ARRAY_TASK))))) {
+			/*
+			 * This is a regular job or a single task of a job
+			 * array. KILL_ARRAY_TASK indicates that the meta job
+			 * should be treated as a single task.
+			 */
 			return job_signal_id(job_id, signal, flags, uid, preempt);
 		}
 
@@ -16809,16 +16818,15 @@ extern void job_completion_logger(job_record_t *job_ptr, bool requeue)
 			    (base_state >= JOB_FAILED) &&
 			    ((base_state != JOB_PREEMPTED) || !requeue))
 				mail_job_info(job_ptr, MAIL_JOB_FAIL);
+			else if ((job_ptr->mail_type & MAIL_JOB_END) &&
+				 (base_state >= JOB_COMPLETE))
+				mail_job_info(job_ptr, MAIL_JOB_END);
 
 			if (requeue &&
 			    (job_ptr->mail_type & MAIL_JOB_REQUEUE))
 				mail_job_info(job_ptr,
 					      MAIL_JOB_REQUEUE);
 
-			if ((job_ptr->mail_type & MAIL_JOB_END) &&
-			    ((base_state == JOB_COMPLETE) ||
-			     (base_state == JOB_CANCELLED)))
-				mail_job_info(job_ptr, MAIL_JOB_END);
 		}
 	}
 
