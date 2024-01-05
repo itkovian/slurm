@@ -39,7 +39,7 @@ elif grep "release 8.6" /etc/redhat-release; then
     sudo yum install -y ucx-devel-1.11.2-2.el8.x86_64 "pmix-devel > 3.1.4" numactl-devel pmix-pmi-devel hwloc-devel-2.2.0-3.el8.x86_64
 elif grep "release 8.8" /etc/redhat-release; then
     sudo yum install -y ucx-devel-1.13.1-2.el8.x86_64 "pmix-devel >= 4.2.6" numactl-devel hwloc-devel-2.2.0-3.el8.x86_64
-elif grep "release 9.8" /etc/redhat-release; then
+elif grep "release 9" /etc/redhat-release; then
     sudo yum install -y ucx-devel-1.13.1-2.el9.x86_64 "pmix-devel >= 3.2.3" numactl-devel hwloc-devel-2.4.1-5.el9.x86_64
 else
     sudo yum install -y ucx-devel-1.9.0-1.el8.x86_64 "pmix-devel > 3.0.0" numactl-devel pmix-pmi-devel hwloc-devel-0:1.11.9-3.el8.x86_64
