@@ -378,9 +378,8 @@ static int _modify_config(stepd_step_rec_t *step, stepd_step_task_info_t *task)
 
 	xassert(c->magic == STEP_CONTAINER_MAGIC);
 
-	/* Disable terminal to ensure stdin/err/out are used */
 	data_set_bool(data_define_dict_path(c->config, "/process/terminal/"),
-		      false);
+		      (step->flags & LAUNCH_PTY));
 
 	/* point to correct rootfs */
 	data_set_string(data_define_dict_path(c->config, "/root/path/"),
@@ -750,12 +749,6 @@ extern int setup_container(stepd_step_rec_t *step)
 		debug("%s: OCI Container not configured. Ignoring %pS requested container: %s",
 		      __func__, step, c->bundle);
 		return ESLURM_CONTAINER_NOT_CONFIGURED;
-	}
-
-	if ((rc = data_init())) {
-		error("Unable to init data structures: %s",
-		      slurm_strerror(rc));
-		goto error;
 	}
 
 	if ((rc = serializer_g_init(MIME_TYPE_JSON_PLUGIN, NULL))) {

@@ -5,6 +5,7 @@ generated_html = \
 	accounting.html \
 	add.html \
 	api.html \
+	authentication.html \
 	big_sys.html \
 	burst_buffer.html \
 	cgroups.html \
@@ -12,8 +13,8 @@ generated_html = \
 	classic_fair_share.html \
 	cli_filter_plugins.html \
 	configless_slurm.html \
-	cons_res.html \
-	cons_res_share.html \
+	cons_tres.html \
+	cons_tres_share.html \
 	containers.html \
 	contributor.html \
 	core_spec.html \
@@ -25,7 +26,7 @@ generated_html = \
 	download.html \
 	dynamic_nodes.html \
 	elasticsearch.html \
-	elastic_computing.html \
+	extra_constraints.html \
 	faq.html \
 	federation.html \
 	gang_scheduling.html \
@@ -42,6 +43,7 @@ generated_html = \
 	job_launch.html \
 	job_submit_plugins.html \
 	jwt.html \
+	kubernetes.html \
 	licenses.html \
 	fair_tree.html \
 	mail.html \
