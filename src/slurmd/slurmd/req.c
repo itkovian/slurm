@@ -2234,7 +2234,7 @@ static int _get_node_inx(char *hostlist)
 {
 	char *host;
 	int node_inx = -1;
-	hostset_t hset;
+	hostset_t *hset;
 
 	if (!conf->node_name)
 		return node_inx;
@@ -2262,6 +2262,7 @@ static void _rpc_prolog(slurm_msg_t *msg)
 	job_env_t job_env;
 	bool     first_job_run;
 	uint32_t jobid;
+  int node_inx = 0;
 
 	if (req == NULL)
 		return;
@@ -2327,7 +2328,7 @@ static void _rpc_prolog(slurm_msg_t *msg)
 		jobid = req->job_id;
 #endif
 
-        node_inx = _get_node_inx(req->nodes);
+    node_inx = _get_node_inx(req->nodes);
 		debug("_rpc_prolog: _get_node_inx returned %d", node_inx);
         job_env.job_node_cpus = (node_inx >= 0 ? req->job_node_cpus[node_inx] : 0);
 

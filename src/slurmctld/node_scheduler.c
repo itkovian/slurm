@@ -310,6 +310,8 @@ extern void deallocate_nodes(job_record_t *job_ptr, bool timeout,
 	hostlist_t *hostlist = NULL;
 	uint16_t use_protocol_version = 0;
 	uint16_t msg_flags = 0;
+  job_resources_t	*job_resrcs_ptr = NULL;
+
 #ifdef HAVE_FRONT_END
 	front_end_record_t *front_end_ptr;
 #endif
