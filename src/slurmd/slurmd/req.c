@@ -43,6 +43,7 @@
 #include <stdint.h>
 
 #define _GNU_SOURCE	/* for setresuid() */
+#define __USE_XOPEN_EXTENDED
 
 #include <ctype.h>
 #include <fcntl.h>
