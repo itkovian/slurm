@@ -2466,10 +2466,6 @@ static void _rpc_prolog(slurm_msg_t *msg)
 {
 	int rc = SLURM_SUCCESS;
 	prolog_launch_msg_t *req = msg->data;
-	job_env_t job_env;
-	bool     first_job_run;
-	uint32_t jobid;
-    int node_inx = 0;
 
 	if (req == NULL)
 		return;
@@ -2518,6 +2514,7 @@ static void _rpc_prolog(slurm_msg_t *msg)
 	if (!(slurm_conf.prolog_flags & PROLOG_FLAG_RUN_IN_JOB)) {
 		int node_id = 0;
 		job_env_t job_env;
+		int node_inx = 0;
 
 #ifndef HAVE_FRONT_END
 		/* It is always 0 for front end systems */
