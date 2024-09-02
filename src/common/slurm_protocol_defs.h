@@ -798,6 +798,8 @@ typedef struct kill_job_msg {
 	slurm_step_id_t step_id;
 	time_t   time;		/* slurmctld's time of request */
 	char *work_dir;
+    uint32_t nnodes; /* Number of nodes allocated to the job */
+    uint16_t *job_node_cpus; /* Number of CPUs required on the nodes for the job */
 } kill_job_msg_t;
 
 typedef struct reattach_tasks_request_msg {
@@ -831,6 +833,7 @@ typedef struct prolog_launch_msg {
 	char **spank_job_env;		/* SPANK job environment variables */
 	uint32_t spank_job_env_size;	/* size of spank_job_env */
 	uint32_t uid;
+  uint16_t *job_node_cpus; /* Number of CPUs required on the nodes for the job */
 	char *user_name_deprecated;	/* remove two versions after 23.11 */
 	char *work_dir;			/* full pathname of working directory */
 	uint16_t x11;			/* X11 forwarding setup flags */

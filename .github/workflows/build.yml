@@ -1,0 +1,23 @@
+name: slurm C/C++ build
+
+on:
+  push:
+    branches: [ 20.11.ug, 22.05.ug ]
+  pull_request:
+    branches: [ 20.11.ug, 22.05.ug ]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-20.04
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: configure
+      run: ./configure --enable-multiple-slurmd --prefix=/tmp/slurm/
+    - name: make
+      run: make -j
+    - name: make check
+      run: make -j check
+    - name: make install
+      run: make -j install

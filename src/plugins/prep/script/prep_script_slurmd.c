@@ -272,6 +272,9 @@ static char **_build_env(job_env_t *job_env, slurm_cred_t *cred,
 	else
 		setenvf(&env, "SLURM_SCRIPT_CONTEXT", "prolog_slurmd");
 
+    setenvf(&env, "SLURM_JOB_NODE_CPUS", "%d", job_env->job_node_cpus);
+    setenvf(&env, "SLURM_ACTUAL_NODE_CPUS", "%d", conf->actual_cpus);
+
 	if (is_epilog && (job_env->exit_code != INFINITE)) {
 		int exit_code = 0, signal = 0;
 		if (WIFEXITED(job_env->exit_code))

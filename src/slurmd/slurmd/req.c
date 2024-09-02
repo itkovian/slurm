@@ -2437,10 +2437,39 @@ static void _notify_result_rpc_prolog(prolog_launch_msg_t *req, int rc)
 	}
 }
 
+static int _get_node_inx(char *hostlist)
+{
+	char *host;
+	int node_inx = -1;
+	hostset_t *hset;
+
+	if (!conf->node_name)
+		return node_inx;
+
+	if ((hset = hostset_create(hostlist))) {
+		int inx = 0;
+		while ((host = hostset_shift(hset))) {
+			if (!strcmp(host, conf->node_name)) {
+				node_inx = inx;
+				free(host);
+				break;
+			}
+			inx++;
+			free(host);
+		}
+		hostset_destroy(hset);
+	}
+	return node_inx;
+}
+
 static void _rpc_prolog(slurm_msg_t *msg)
 {
 	int rc = SLURM_SUCCESS;
 	prolog_launch_msg_t *req = msg->data;
+	job_env_t job_env;
+	bool     first_job_run;
+	uint32_t jobid;
+    int node_inx = 0;
 
 	if (req == NULL)
 		return;
@@ -2510,7 +2539,11 @@ static void _rpc_prolog(slurm_msg_t *msg)
 		job_env.uid = req->uid;
 		job_env.gid = req->gid;
 
-		rc = run_prolog(&job_env, req->cred);
+        node_inx = _get_node_inx(req->nodes);
+		debug("_rpc_prolog: _get_node_inx returned %d", node_inx);
+        job_env.job_node_cpus = (node_inx >= 0 ? req->job_node_cpus[node_inx] : 0);
+
+        rc = run_prolog(&job_env, req->cred);
 		_free_job_env(&job_env);
 		if (rc) {
 			int term_sig = 0, exit_status = 0;
@@ -5527,6 +5560,9 @@ _rpc_terminate_job(slurm_msg_t *msg)
 		job_env.uid = req->job_uid;
 		job_env.gid = req->job_gid;
 
+		node_inx = _get_node_inx(req->nodes);
+        job_env.job_node_cpus = (node_inx >= 0 ? req->job_node_cpus[node_inx] : 0);
+        debug2("Setting job_env.job_cpu_nodes to %d", job_env.job_node_cpus);
 		_wait_for_job_running_prolog(job_env.jobid);
 		rc = run_epilog(&job_env, req->cred);
 		_free_job_env(&job_env);
