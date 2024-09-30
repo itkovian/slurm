@@ -54,6 +54,7 @@
 #include <fcntl.h>
 #include <grp.h>
 #include <pthread.h>
+#include <poll.h>
 #include <sched.h>
 #include <stdlib.h>
 #include <string.h>
@@ -159,6 +160,10 @@ typedef struct connection {
 	slurm_addr_t *cli_addr;
 } conn_t;
 
+typedef struct registration_engine_arg {
+	bool original;
+} registration_engine_arg_t;
+
 /*
  * Global data for resource specialization
  */
@@ -177,6 +182,7 @@ static int	ncpus;			/* number of CPUs on this node */
  */
 static bool original = true;
 static bool under_systemd = false;
+static bool reconfiguring = false;
 static sig_atomic_t _shutdown = 0;
 static sig_atomic_t _reconfig = 0;
 static sig_atomic_t _update_log = 0;
@@ -220,12 +226,12 @@ static int       _set_topo_info(void);
 static int       _set_work_dir(void);
 static int       _slurmd_init(void);
 static int       _slurmd_fini(void);
-static void _try_to_reconfig(void);
+static void * _try_to_reconfig(void * arg);
 static void      _update_nice(void);
 static void      _usage(void);
 static void      _usr_handler(int);
 static int       _validate_and_convert_cpu_list(void);
-static void      _wait_for_all_threads(int secs);
+static int _wait_for_all_threads(int secs);
 static void _wait_on_old_slurmd(bool kill_it);
 
 /**************************************************************************\
@@ -268,9 +274,11 @@ main (int argc, char **argv)
 	uint32_t curr_uid = 0;
 	char time_stamp[256];
 	log_options_t lopts = LOG_OPTS_INITIALIZER;
+	registration_engine_arg_t registration_arg;
 
 	if (getenv("SLURMD_RECONF"))
 		original = false;
+	registration_arg.original = original;
 
 	/* NOTE: logfile is NULL at this point */
 	log_init(argv[0], lopts, LOG_DAEMON, NULL);
@@ -399,7 +407,7 @@ main (int argc, char **argv)
 		run_script_health_check();
 
 	record_launched_jobs();
-	slurm_thread_create_detached(_registration_engine, NULL);
+	slurm_thread_create_detached(_registration_engine, &registration_arg);
 
 	/* main processing loop. when this returns start shutting down */
 	_msg_engine();
@@ -414,7 +422,7 @@ main (int argc, char **argv)
 		      conf->pidfile);
 
 	/* Wait for prolog/epilog scripts to finish or timeout */
-	_wait_for_all_threads(slurm_conf.prolog_epilog_timeout);
+	(void)_wait_for_all_threads(slurm_conf.prolog_epilog_timeout);
 	/*
 	 * run_command_shutdown() will kill any scripts started with
 	 * run_command() including the prolog and epilog.
@@ -448,16 +456,18 @@ main (int argc, char **argv)
  * message.
  */
 static void *
-_registration_engine(void *arg)
+_registration_engine(void *x)
 {
 	static const uint32_t MAX_DELAY = 128;
 	uint32_t delay = 1;
+	registration_engine_arg_t *arg = (registration_engine_arg_t *)x;
 	_increment_thd_count();
 
 	while (!_shutdown && !sent_reg_time) {
 		int rc;
 
-		if (!(rc = send_registration_msg(SLURM_SUCCESS)))
+		if (!(rc = send_registration_msg(SLURM_SUCCESS,
+			(arg->original ? 0 : SLURMD_REG_FLAG_RECONFIG ))))
 			break;
 
 		debug("Unable to register with slurm controller (retry in %us): %s",
@@ -481,20 +491,20 @@ static void _msg_engine(void)
 {
 	slurm_addr_t *cli;
 	int sock;
+	struct pollfd pfd;
+	pfd.fd = conf->lfd;
+	pfd.events = POLLIN;
 
 	msg_pthread = pthread_self();
 	slurmd_req(NULL);	/* initialize timer */
 	while (!_shutdown) {
-		if (_reconfig) {
-			int rpc_wait = MAX(5, slurm_conf.msg_timeout / 2);
+		if (_reconfig && !reconfiguring) {
 			DEF_TIMERS;
 			START_TIMER;
 			verbose("got reconfigure request");
 			/* Wait for RPCs to finish */
-			_wait_for_all_threads(rpc_wait);
-			if (_shutdown)
-				break;
-			_try_to_reconfig();
+			reconfiguring = true;
+			slurm_thread_create_detached(_try_to_reconfig, NULL);
 			END_TIMER3("_reconfigure request - slurmd doesn't accept new connections during this time.",
 				   5000000);
 		}
@@ -506,18 +516,27 @@ static void _msg_engine(void)
 			END_TIMER3("_update_log request - slurmd doesn't accept new connections during this time.",
 				   5000000);
 		}
-		cli = xmalloc(sizeof(*cli));
-		if ((sock = slurm_accept_msg_conn(conf->lfd, cli)) >= 0) {
-			_handle_connection(sock, cli);
-			continue;
+		if (poll(&pfd, 1, -1) < 0) {
+			if (errno != EINTR)
+				error("poll: %m");
+		} else if (pfd.revents && POLLIN) {
+			_increment_thd_count();
+			cli = xmalloc(sizeof(*cli));
+			if ((sock =
+			     slurm_accept_msg_conn(conf->lfd, cli)) >= 0) {
+				_handle_connection(sock, cli);
+				continue;
+			}
+			/*
+			 *  Otherwise, accept() failed
+			 */
+			xfree(cli);
+			if (errno == EINTR)
+				continue;
+			error("accept: %m");
+
+			_decrement_thd_count();
 		}
-		/*
-		 *  Otherwise, accept() failed.
-		 */
-		xfree(cli);
-		if (errno == EINTR)
-			continue;
-		error("accept: %m");
 	}
 	verbose("got shutdown request");
 	close(conf->lfd);
@@ -551,8 +570,7 @@ static void _increment_thd_count(void)
 }
 
 /* secs IN - wait up to this number of seconds for all threads to complete */
-static void
-_wait_for_all_threads(int secs)
+static int _wait_for_all_threads(int secs)
 {
 	struct timespec ts;
 	int rc;
@@ -567,20 +585,24 @@ _wait_for_all_threads(int secs)
 		if (secs == NO_VAL16) { /* Wait forever */
 			slurm_cond_wait(&active_cond, &active_mutex);
 		} else {
+			verbose("Waiting for all threads to complete for %d seconds.",
+				secs);
 			rc = pthread_cond_timedwait(&active_cond,
 						    &active_mutex, &ts);
 			if (rc == ETIMEDOUT) {
 				error("Timeout waiting for completion of %d threads",
 				      active_threads);
-				slurm_cond_signal(&active_cond);
-				slurm_mutex_unlock(&active_mutex);
-				return;
+				return SLURM_ERROR;
 			}
 		}
 	}
-	slurm_cond_signal(&active_cond);
-	slurm_mutex_unlock(&active_mutex);
+	/*
+	 * We deliberatelly keep active_mutex locked. If we are in
+	 * _wait_for_all_threads the slurmd is going to exit or execv
+	 * another slurmd immediatelly (reconfigure).
+	 */
 	verbose("all threads complete");
+	return SLURM_SUCCESS;
 }
 
 static void _handle_connection(int fd, slurm_addr_t *cli)
@@ -590,7 +612,6 @@ static void _handle_connection(int fd, slurm_addr_t *cli)
 	arg->fd       = fd;
 	arg->cli_addr = cli;
 
-	_increment_thd_count();
 	slurm_thread_create_detached(_service_connection, arg);
 }
 
@@ -754,7 +775,7 @@ static void _handle_node_reg_resp(slurm_msg_t *resp_msg)
 	}
 }
 
-extern int send_registration_msg(uint32_t status)
+extern int send_registration_msg(uint32_t status, uint16_t flags)
 {
 	int ret_val = SLURM_SUCCESS;
 	slurm_msg_t req, resp_msg;
@@ -768,6 +789,10 @@ extern int send_registration_msg(uint32_t status)
 		msg->flags |= SLURMD_REG_FLAG_RESP;
 	if (conf->conf_cache)
 		msg->flags |= SLURMD_REG_FLAG_CONFIGLESS;
+	if (flags & SLURMD_REG_FLAG_RECONFIG)
+		msg->flags |= SLURMD_REG_FLAG_RECONFIG;
+	if (flags & SLURMD_REG_FLAG_RECONFIG_TIMEOUT)
+		msg->flags |= SLURMD_REG_FLAG_RECONFIG_TIMEOUT;
 
 	_fill_registration_msg(msg);
 	msg->status = status;
@@ -1327,15 +1352,37 @@ rwfail:
 	return;
 }
 
-static void _try_to_reconfig(void)
+static void * _try_to_reconfig(void * arg)
 {
 	extern char **environ;
 	struct rlimit rlim;
 	char **child_env;
 	pid_t pid;
 	int to_parent[2] = {-1, -1};
+	char *tmp_ptr = NULL;
+	int reconfigure_timeout = slurm_conf.prolog_epilog_timeout;
 
 	_reconfig = 0;
+
+	if ((tmp_ptr = xstrcasestr(slurm_conf.slurmd_params,
+				   "reconfigure_timeout=")))
+		reconfigure_timeout = atoi(tmp_ptr + 20);
+	if (reconfigure_timeout == -1)
+		reconfigure_timeout = NO_VAL16;
+
+	if (_wait_for_all_threads(reconfigure_timeout)) {
+		error("Failed to reconfigure within %d s - draining node",
+		      reconfigure_timeout);
+		send_registration_msg(SLURM_SUCCESS,
+				      SLURMD_REG_FLAG_RECONFIG_TIMEOUT);
+		reconfiguring = false;
+		slurm_mutex_unlock(&active_mutex);
+		return NULL;
+	}
+
+	if (_shutdown)
+		return NULL;
+
 	conmgr_quiesce(true);
 
 	save_cred_state();
@@ -1362,14 +1409,14 @@ static void _try_to_reconfig(void)
 
 	if (pipe(to_parent) < 0) {
 		error("%s: pipe() failed: %m", __func__);
-		return;
+		return NULL;
 	}
 
 	setenvf(&child_env, "SLURMD_RECONF_PARENT_FD", "%d", to_parent[1]);
 
 	if ((pid = fork()) < 0) {
 		error("%s: fork() failed, cannot reconfigure.", __func__);
-		return;
+		return NULL;
 	} else if (pid > 0) {
 		pid_t grandchild_pid;
 		int rc;
@@ -1400,7 +1447,7 @@ rwfail:
 		waitpid(pid, &rc, 0);
 		info("Resuming operation, reconfigure failed.");
 		conmgr_run(false);
-		return;
+		return NULL;
 	}
 
 start_child:
@@ -2116,7 +2163,7 @@ static void _dynamic_init(void)
 		 * in order to load in correct configs (e.g. gres, etc.). First
 		 * get the mapped node_name from the slurmctld.
 		 */
-		send_registration_msg(SLURM_SUCCESS);
+		send_registration_msg(SLURM_SUCCESS, false);
 
 		/* send registration again after loading everything in */
 		sent_reg_time = 0;
@@ -2422,6 +2469,10 @@ static void
 _hup_handler(int signum)
 {
 	if (signum == SIGHUP) {
+		if (reconfiguring) {
+			error("Received reconfigure request while already processing reconfigure request");
+			return;
+		}
 		_reconfig = 1;
 	}
 }

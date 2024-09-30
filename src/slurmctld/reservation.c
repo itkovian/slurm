@@ -538,6 +538,8 @@ static void _restore_resv(slurmctld_resv_t *dest_resv,
 	dest_resv->core_resrcs = src_resv->core_resrcs;
 	src_resv->core_resrcs = NULL;
 
+	dest_resv->ctld_flags = src_resv->ctld_flags;
+
 	dest_resv->duration = src_resv->duration;
 	dest_resv->end_time = src_resv->end_time;
 
@@ -1395,6 +1397,8 @@ static int  _update_account_list(slurmctld_resv_t *resv_ptr,
 		xfree(resv_ptr->accounts);
 		if (accounts[0] != '\0')
 			resv_ptr->accounts = xstrdup(accounts);
+		for (i = 0; i < resv_ptr->account_cnt; i++)
+			xfree(resv_ptr->account_list[i]);
 		xfree(resv_ptr->account_list);
 		resv_ptr->account_list = ac_list;
 		resv_ptr->account_cnt  = ac_cnt;
@@ -1404,11 +1408,13 @@ static int  _update_account_list(slurmctld_resv_t *resv_ptr,
 		return SLURM_SUCCESS;
 	}
 
-	/* Modification of existing account list */
-	if ((resv_ptr->account_cnt == 0) && minus_account)
+	/*
+	 * If: The update sets a new list (it was previously empty).
+	 * All accounts are negated, so this is a new exclusion list.
+	 * NOTE: An empty list is always of type "inclusion".
+	 */
+	if ((resv_ptr->account_cnt == 0) && minus_account && !plus_account)
 		resv_ptr->ctld_flags |= RESV_CTLD_ACCT_NOT;
-	else
-		resv_ptr->ctld_flags &= (~RESV_CTLD_ACCT_NOT);
 
 	if (resv_ptr->ctld_flags & RESV_CTLD_ACCT_NOT) {
 		/* change minus_account to plus_account (add to NOT list) and
@@ -1427,6 +1433,12 @@ static int  _update_account_list(slurmctld_resv_t *resv_ptr,
 			plus_account  = false;
 		}
 	}
+
+	/*
+	 * At this point, minus/plus mean removing/adding literally to the list.
+	 * If "RESV_CTLD_ACCT_NOT" was previously set, it means the list is of
+	 * type "exclusion", otherwise it means "inclusion"
+	 */
 	if (minus_account) {
 		if (resv_ptr->account_cnt == 0)
 			goto inval;
@@ -1642,11 +1654,14 @@ static int _update_uid_list(slurmctld_resv_t *resv_ptr, char *users)
 		return SLURM_SUCCESS;
 	}
 
-	/* Modification of existing user list */
-	if ((resv_ptr->user_cnt == 0) && minus_user)
+	/*
+	 * If: The update sets a new list (it was previously empty).
+	 * All users are negated, so this is a new exclusion list.
+	 * NOTE: An empty list is always of type "inclusion".
+	 */
+	if ((resv_ptr->user_cnt == 0) && minus_user && !plus_user)
 		resv_ptr->ctld_flags |= RESV_CTLD_USER_NOT;
-	else
-		resv_ptr->ctld_flags &= (~RESV_CTLD_USER_NOT);
+
 	if (resv_ptr->ctld_flags & RESV_CTLD_USER_NOT) {
 		/* change minus_user to plus_user (add to NOT list) and
 		 * change plus_user to minus_user (remove from NOT list) */
@@ -1665,7 +1680,14 @@ static int _update_uid_list(slurmctld_resv_t *resv_ptr, char *users)
 		}
 	}
 
+	/*
+	 * At this point, minus/plus mean removing/adding literally to the list.
+	 * If "RESV_CTLD_USER_NOT" was previously set, it means the list is of
+	 * type "exclusion", otherwise it means "inclusion".
+	 */
 	if (minus_user) {
+		if (resv_ptr->user_cnt == 0)
+			goto inval;
 		for (i=0; i<u_cnt; i++) {
 			if (u_type[i] != 1)	/* not minus */
 				continue;
@@ -4486,6 +4508,7 @@ static void _resv_node_replace(slurmctld_resv_t *resv_ptr)
 	resv_desc_msg_t resv_desc;
 	int i, add_nodes, new_nodes, preserve_nodes, busy_nodes_needed;
 	bool log_it = true;
+	bool replaced = false;
 	resv_select_t resv_select = { 0 };
 
 	/* Identify nodes which can be preserved in this reservation */
@@ -4544,6 +4567,7 @@ static void _resv_node_replace(slurmctld_resv_t *resv_ptr)
 		if (i == SLURM_SUCCESS) {
 			job_record_t *job_ptr = resv_desc.job_ptr;
 
+			replaced = true;
 			new_nodes = bit_set_count(resv_select.node_bitmap);
 			busy_nodes_needed = resv_ptr->node_cnt - new_nodes
 					    - preserve_nodes;
@@ -4616,8 +4640,10 @@ static void _resv_node_replace(slurmctld_resv_t *resv_ptr)
 		_free_resv_select_members(&resv_select);
 	}
 	FREE_NULL_BITMAP(preserve_bitmap);
-	last_resv_update = time(NULL);
-	schedule_resv_save();
+	if (replaced) {
+		last_resv_update = time(NULL);
+		schedule_resv_save();
+	}
 }
 
 /*
@@ -5362,7 +5388,7 @@ static int _select_nodes(resv_desc_msg_t *resv_desc_ptr,
 			     &resv_select[SELECT_NOT_RSVD], true);
 
 		_filter_resv(resv_desc_ptr, resv_ptr,
-			     &resv_select[SELECT_OVR_RSVD], true);
+			     &resv_select[SELECT_OVR_RSVD], false);
 	}
 	list_iterator_destroy(itr);
 

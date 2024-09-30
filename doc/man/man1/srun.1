@@ -1,4 +1,4 @@
-.TH srun "1" "Slurm Commands" "August 2024" "Slurm Commands"
+.TH srun "1" "Slurm Commands" "September 2024" "Slurm Commands"
 
 .SH "NAME"
 srun \- Run parallel jobs
@@ -786,6 +786,10 @@ threads per CPU for a total of two tasks.
 \fBWARNING\fR: When srun is executed from within salloc or sbatch,
 there are configurations and options which can result in inconsistent
 allocations when \-c has a value greater than \-c on salloc or sbatch.
+
+\fBNOTE\fR: If \fB\-\-mem\-per\-cpu\fR is also specified, the number of
+allocated cpus can be increased if \fBMaxMemPerCPU\fR is exceeded. In the case
+\fB\-n\fR is not specified, the number of tasks can be higher than expected.
 
 This option applies to job and step allocations.
 .IP
@@ -3046,7 +3050,7 @@ affinity of the gres as specified in gres.conf's \fICores\fR parameter.
 \fB\-\-tres\-per\-task\fR=<\fIlist\fR>
 Specifies a comma\-delimited list of trackable resources required for the job on
 each task to be spawned in the job's resource allocation.
-The format for each entry in the list is "trestype[/tresname]:count".
+The format for each entry in the list is "trestype[/tresname]=count".
 The \fItrestype\fR is the type of trackable resource requested (e.g. cpu, gres,
 license, etc).
 The \fItresname\fR is the name of the trackable resource, as can be seen with
@@ -3070,10 +3074,10 @@ The count can have a suffix of
 .br
 Examples:
 .nf
-\-\-tres\-per\-task=cpu:4
-\-\-tres\-per\-task=cpu:8,license/ansys:1
-\-\-tres\-per\-task=gres/gpu:1
-\-\-tres\-per\-task=gres/gpu:a100:2
+\-\-tres\-per\-task=cpu=4
+\-\-tres\-per\-task=cpu=8,license/ansys=1
+\-\-tres\-per\-task=gres/gpu=1
+\-\-tres\-per\-task=gres/gpu:a100=2
 .fi
 The specified resources will be allocated to the job on each node.
 The available trackable resources are configurable by the system
@@ -3481,7 +3485,7 @@ Same as \fB\-\-cpus\-per\-gpu\fR
 
 .TP
 \fBSLURM_CPUS_PER_TASK\fR
-Same as \fB\-c, \-\-cpus\-per\-task\fR or \fB\-\-tres\-per\-task=cpu:#\fR
+Same as \fB\-c, \-\-cpus\-per\-task\fR or \fB\-\-tres\-per\-task=cpu=#\fR
 .IP
 
 .TP
@@ -3990,7 +3994,7 @@ indicates the number of CPUs on this node allocated to the step.
 \fBSLURM_CPUS_PER_TASK\fR
 Number of cpus requested per task.
 Only set if either the \fB\-\-cpus\-per\-task\fR option or the
-\fB\-\-tres\-per\-task=cpu:#\fR option is specified.
+\fB\-\-tres\-per\-task=cpu=#\fR option is specified.
 .IP
 
 .TP
@@ -4058,6 +4062,11 @@ Only set in batch and interactive jobs.
 .TP
 \fBSLURM_JOB_ID\fR
 Job id of the executing job.
+.IP
+
+.TP
+\fBSLURM_JOB_LICENSES\fR
+Name and count of any license(s) requested.
 .IP
 
 .TP

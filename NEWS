@@ -15,6 +15,46 @@ documents those changes that are of interest to users and administrators.
  -- Improve how shards are scheduled with affinity in mind.
  -- Fix MaxJobsAccruePU not being respected when MaxJobsAccruePA is set
     in the same QOS.
+ -- Prevent backfill from planning jobs that use overlapping resources for the
+    same time slot if the job's time limit is less than bf_resolution.
+ -- Fix memory leak when requesting typed gres and --[cpus|mem]-per-gpu.
+ -- Prevent backfill from breaking out due to "system state changed" every 30
+    seconds if reservations use REPLACE or REPLACE_DOWN flags.
+ -- slurmrestd - Make sure that scheduler_unset parameter defaults to true even
+    when the following flags are also set: show_duplicates, skip_steps,
+    disable_truncate_usage_time, run_away_jobs, whole_hetjob,
+    disable_whole_hetjob, disable_wait_for_result, usage_time_as_submit_time,
+    show_batch_script, and or show_job_environment. Additionaly, always make
+    sure show_duplicates and disable_truncate_usage_time default to true when
+    the following flags are also set: scheduler_unset, scheduled_on_submit,
+    scheduled_by_main, scheduled_by_backfill, and or job_started. This effects
+    the following endpoints:
+      'GET /slurmdb/v0.0.40/jobs'
+      'GET /slurmdb/v0.0.41/jobs'
+ -- Ignore --json and --yaml options for scontrol show config to prevent mixing
+    output types.
+ -- Fix not considering nodes in reservations with Maintenance or Overlap flags
+    when creating new reservations with nodecnt or when they replace down nodes.
+ -- Fix slurmd - slurmctld synchronization issues on scontrol reconfigure.
+    Those may have result in prolog errors or tasks not being launched while
+    jobs where shown running by slurmctld.
+ -- Fix suspending/resuming steps running under a 23.02 slurmstepd process.
+ -- Fix options like sprio --me and squeue --me for users with a uid greater
+    than 2147483647.
+ -- fatal() if BlockSizes=0. This value is invalid and would otherwise cause the
+    slurmctld to crash.
+ -- sacctmgr - Fix issue where clearing out a preemption list using
+    preempt='' would cause the given qos to no longer be preempt-able until set
+    again.
+ -- Fix stepmgr creating job steps concurrently.
+ -- data_parser/v0.0.40 - Avoid dumping "Infinity" for NO_VAL tagged "number"
+    fields.
+ -- data_parser/v0.0.41 - Avoid dumping "Infinity" for NO_VAL tagged "number"
+    fields.
+ -- slurmctld - Fix a potential leak while updating a reservation.
+ -- slurmctld - Fix state save with reservation flags when a update fails.
+ -- Fix reservation update issues with parameters Accounts and Users, when
+    using +/- signs.
 
 * Changes in Slurm 24.05.3
 ==========================
