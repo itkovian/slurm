@@ -15,6 +15,8 @@ URL:		https://slurm.schedmd.com/
 %global slurm_source_dir %{name}-%{version}-%{rel}
 %endif
 
+%define _build_id_links none
+
 Source:		%{slurm_source_dir}.tar.gz
 
 # build options		.rpmmacros options	change to default action
