@@ -68,6 +68,25 @@ echo "Installing specfile requires"
 # this goes first because it might install undesired stuff related to `--with` options
 sudo dnf -y builddep slurm.spec
 
+# dependecy versions
+
+if grep "release 8.8" /etc/redhat-release; then
+    UCX_VERSION="1.13.1-2.el8.x86_64"
+    PMIX_VERSION=">= 4.2.6"
+    HWLOC_VERSION=">= 2.2.0-3"
+elif grep "release 9.2" /etc/redhat-release; then
+    UCX_VERSION="1.13.1-2.el9.x86_64"
+    PMIX_VERSION=">= 4.2.7"
+    HWLOC_VERSION=">= 2.4.1-5"
+elif grep "release 9.4" /etc/redhat-release; then
+    UCX_VERSION="1.15.0-2.el9.x86_64"
+    PMIX_VERSION=">= 4.2.7"
+    HWLOC_VERSION=">= 2.4.1-5"
+else
+    echo "unsupported OS release"
+    exit 1
+fi
+
 echo "Installing dependencies"
 # - features: basic
 sudo dnf -y install lua-devel mariadb-devel lz4-devel
@@ -79,12 +98,12 @@ sudo dnf -y install http-parser-devel json-c-devel libyaml-devel
 sudo dnf -y autoremove cuda-nvml-* nvidia-driver-NVML-* nvidia-driver* libnvidia-ml*
 sudo dnf -y install "$CUDA_NVML_PKG" "$NVDRV_NVML_PKG"
 # - plugins: MPI
-sudo dnf -y install pmix ucx-devel
+sudo dnf -y install pmix "pmix-devel ${PMIX_VERSION}"  "ucx-devel-${UCX_VERSION}"
 # - plugins: cgroup/v2
 # see https://slurm.schedmd.com/cgroup_v2.html
 sudo dnf -y install kernel-headers dbus-devel
 # - plugins: task/cgroup, task/affinity
-sudo dnf -y install hwloc-devel numactl-devel
+sudo dnf -y install "hwloc-devel ${HWLOC_VERSION}" numactl-devel
 # - plugins: acct_gather_profile/hdf5
 sudo dnf -y install hdf5-devel
 
