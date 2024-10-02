@@ -126,4 +126,5 @@ rpmrebuild -d $ORIGIN/dist --change-spec-files="sed '/\(pbsnodes\|mpiexec\|bin\/
 rpmrebuild -d $ORIGIN/dist --change-spec-files="sed '/\(pbsnodes\|mpiexec\|bin\/q.\+\)/d'" -p $ORIGIN/dist/x86_64/slurm-torque-*-${OUR_RELEASE}.${GITTAG}$(rpm -E '%dist').ug.*.rpm
 
 # get the RPMs out of the subdirectories
-find $ORIGIN/dist/ -type f -name '*.rpm' -print0 | xargs -0 -I{} mv {} $ORIGIN/dist/
+find rpmbuild -type f -name "*.rpm" -exec rm {} ";"
+find $ORIGIN/dist/ -type f -name '*.rpm' -print0 | xargs -0 -I{} mv {} rpmbuild/RPMS/x86_64/
