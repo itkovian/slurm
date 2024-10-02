@@ -22,7 +22,7 @@ SLURM_VERSION=${VERSION:-24.05.3}
 UPSTREAM_REL=${UPSTREAM_REL:-1}
 
 # which release should be used for our RPMs
-OUR_RELEASE=${OUR_RELEASE:-1}
+OUR_RELEASE=${RELEASE:-1}
 
 # NVML
 # allow _empty_ version, which is used in pipeline
@@ -107,7 +107,7 @@ rpmbuild -ba "${RPM_DEFINES[@]}" "${SLURM_BUILDOPTS[@]}" --without nvml \
 
 echo "Doing rpm rebuild (without nvml)"
 for rpm in $ORIGIN/rpmbuild/RPMS/x86_64/slurm-*$SUFFIX*.rpm ; do
-    rpmrebuild --release=${OUR_RELEASE}.${GITTAG}.$(rpm -E '%dist').nogpu.ug -d $ORIGIN/dist -p $rpm
+    rpmrebuild --release=${OUR_RELEASE}.${GITTAG}$(rpm -E '%dist').nogpu.ug -d $ORIGIN/dist -p $rpm
 done
 
 
@@ -118,12 +118,12 @@ rpmbuild -ba "${RPM_DEFINES[@]}" "${SLURM_BUILDOPTS[@]}" --with nvml \
 
 echo "Doing rpm rebuild (with nvml)"
 for rpm in $ORIGIN/rpmbuild/RPMS/x86_64/slurm-*$SUFFIX*.rpm ; do
-    rpmrebuild --release=${OUR_RELEASE}.${GITTAG}.$(rpm -E '%dist').ug -d $ORIGIN/dist -p $rpm
+    rpmrebuild --release=${OUR_RELEASE}.${GITTAG}$(rpm -E '%dist').ug -d $ORIGIN/dist -p $rpm
 done
 
 # strip out torque binaries/wrapper from slurm-torque
-rpmrebuild -d $ORIGIN/dist --change-spec-files="sed '/\(pbsnodes\|mpiexec\|bin\/q.\+\)/d'" -p $ORIGIN/dist/x86_64/slurm-torque-*-$GITTAG.$OUR_RELEASE.nogpu.$(rpm -E '%dist').*.rpm
-rpmrebuild -d $ORIGIN/dist --change-spec-files="sed '/\(pbsnodes\|mpiexec\|bin\/q.\+\)/d'" -p $ORIGIN/dist/x86_64/slurm-torque-*-$GITTAG.$OUR_RELEASE.$(rpm -E '%dist').*.rpm
+rpmrebuild -d $ORIGIN/dist --change-spec-files="sed '/\(pbsnodes\|mpiexec\|bin\/q.\+\)/d'" -p $ORIGIN/dist/x86_64/slurm-torque-*-${OUR_RELEASE}.${GITTAG}$(rpm -E '%dist').nogpu.ug*.rpm
+rpmrebuild -d $ORIGIN/dist --change-spec-files="sed '/\(pbsnodes\|mpiexec\|bin\/q.\+\)/d'" -p $ORIGIN/dist/x86_64/slurm-torque-*-${OUR_RELEASE}.${GITTAG}$(rpm -E '%dist').ug.*.rpm
 
 # get the RPMs out of the subdirectories
 find $ORIGIN/dist/ -type f -name '*.rpm' -print0 | xargs -0 -I{} mv {} $ORIGIN/dist/
