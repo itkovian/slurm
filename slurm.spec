@@ -15,7 +15,8 @@ URL:		https://slurm.schedmd.com/
 %global slurm_source_dir %{name}-%{version}-%{rel}
 %endif
 
-%define _build_id_links none
+#  We do not need this, but then duplicate file warning will pop up
+#  %define _build_id_links none
 
 Source:		%{slurm_source_dir}.tar.gz
 
