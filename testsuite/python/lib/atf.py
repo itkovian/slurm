@@ -924,23 +924,26 @@ def require_openapi_generator(version="7.3.0"):
         )
 
     # allow pointing to an existing OpenAPI generated client
+    opath = module_tmp_path;
     if "SLURM_TESTSUITE_OPENAPI_CLIENT" in os.environ:
-        pyapi_path = f"{os.environ['SLURM_TESTSUITE_OPENAPI_CLIENT']}/pyapi/"
-        spec_path = f"{os.environ['SLURM_TESTSUITE_OPENAPI_CLIENT']}/openapi.json"
-    else:
-        pyapi_path = f"{module_tmp_path}/pyapi/"
-        spec_path = f"{module_tmp_path}/openapi.json"
+        opath = os.environ['SLURM_TESTSUITE_OPENAPI_CLIENT'];
 
-        r = requests.get(
-            f"{properties['slurmrestd_url']}/openapi/v3",
-            headers=properties["slurmrestd-headers"],
-        )
+    pyapi_path = f"{opath}/pyapi/"
+    spec_path = f"{opath}/openapi.json"
+
+    # Always create path if needed
+    os.makedirs(opath, exist_ok=True)
+
+    if not os.path.exists(spec_path):
+        r = request_slurmrestd("openapi/v3")
         if r.status_code != 200:
             pytest.fail(f"Error requesting openapi specs from slurmrestd: {r}")
 
         with open(spec_path, "w") as f:
             f.write(r.text)
             f.close()
+
+    if not os.path.exists(pyapi_path):
         run_command(
             f"openapi-generator-cli generate -i '{spec_path}' -g python-pydantic-v1 --strict-spec=true -o '{pyapi_path}'",
             fatal=True,
@@ -2183,6 +2186,8 @@ def set_node_parameter(node_name, new_parameter_name, new_parameter_value):
 
         words = re.split(r" +", line.strip())
         if len(words) < 1:
+            continue
+        if words[0][0] == "#":
             continue
         parameter_name, parameter_value = words[0].split("=", 1)
         if parameter_name.lower() != "nodename":
@@ -3724,9 +3729,6 @@ def backup_accounting_database():
 
     sql_dump_file = f"{str(module_tmp_path / '../../slurm_acct_db.sql')}"
 
-    # We set this here, because we will want to restore in all cases
-    properties["accounting-database-modified"] = True
-
     # If a dump already exists, issue a warning and return (honor existing dump)
     if os.path.isfile(sql_dump_file):
         logging.warning(f"Dump file already exists ({sql_dump_file})")
@@ -3759,21 +3761,15 @@ def backup_accounting_database():
     if not database_name:
         database_name = "slurm_acct_db"
 
-    # If the slurm database does not exist, touch an empty dump file with
-    # the sticky bit set. restore_accounting_database will remove the file.
     mysql_command = f"{mysql_path} {mysql_options} -e \"USE '{database_name}'\""
     if run_command_exit(mysql_command, quiet=True) != 0:
-        # logging.warning(f"Slurm accounting database ({database_name}) is not present")
-        run_command(f"touch {sql_dump_file}", fatal=True, quiet=True)
-        run_command(f"chmod 1000 {sql_dump_file}", fatal=True, quiet=True)
-
-    # Otherwise, copy the config file to the backup
+        logging.debug(f"Slurm accounting database ({database_name}) is not present")
     else:
         mysqldump_command = (
             f"{mysqldump_path} {mysql_options} {database_name} > {sql_dump_file}"
         )
         run_command(
-            mysqldump_command, fatal=True, quiet=True, timeout=default_sql_cmd_timeout
+            mysqldump_command, fatal=True, quiet=False, timeout=default_sql_cmd_timeout
         )
 
 
@@ -3792,17 +3788,7 @@ def restore_accounting_database():
         >>> restore_accounting_database() # Restores Slurm accounting database from previously created backup.
     """
 
-    if not properties["accounting-database-modified"] or not properties["auto-config"]:
-        return
-
-    sql_dump_file = f"{str(module_tmp_path / '../../slurm_acct_db.sql')}"
-
-    # If the dump file doesn't exist, it has probably already been
-    # restored by a previous call to restore_accounting_database
-    if not os.path.isfile(sql_dump_file):
-        logging.warning(
-            f"Slurm accounting database backup ({sql_dump_file}) is s not present. It has probably already been restored."
-        )
+    if not properties["auto-config"]:
         return
 
     mysql_path = shutil.which("mysql")
@@ -3837,33 +3823,42 @@ def restore_accounting_database():
     if database_password:
         base_command += f" -p {database_password}"
 
-    # If the sticky bit is set and the dump file is empty, remove the database.
-    # Otherwise, restore the dump.
+    # If DB exists, drop it and try to resore the dump file
+    mysql_command = f"{base_command} -e \"USE '{database_name}'\""
+    if run_command_exit(mysql_command, quiet=True) == 0:
+        run_command(
+            f'{base_command} -e "drop database {database_name}"',
+            fatal=True,
+            quiet=False,
+            timeout=default_sql_cmd_timeout,
+        )
 
-    run_command(
-        f'{base_command} -e "drop database {database_name}"',
-        fatal=True,
-        quiet=False,
-        timeout=default_sql_cmd_timeout,
-    )
+    sql_dump_file = f"{str(module_tmp_path / '../../slurm_acct_db.sql')}"
+
+    # If the dump file doesn't exist, it has probably already been
+    # restored by a previous call to restore_accounting_database
+    if not os.path.isfile(sql_dump_file):
+        logging.debug(
+            f"Slurm accounting database backup ({sql_dump_file}) is s not present. It has probably already been restored."
+        )
+        return
+
     dump_stat = os.stat(sql_dump_file)
     if not (dump_stat.st_size == 0 and dump_stat.st_mode & stat.S_ISVTX):
         run_command(
             f'{base_command} -e "create database {database_name}"',
             fatal=True,
-            quiet=True,
+            quiet=False,
         )
         run_command(
             f"{base_command} {database_name} < {sql_dump_file}",
             fatal=True,
-            quiet=True,
+            quiet=False,
             timeout=default_sql_cmd_timeout,
         )
 
     # In either case, remove the dump file
-    run_command(f"rm -f {sql_dump_file}", fatal=True, quiet=True)
-
-    properties["accounting-database-modified"] = False
+    run_command(f"rm -f {sql_dump_file}", fatal=True, quiet=False)
 
 
 def compile_against_libslurm(
@@ -4045,6 +4040,8 @@ def set_partition_parameter(partition_name, new_parameter_name, new_parameter_va
 
         words = re.split(r" +", line.strip())
         if len(words) < 1:
+            continue
+        if words[0][0] == "#":
             continue
         parameter_name, parameter_value = words[0].split("=", 1)
         if parameter_name.lower() != "partitionname":
