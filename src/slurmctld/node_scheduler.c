@@ -501,10 +501,10 @@ extern void deallocate_nodes(job_record_t *job_ptr, bool timeout,
     kill_job = create_kill_job_msg(job_ptr, use_protocol_version);
 	kill_job->nodes = xstrdup(job_ptr->nodes);
 
-	// XXX: verify
-	job_resrcs_ptr = job_ptr->job_resrcs;
-    kill_job->nnodes = job_resrcs_ptr->nhosts;
-	kill_job->job_node_cpus = job_resrcs_ptr->cpus;
+	// XXX: remove
+	//job_resrcs_ptr = job_ptr->job_resrcs;
+    //kill_job->nnodes = job_resrcs_ptr->nhosts;
+	//kill_job->job_node_cpus = job_resrcs_ptr->cpus;
 
 	agent_args->msg_args = kill_job;
 	set_agent_arg_r_uid(agent_args, SLURM_AUTH_UID_ANY);
@@ -3354,8 +3354,9 @@ extern void launch_prolog(job_record_t *job_ptr)
 	xassert(job_ptr->job_resrcs);
 	job_resrcs_ptr = job_ptr->job_resrcs;
 
-    prolog_msg_ptr->nnodes = job_resrcs_ptr->nhosts;
-    prolog_msg_ptr->job_node_cpus = job_resrcs_ptr->cpus;
+	// XXX: to be removed
+    //prolog_msg_ptr->nnodes = job_resrcs_ptr->nhosts;
+    //prolog_msg_ptr->job_node_cpus = job_resrcs_ptr->cpus;
 
 	setup_cred_arg(&cred_arg, job_ptr);
 	cred_arg.step_id.job_id = job_ptr->job_id;

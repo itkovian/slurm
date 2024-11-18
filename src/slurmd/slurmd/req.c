@@ -2546,7 +2546,7 @@ static void _rpc_prolog(slurm_msg_t *msg)
 	if (!(slurm_conf.prolog_flags & PROLOG_FLAG_RUN_IN_JOB)) {
 		int node_id = 0;
 		job_env_t job_env;
-		int node_inx = 0;
+		//int node_inx = 0;
 
 #ifndef HAVE_FRONT_END
 		/* It is always 0 for front end systems */
@@ -2568,9 +2568,10 @@ static void _rpc_prolog(slurm_msg_t *msg)
 		job_env.uid = req->uid;
 		job_env.gid = req->gid;
 
-        node_inx = _get_node_inx(req->nodes);
-		debug("_rpc_prolog: _get_node_inx returned %d", node_inx);
-        job_env.job_node_cpus = (node_inx >= 0 ? req->job_node_cpus[node_inx] : 0);
+		// XXX: to be removed
+        //node_inx = _get_node_inx(req->nodes);
+		//debug("_rpc_prolog: _get_node_inx returned %d", node_inx);
+        //job_env.job_node_cpus = (node_inx >= 0 ? req->job_node_cpus[node_inx] : 0);
 
         rc = run_prolog(&job_env, req->cred);
 		_free_job_env(&job_env);
@@ -5570,7 +5571,7 @@ _rpc_terminate_job(slurm_msg_t *msg)
 	if (!(slurm_conf.prolog_flags & PROLOG_FLAG_RUN_IN_JOB)) {
 		int node_id = 0;
 		job_env_t job_env;
-		int node_inx = -1;
+		//int node_inx = -1;
 #ifndef HAVE_FRONT_END
 		/* It is always 0 for front end systems */
 		node_id = nodelist_find(req->nodes, conf->node_name);
@@ -5590,9 +5591,10 @@ _rpc_terminate_job(slurm_msg_t *msg)
 		job_env.uid = req->job_uid;
 		job_env.gid = req->job_gid;
 
-		node_inx = _get_node_inx(req->nodes);
-        job_env.job_node_cpus = (node_inx >= 0 ? req->job_node_cpus[node_inx] : 0);
-        debug2("Setting job_env.job_cpu_nodes to %d", job_env.job_node_cpus);
+		// XXX: To be removed
+		//node_inx = _get_node_inx(req->nodes);
+        //job_env.job_node_cpus = (node_inx >= 0 ? req->job_node_cpus[node_inx] : 0);
+        //debug2("Setting job_env.job_cpu_nodes to %d", job_env.job_node_cpus);
 		_wait_for_job_running_prolog(job_env.jobid);
 		rc = run_epilog(&job_env, req->cred);
 		_free_job_env(&job_env);
