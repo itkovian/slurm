@@ -367,12 +367,8 @@ BuildRequires: http-parser-devel
 %if %{defined suse_version}
 BuildRequires: libjson-c-devel
 %else
-%if 0%{?fedora} || 0%{?rhel} > 7
 BuildRequires: json-c-devel
 Requires: json-c
-%else
-BuildRequires: json-c12-devel
-Requires: json-c12
 %endif
 %endif
 %description slurmrestd
