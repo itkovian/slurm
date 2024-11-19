@@ -2521,7 +2521,6 @@ static void _rpc_prolog(slurm_msg_t *msg)
 	if (!(slurm_conf.prolog_flags & PROLOG_FLAG_RUN_IN_JOB)) {
 		int node_id = 0;
 		job_env_t job_env;
-		//int node_inx = 0;
 
 #ifndef HAVE_FRONT_END
 		/* It is always 0 for front end systems */
@@ -5541,7 +5540,6 @@ _rpc_terminate_job(slurm_msg_t *msg)
 	if (!(slurm_conf.prolog_flags & PROLOG_FLAG_RUN_IN_JOB)) {
 		int node_id = 0;
 		job_env_t job_env;
-		//int node_inx = -1;
 #ifndef HAVE_FRONT_END
 		/* It is always 0 for front end systems */
 		node_id = nodelist_find(req->nodes, conf->node_name);
