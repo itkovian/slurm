@@ -2568,11 +2568,6 @@ static void _rpc_prolog(slurm_msg_t *msg)
 		job_env.uid = req->uid;
 		job_env.gid = req->gid;
 
-		// XXX: to be removed
-        //node_inx = _get_node_inx(req->nodes);
-		//debug("_rpc_prolog: _get_node_inx returned %d", node_inx);
-        //job_env.job_node_cpus = (node_inx >= 0 ? req->job_node_cpus[node_inx] : 0);
-
         rc = run_prolog(&job_env, req->cred);
 		_free_job_env(&job_env);
 		if (rc) {
@@ -5589,12 +5584,7 @@ _rpc_terminate_job(slurm_msg_t *msg)
 		job_env.spank_job_env_size = req->spank_job_env_size;
 		job_env.work_dir = req->work_dir;
 		job_env.uid = req->job_uid;
-		job_env.gid = req->job_gid;
 
-		// XXX: To be removed
-		//node_inx = _get_node_inx(req->nodes);
-        //job_env.job_node_cpus = (node_inx >= 0 ? req->job_node_cpus[node_inx] : 0);
-        //debug2("Setting job_env.job_cpu_nodes to %d", job_env.job_node_cpus);
 		_wait_for_job_running_prolog(job_env.jobid);
 		rc = run_epilog(&job_env, req->cred);
 		_free_job_env(&job_env);
