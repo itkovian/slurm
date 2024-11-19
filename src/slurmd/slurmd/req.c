@@ -5555,6 +5555,7 @@ _rpc_terminate_job(slurm_msg_t *msg)
 		job_env.spank_job_env_size = req->spank_job_env_size;
 		job_env.work_dir = req->work_dir;
 		job_env.uid = req->job_uid;
+		job_env.gid = req->job_gid;
 
 		_wait_for_job_running_prolog(job_env.jobid);
 		rc = run_epilog(&job_env, req->cred);
