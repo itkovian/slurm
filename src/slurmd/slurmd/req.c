@@ -40,10 +40,8 @@
 \*****************************************************************************/
 
 #include "config.h"
-#include <stdint.h>
 
 #define _GNU_SOURCE	/* for setresuid() */
-#define __USE_XOPEN_EXTENDED
 
 #include <ctype.h>
 #include <fcntl.h>
@@ -2542,7 +2540,7 @@ static void _rpc_prolog(slurm_msg_t *msg)
 		job_env.uid = req->uid;
 		job_env.gid = req->gid;
 
-        rc = run_prolog(&job_env, req->cred);
+		rc = run_prolog(&job_env, req->cred);
 		_free_job_env(&job_env);
 		if (rc) {
 			int term_sig = 0, exit_status = 0;
