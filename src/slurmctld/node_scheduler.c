@@ -498,7 +498,7 @@ extern void deallocate_nodes(job_record_t *job_ptr, bool timeout,
 	agent_args->msg_flags = msg_flags;
 
 	last_node_update = time(NULL);
-    kill_job = create_kill_job_msg(job_ptr, use_protocol_version);
+	kill_job = create_kill_job_msg(job_ptr, use_protocol_version);
 	kill_job->nodes = xstrdup(job_ptr->nodes);
 
 	agent_args->msg_args = kill_job;
@@ -3348,7 +3348,6 @@ extern void launch_prolog(job_record_t *job_ptr)
 
 	xassert(job_ptr->job_resrcs);
 	job_resrcs_ptr = job_ptr->job_resrcs;
-
 	setup_cred_arg(&cred_arg, job_ptr);
 	cred_arg.step_id.job_id = job_ptr->job_id;
 	cred_arg.step_id.step_id = SLURM_EXTERN_CONT;
