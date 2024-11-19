@@ -2469,31 +2469,6 @@ static void _notify_result_rpc_prolog(prolog_launch_msg_t *req, int rc)
 	}
 }
 
-static int _get_node_inx(char *hostlist)
-{
-	char *host;
-	int node_inx = -1;
-	hostset_t *hset;
-
-	if (!conf->node_name)
-		return node_inx;
-
-	if ((hset = hostset_create(hostlist))) {
-		int inx = 0;
-		while ((host = hostset_shift(hset))) {
-			if (!strcmp(host, conf->node_name)) {
-				node_inx = inx;
-				free(host);
-				break;
-			}
-			inx++;
-			free(host);
-		}
-		hostset_destroy(hset);
-	}
-	return node_inx;
-}
-
 static void _rpc_prolog(slurm_msg_t *msg)
 {
 	int rc = SLURM_SUCCESS;
