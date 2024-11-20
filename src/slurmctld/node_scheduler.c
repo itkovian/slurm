@@ -323,7 +323,6 @@ extern void deallocate_nodes(job_record_t *job_ptr, bool timeout,
 	hostlist_t *hostlist = NULL;
 	uint16_t use_protocol_version = 0;
 	uint16_t msg_flags = 0;
-
 #ifdef HAVE_FRONT_END
 	front_end_record_t *front_end_ptr;
 #endif
@@ -347,7 +346,6 @@ extern void deallocate_nodes(job_record_t *job_ptr, bool timeout,
 
 	if (!job_ptr->details->prolog_running)
 		hostlist = hostlist_create(NULL);
-
 
 #ifdef HAVE_FRONT_END
 	if (job_ptr->batch_host &&
