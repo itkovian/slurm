@@ -13,7 +13,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4.2.2
       - name: Install deps
-        run: sudo apt-get install -y munge-devel lua-devel mariadb-devel libjwt-devel pam-devel http-parser-devel json-c-devel libyaml-devel pmix pmix-devel ucx-devel dbus-devel kernel-headers hwloc-devel numactl-devel hdf5-devel
+        run: sudo apt-get install -y libmunge-dev
       - name: configure
         run: ./configure --enable-multiple-slurmd --prefix=/tmp/slurm/
       - name: make
