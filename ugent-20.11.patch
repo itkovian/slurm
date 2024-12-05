@@ -1,0 +1,923 @@
+diff --git a/auxdir/x_ac_json.m4 b/auxdir/x_ac_json.m4
+index 46a70d52ed..3f13877801 100644
+--- a/auxdir/x_ac_json.m4
++++ b/auxdir/x_ac_json.m4
+@@ -33,11 +33,11 @@ AC_DEFUN([X_AC_JSON], [
+         for d in $_x_ac_json_dirs; do
+           test -d "$d" || continue
+           test -d "$d/include" || continue
+-          test -f "$d/include/json-c/json_object.h" || test -f "$d/include/json/json_object.h" || continue
++          test -f "$d/include/json-c12/json_object.h" || test -f "$d/include/json/json_object.h" || continue
+           for bit in $_x_ac_json_libs; do
+             test -d "$d/$bit" || continue
+             _x_ac_json_libs_save="$LIBS"
+-            LIBS="-L$d/$bit -ljson-c $LIBS"
++            LIBS="-L$d/$bit -ljson-c12 $LIBS"
+             AC_LINK_IFELSE(
+               [AC_LANG_CALL([], json_tokener_parse)],
+               AS_VAR_SET(x_ac_cv_json_dir, $d))
+@@ -51,7 +51,7 @@ AC_DEFUN([X_AC_JSON], [
+     if test -z "$x_ac_cv_json_dir"; then
+       AC_MSG_WARN([unable to locate json parser library])
+     else
+-      if test -f "$d/include/json-c/json_object.h" ; then
++      if test -f "$d/include/json-c12/json_object.h" ; then
+         AC_DEFINE([HAVE_JSON_C_INC], [1], [Define if headers in include/json-c.])
+       fi
+       if test -f "$d/include/json/json_object.h" ; then
+@@ -59,7 +59,7 @@ AC_DEFUN([X_AC_JSON], [
+       fi
+       AC_DEFINE([HAVE_JSON], [1], [Define if you are compiling with json.])
+       JSON_CPPFLAGS="-I$x_ac_cv_json_dir/include"
+-      JSON_LDFLAGS="-L$x_ac_cv_json_dir/$bit -ljson-c"
++      JSON_LDFLAGS="-L$x_ac_cv_json_dir/$bit -ljson-c12"
+     fi
+   
+     AC_SUBST(JSON_CPPFLAGS)
+diff --git a/auxdir/x_ac_pmix.m4 b/auxdir/x_ac_pmix.m4
+index f86c80e47d..accc2cb304 100755
+--- a/auxdir/x_ac_pmix.m4
++++ b/auxdir/x_ac_pmix.m4
+@@ -24,7 +24,7 @@ AC_DEFUN([X_AC_PMIX],
+     [pmix],
+     AS_HELP_STRING(--with-pmix=PATH,Specify path to pmix installation(s).  Multiple version directories can be ':' delimited.),
+     [AS_IF([test "x$with_pmix" != xno],[with_pmix=`echo $with_pmix | sed "s/:/ /g"`
+-      _x_ac_pmix_dirs="$with_pmix"])])
++      _x_ac_pmix_dirs="$with_pmix $_x_ac_pmix_dirs"])])
+ 
+   if [test "x$with_pmix" = xno]; then
+     AC_MSG_WARN([support for pmix disabled])
+diff --git a/bdist_rpm.sh b/bdist_rpm.sh
+new file mode 100755
+index 0000000000..61b551fbac
+--- /dev/null
++++ b/bdist_rpm.sh
+@@ -0,0 +1,80 @@
++#!/bin/bash
++
++set -e
++set -x
++
++echo "BUILDING GPU VERSION"
++
++VERSION=`grep "Version:.*[0-9]" slurm.spec | tr -s " " |  awk '{print $2;}'`
++RELEASE=`grep "%define rel.*[-1-9]" slurm.spec | tr -s " " | awk '{print $3}'`
++
++if [ "${RELEASE}" != "1" ]; then
++    SUFFIX=${VERSION}-${RELEASE}
++else
++    SUFFIX=${VERSION}
++fi
++
++GITTAG=$(git log --format=%ct.%h -1)
++
++rm -Rf BUILD SOURCES SPECS SRPMS RPMS BUILDROOT
++mkdir -p BUILD SOURCES SPECS SRPMS RPMS BUILDROOT
++
++git archive --format=tar.gz -o "SOURCES/slurm-${SUFFIX}.tar.gz" --prefix="slurm-${SUFFIX}/" HEAD
++cp slurm.spec "SPECS"
++
++# remove json-c12 -> use plain json-c?
++sudo yum install -y json-c-devel json-c
++if grep "release 7" /etc/redhat-release; then
++  #   json-c is only needed for restd and burstbuffer
++    sudo yum install -y json-c12-devel json-c12
++fi
++
++# TODO? also, specify python2 as python to require
++
++# commenting this out since it tries to update things :/
++#sudo yum install -y ucx-devel "pmix-devel > 3.0.0" numactl-devel hwloc-devel
++if grep "release 7" /etc/redhat-release; then
++    sudo yum install -y ucx-devel-1.5.2-1.el7.x86_64 "pmix-devel > 3.0.0" numactl-devel pmix-pmi-devel hwloc-devel-1.11.8-4.el7.x86_64
++else
++    sudo yum install -y ucx-devel-1.8.1-3.el8.x86_64 "pmix-devel > 3.0.0" numactl-devel pmix-pmi-devel hwloc-devel-0:1.11.9-3.el8.x86_64
++fi
++
++# there's no option to pass nvml, it is only autodetected
++# nvidia-driver-devel provides the libnividia-ml.so symlnk, the real .so.1 comes from nvidia-driver-NVML
++# cuda-nvml-dev provides the nvml.h (put is part of the cuda rpms so has cud version in the name, hence the *)
++# however, it's not in the default include paths nor the slurm hardcoded ones, so use CPATH
++# nvml api is not really cuda specific, last API is from cuda 5, so any recent cuda will do
++
++# TODO: what if more than one cuda is available/installed, then the * thingies will probably not work
++# pmix-3 as rebuild from github src.rpm includes the devel rpms in the rpm
++sudo yum remove -y cuda-nvml-dev-10-1 cuda-nvml-dev-10-2 cuda-nvml-devel-11-6
++sudo yum install -y nvidia-driver-devel nvidia-driver-NVML cuda-nvml-devel-11-6
++
++
++# glob expansion in list
++nvmls=(/usr/local/cuda*/targets/x86_64-linux/include)
++if [ "${#nvmls[@]}" -ne 1 ]; then
++    echo "0 or more than one nvml.h found: ${nvmls[@]}. Unsupported."
++    exit 1
++fi
++echo "nvml.h found in $nvmls[0]"
++
++rpmbuild --define "gittag ${GITTAG}" --define "_topdir $PWD" --with numa --with pmix --with hwloc --with mysql --with x11 --with ucx -ba SPECS/slurm.spec --define "_configure ./configure CPATH=${nvmls[0]}" --define "_smp_mflags CPATH=${nvmls[0]}"
++
++
++echo "BUILDING NON GPU VERSION"
++
++
++# there's no option to pass nvml, it is only autodetected
++# nvidia-driver-devel provides the libnividia-ml.so symlnk, the real .so.1 comes from nvidia-driver-NVML
++# cuda-nvml-dev provides the nvml.h (put is part of the cuda rpms so has cud version in the name, hence the *)
++# however, it's not in the default include paths nor the slurm hardcoded ones, so use CPATH
++# nvml api is not really cuda specific, last API is from cuda 5, so any recent cuda will do
++
++# TODO: what if more than one cuda is available/installed, then the * thingies will probably not work
++# pmix-3 as rebuild from github src.rpm includes the devel rpms in the rpm
++sudo yum remove -y nvidia-driver-devel cuda-nvml-dev-10-2 nvidia-driver-NVML cuda-nvml-dev-10-1
++sudo yum remove -y nvidia-driver-devel nvidia-driver-NVML cuda-nvml-devel-11-3-11.3.58-1.x86_64
++
++
++rpmbuild --define "gittag ${GITTAG}" --define "_topdir $PWD" --with pmix --with numa --with hwloc --with mysql --with x11 --with ucx --define "gpu .nogpu" -ba SPECS/slurm.spec
+diff --git a/contribs/pam_slurm_adopt/pam_slurm_adopt.c b/contribs/pam_slurm_adopt/pam_slurm_adopt.c
+index 8b215a1fc3..87a532284f 100644
+--- a/contribs/pam_slurm_adopt/pam_slurm_adopt.c
++++ b/contribs/pam_slurm_adopt/pam_slurm_adopt.c
+@@ -67,6 +67,7 @@
+ #include "src/common/slurm_xlator.h"
+ #include "src/common/slurm_protocol_api.h"
+ #include "src/common/xcgroup_read_config.h"
++#include "src/slurmd/common/xcgroup.h"
+ 
+ /* This definition would probably be good to centralize somewhere */
+ #ifndef MAXHOSTNAMELEN
+@@ -78,6 +79,8 @@ typedef enum {
+ 	CALLERID_ACTION_ALLOW,
+ 	CALLERID_ACTION_IGNORE,
+ 	CALLERID_ACTION_DENY,
++	CALLERID_ACTION_ADOPT_AND_CHECK,
++	CALLERID_ACTION_ONLY_CHECK,
+ } callerid_action_t;
+ 
+ /* module options */
+@@ -91,6 +94,7 @@ static struct {
+ 	callerid_action_t action_unknown;
+ 	callerid_action_t action_adopt_failure;
+ 	callerid_action_t action_generic_failure;
++	callerid_action_t action_adopt;
+ 	log_level_t log_level;
+ 	char *node_name;
+ 	bool disable_x11;
+@@ -106,6 +110,7 @@ static void _init_opts(void)
+ 	opts.action_unknown = CALLERID_ACTION_NEWEST;
+ 	opts.action_adopt_failure = CALLERID_ACTION_ALLOW;
+ 	opts.action_generic_failure = CALLERID_ACTION_IGNORE;
++	opts.action_adopt = CALLERID_ACTION_ADOPT_AND_CHECK;
+ 	opts.log_level = LOG_LEVEL_INFO;
+ 	opts.node_name = NULL;
+ 	opts.disable_x11 = false;
+@@ -366,8 +371,14 @@ static int _action_unknown(pam_handle_t *pamh, struct passwd *pwd, List steps)
+ 	rc = _indeterminate_multiple(pamh, steps, pwd->pw_uid, &stepd);
+ 	if (rc == PAM_SUCCESS) {
+ 		info("action_unknown: Picked job %u", stepd->step_id.job_id);
+-		if (_adopt_process(pamh, getpid(), stepd) == SLURM_SUCCESS) {
+-			return PAM_SUCCESS;
++		if (opts.action_adopt == CALLERID_ACTION_ADOPT_AND_CHECK) {
++			if (_adopt_process(pamh, getpid(), stepd) == SLURM_SUCCESS) {
++				return PAM_SUCCESS;
++			}
++			if (opts.action_adopt_failure == CALLERID_ACTION_ALLOW)
++				return PAM_SUCCESS;
++			else
++				return PAM_PERM_DENIED;
+ 		}
+ 		if (opts.action_adopt_failure == CALLERID_ACTION_ALLOW)
+ 			return PAM_SUCCESS;
+@@ -482,24 +493,27 @@ static int _try_rpc(pam_handle_t *pamh, struct passwd *pwd)
+ 	/* Ask the slurmd at the source IP address about this connection */
+ 	rc = _rpc_network_callerid(&conn, pwd->pw_name, &job_id);
+ 	if (rc == SLURM_SUCCESS) {
+-		step_loc_t stepd;
+-		memset(&stepd, 0, sizeof(stepd));
++		if (opts.action_adopt == CALLERID_ACTION_ADOPT_AND_CHECK) {
++			step_loc_t stepd;
++			memset(&stepd, 0, sizeof(stepd));
+ 		/* We only need the step_id struct needed to be filled in here
+-		   all the rest isn't needed for the adopt.
+-		*/
+-		stepd.step_id.job_id = job_id;
+-		stepd.step_id.step_id = SLURM_EXTERN_CONT;
+-		stepd.step_id.step_het_comp = NO_VAL;
+-
+-		/* Adopt the process. If the adoption succeeds, return SUCCESS.
+-		 * If not, maybe the adoption failed because the user hopped
+-		 * into one node and was adopted into a job there that isn't on
+-		 * our node here. In that case we got a bad jobid so we'll fall
+-		 * through to the next action */
+-		if (_adopt_process(pamh, getpid(), &stepd) == SLURM_SUCCESS)
+-			return PAM_SUCCESS;
+-		else
+-			return PAM_IGNORE;
++			all the rest isn't needed for the adopt.
++			*/
++			stepd.step_id.job_id = job_id;
++			stepd.step_id.step_id = SLURM_EXTERN_CONT;
++			stepd.step_id.step_het_comp = NO_VAL;
++
++			/* Adopt the process. If the adoption succeeds, return SUCCESS.
++			* If not, maybe the adoption failed because the user hopped
++			* into one node and was adopted into a job there that isn't on
++			* our node here. In that case we got a bad jobid so we'll fall
++			* through to the next action */
++			if (_adopt_process(pamh, getpid(), &stepd) == SLURM_SUCCESS)
++				return PAM_SUCCESS;
++			else
++				return PAM_IGNORE;
++		}
++		return PAM_SUCCESS;
+ 	}
+ 
+ 	info("From %s port %d as %s: unable to determine source job",
+@@ -597,6 +611,11 @@ static void _parse_opts(pam_handle_t *pamh, int argc, const char **argv)
+ 					   "unrecognized action_unknown=%s, setting to 'newest'",
+ 					   v);
+ 			}
++		} else if (!xstrncasecmp(*argv, "action_adopt=", 13)){
++			v = (char *)(13 + *argv);
++			if (!xstrncasecmp(v, "check_only", 10))
++				opts.action_adopt = CALLERID_ACTION_ONLY_CHECK;
++
+ 		} else if (!xstrncasecmp(*argv,"action_generic_failure=",23)) {
+ 			v = (char *)(23 + *argv);
+ 			if (!xstrncasecmp(v, "allow", 5))
+@@ -697,15 +716,16 @@ static int check_pam_service(pam_handle_t *pamh)
+  *	3) Pick a job semi-randomly (default) or skip the adoption (if
+  *		configured)
+  */
+-PAM_EXTERN int pam_sm_acct_mgmt(pam_handle_t *pamh, int flags
+-				__attribute__((unused)), int argc, const char **argv)
+-{
++PAM_EXTERN int _adopt_and_or_check(pam_handle_t *pamh, int flags
++				__attribute__((unused)), int argc, const char **argv) {
++
+ 	int retval = PAM_IGNORE, rc = PAM_IGNORE, slurmrc, bufsize, user_jobs;
+ 	char *user_name;
+ 	List steps = NULL;
+ 	step_loc_t *stepd = NULL;
+ 	struct passwd pwd, *pwd_result;
+ 	char *buf = NULL;
++    slurm_cgroup_conf_t *cg_conf;
+ 
+ 	_init_opts();
+ 	_parse_opts(pamh, argc, argv);
+@@ -774,6 +794,10 @@ PAM_EXTERN int pam_sm_acct_mgmt(pam_handle_t *pamh, int flags
+ 		xfree(buf);
+ 		return PAM_SESSION_ERR;
+ 	}
++	if (opts.action_adopt==CALLERID_ACTION_ADOPT_AND_CHECK ){
++	   cg_conf = xcgroup_get_slurm_cgroup_conf();
++	}
++
+ 
+ 	/* Ignoring root is probably best but the admin can allow it */
+ 	if (pwd.pw_uid == 0) {
+@@ -825,19 +849,23 @@ PAM_EXTERN int pam_sm_acct_mgmt(pam_handle_t *pamh, int flags
+ 			info("Connection by user %s: user has only one job %u",
+ 			     user_name,
+ 			     stepd->step_id.job_id);
+-			slurmrc = _adopt_process(pamh, getpid(), stepd);
+-			/* If adoption into the only job fails, it is time to
+-			 * exit. Return code is based on the
+-			 * action_adopt_failure setting */
+-			if (slurmrc == SLURM_SUCCESS ||
+-			    (opts.action_adopt_failure ==
+-			     CALLERID_ACTION_ALLOW))
+-				rc = PAM_SUCCESS;
+-			else {
+-				send_user_msg(pamh, "Access denied by "
+-					      PAM_MODULE_NAME
++			if (opts.action_adopt == CALLERID_ACTION_ADOPT_AND_CHECK) {
++				slurmrc = _adopt_process(pamh, getpid(), stepd);
++				/* If adoption into the only job fails, it is time to
++				* exit. Return code is based on the
++				* action_adopt_failure setting */
++				if (slurmrc == SLURM_SUCCESS ||
++					(opts.action_adopt_failure ==
++					CALLERID_ACTION_ALLOW))
++					rc = PAM_SUCCESS;
++				else {
++				  send_user_msg(pamh, "Access denied by "
++						PAM_MODULE_NAME
+ 					      ": failed to adopt process into cgroup, denying access because action_adopt_failure=deny");
+-				rc = PAM_PERM_DENIED;
++				  rc = PAM_PERM_DENIED;
++				}
++			} else {
++				rc = PAM_SUCCESS;
+ 			}
+ 			goto cleanup;
+ 		}
+@@ -865,6 +893,33 @@ cleanup:
+ 	return rc;
+ }
+ 
++
++/* Take control of the session, to avoid other pam modules doing the
++ * same and change e.g., cgroups.
++ */
++PAM_EXTERN int pam_sm_open_session(pam_handle_t *pamh, int flags
++				__attribute__((unused)), int argc, const char **argv)
++{
++	return _adopt_and_or_check(pamh, flags, argc, argv);
++}
++
++/* Close the session. Always succeeds, we do not need to do anything here.
++ */
++PAM_EXTERN int pam_sm_close_session(pam_handle_t *pamh, int flags
++				__attribute__((unused)), int argc, const char **argv)
++{
++	return PAM_SUCCESS;
++}
++
++
++/* Implementation for the pam_acct_mgmt API call.
++ */
++PAM_EXTERN int pam_sm_acct_mgmt(pam_handle_t *pamh, int flags
++				__attribute__((unused)), int argc, const char **argv)
++{
++	return _adopt_and_or_check(pamh, flags, argc, argv);
++}
++
+ #ifdef PAM_STATIC
+ struct pam_module _pam_slurm_adopt_modstruct = {
+ 	PAM_MODULE_NAME,
+diff --git a/contribs/torque/Makefile.am b/contribs/torque/Makefile.am
+index 690613ce6b..c390a6ba8c 100644
+--- a/contribs/torque/Makefile.am
++++ b/contribs/torque/Makefile.am
+@@ -20,18 +20,18 @@ _perldir=$(exec_prefix)`perl -e 'use Config; $$T=$$Config{installsitearch}; $$P=
+ 
+ install-binSCRIPTS: $(bin_SCRIPTS)
+ 	@$(NORMAL_INSTALL)
+-	test -z "$(DESTDIR)$(bindir)" || $(mkdir_p) "$(DESTDIR)$(bindir)"
++	test -z "$(DESTDIR)/usr/libexec/slurm/wrapper" || $(mkdir_p) "$(DESTDIR)/usr/libexec/slurm/wrapper"
+ 	@list='$(bin_SCRIPTS)'; for p in $$list; do \
+-	   echo "sed 's%use lib .*%use lib qw(${_perldir});%' $(top_srcdir)/contribs/torque/$$p.pl > $(DESTDIR)$(bindir)/$$p"; \
+-	   sed "s%use lib .*%use lib qw(${_perldir});%" $(top_srcdir)/contribs/torque/$$p.pl >$(DESTDIR)$(bindir)/$$p; \
+-	   chmod 755 $(DESTDIR)$(bindir)/$$p;\
++	   echo "sed 's%use lib .*%use lib qw(${_perldir});%' $(top_srcdir)/contribs/torque/$$p.pl > $(DESTDIR)/usr/libexec/slurm/wrapper/$$p"; \
++	   sed "s%use lib .*%use lib qw(${_perldir});%" $(top_srcdir)/contribs/torque/$$p.pl >$(DESTDIR)/usr/libexec/slurm/wrapper/$$p; \
++	   chmod 755 $(DESTDIR)/usr/libexec/slurm/wrapper/$$p;\
+ 	done
+ 
+ uninstall-binSCRIPTS:
+ 	@$(NORMAL_UNINSTALL)
+ 	@list='$(bin_SCRIPTS)'; for p in $$list; do \
+-	  echo " rm -f '$(DESTDIR)$(bindir)/$$p'"; \
+-	  rm -f "$(DESTDIR)$(bindir)/$$p"; \
++	  echo " rm -f '$(DESTDIR)/usr/libexec/slurm/wrapper/$$p'"; \
++	  rm -f "$(DESTDIR)/usr/libexec/slurm/wrapper/$$p"; \
+ 	done
+ 
+ clean:
+diff --git a/contribs/torque/Makefile.in b/contribs/torque/Makefile.in
+index 00fe62f2ab..776b959f6c 100644
+--- a/contribs/torque/Makefile.in
++++ b/contribs/torque/Makefile.in
+@@ -632,18 +632,18 @@ generate_pbs_nodefile:
+ 
+ install-binSCRIPTS: $(bin_SCRIPTS)
+ 	@$(NORMAL_INSTALL)
+-	test -z "$(DESTDIR)$(bindir)" || $(mkdir_p) "$(DESTDIR)$(bindir)"
++	test -z "$(DESTDIR)/usr/libexec/slurm/wrapper" || $(mkdir_p) "$(DESTDIR)/usr/libexec/slurm/wrapper"
+ 	@list='$(bin_SCRIPTS)'; for p in $$list; do \
+-	   echo "sed 's%use lib .*%use lib qw(${_perldir});%' $(top_srcdir)/contribs/torque/$$p.pl > $(DESTDIR)$(bindir)/$$p"; \
+-	   sed "s%use lib .*%use lib qw(${_perldir});%" $(top_srcdir)/contribs/torque/$$p.pl >$(DESTDIR)$(bindir)/$$p; \
+-	   chmod 755 $(DESTDIR)$(bindir)/$$p;\
++	   echo "sed 's%use lib .*%use lib qw(${_perldir});%' $(top_srcdir)/contribs/torque/$$p.pl > $(DESTDIR)/usr/libexec/slurm/wrapper/$$p"; \
++	   sed "s%use lib .*%use lib qw(${_perldir});%" $(top_srcdir)/contribs/torque/$$p.pl >$(DESTDIR)/usr/libexec/slurm/wrapper/$$p; \
++	   chmod 755 $(DESTDIR)/usr/libexec/slurm/wrapper/$$p;\
+ 	done
+ 
+ uninstall-binSCRIPTS:
+ 	@$(NORMAL_UNINSTALL)
+ 	@list='$(bin_SCRIPTS)'; for p in $$list; do \
+-	  echo " rm -f '$(DESTDIR)$(bindir)/$$p'"; \
+-	  rm -f "$(DESTDIR)$(bindir)/$$p"; \
++	  echo " rm -f '$(DESTDIR)/usr/libexec/slurm/wrapper/$$p'"; \
++	  rm -f "$(DESTDIR)/usr/libexec/slurm/wrapper/$$p"; \
+ 	done
+ 
+ clean:
+diff --git a/slurm.spec b/slurm.spec
+index ee747d1521..12b57ec849 100644
+--- a/slurm.spec
++++ b/slurm.spec
+@@ -1,7 +1,7 @@
+ Name:		slurm
+ Version:	20.11.9
+ %define rel	1
+-Release:	%{rel}%{?dist}
++Release:        %{rel}.%{gittag}%{?dist}%{?gpu}.ug
+ Summary:	Slurm Workload Manager
+ 
+ Group:		System Environment/Base
+@@ -15,7 +15,7 @@ URL:		https://slurm.schedmd.com/
+ %global slurm_source_dir %{name}-%{version}-%{rel}
+ %endif
+ 
+-Source:		%{slurm_source_dir}.tar.bz2
++Source:		%{slurm_source_dir}.tar.gz
+ 
+ # build options		.rpmmacros options	change to default action
+ # ====================  ====================	========================
+@@ -132,13 +132,17 @@ BuildRequires: numactl-devel
+ %endif
+ 
+ %if %{with pmix} && "%{_with_pmix}" == "--with-pmix"
++%if 0%{?fedora} || 0%{?rhel} > 7
++BuildRequires: pmix-pmi-devel
++%else
+ BuildRequires: pmix
+-%global pmix_version %(rpm -q pmix --qf "%{VERSION}")
++%endif
++%global pmix_version %(rpm -q pmix --qf "%%{VERSION}")
+ %endif
+ 
+ %if %{with ucx} && "%{_with_ucx}" == "--with-ucx"
+ BuildRequires: ucx-devel
+-%global ucx_version %(rpm -q ucx-devel --qf "%{VERSION}")
++%global ucx_version %(rpm -q ucx-devel --qf "%%{VERSION}")
+ %endif
+ 
+ #  Allow override of sysconfdir via _slurm_sysconfdir.
+@@ -227,8 +231,12 @@ Summary: Slurm compute node daemon
+ Group: System Environment/Base
+ Requires: %{name}%{?_isa} = %{version}-%{release}
+ %if %{with pmix} && "%{_with_pmix}" == "--with-pmix"
++%if 0%{?fedora} || 0%{?rhel} > 7
++Requires: pmix-pmi = %{pmix_version}
++%else
+ Requires: pmix = %{pmix_version}
+ %endif
++%endif
+ %if %{with ucx} && "%{_with_ucx}" == "--with-ucx"
+ Requires: ucx = %{ucx_version}
+ %endif
+@@ -248,7 +256,9 @@ database changes to slurmctld daemons on each cluster
+ Summary: Slurm\'s implementation of the pmi libraries
+ Group: System Environment/Base
+ Requires: %{name}%{?_isa} = %{version}-%{release}
++%if ! %{with pmix}
+ Conflicts: pmix-libpmi
++%endif
+ %description libpmi
+ Slurm\'s version of libpmi. For systems using Slurm, this version
+ is preferred over the compatibility libraries shipped by the PMIx project.
+@@ -307,7 +317,13 @@ BuildRequires: http-parser-devel
+ %if %{defined suse_version}
+ BuildRequires: libjson-c-devel
+ %else
++%if 0%{?fedora} || 0%{?rhel} > 7
+ BuildRequires: json-c-devel
++Requires: json-c
++%else
++BuildRequires: json-c12-devel
++Requires: json-c12
++%endif
+ %endif
+ %description slurmrestd
+ Provides a REST interface to Slurm.
+@@ -360,7 +376,7 @@ export QA_RPATHS=0x5
+ # Strip out some dependencies
+ 
+ cat > find-requires.sh <<'EOF'
+-exec %{__find_requires} "$@" | egrep -v '^libpmix.so|libevent|libnvidia-ml'
++exec %{__find_requires} "$@" | egrep -v '^libpmix.so|libevent'
+ EOF
+ chmod +x find-requires.sh
+ %global _use_internal_dependency_generator 0
+@@ -378,6 +394,13 @@ install -D -m644 etc/slurmdbd.service  %{buildroot}/%{_unitdir}/slurmdbd.service
+ install -D -m644 etc/slurmrestd.service  %{buildroot}/%{_unitdir}/slurmrestd.service
+ %endif
+ 
++# in case of pmix, no conflict with pmix compat libs
++# see Cray comment below
++%if %{with pmix}
++   mkdir %{buildroot}/%{_libdir}/slurmpmi
++   mv %{buildroot}/%{_libdir}/libpmi* %{buildroot}/%{_libdir}/slurmpmi
++%endif
++
+ # Do not package Slurm's version of libpmi on Cray systems in the usual location.
+ # Cray's version of libpmi should be used. Move it elsewhere if the site still
+ # wants to use it with other MPI stacks.
+@@ -594,7 +617,7 @@ rm -rf %{buildroot}
+ 
+ %files libpmi
+ %defattr(-,root,root)
+-%if %{with cray} || %{with cray_shasta}
++%if %{with cray} || %{with cray_shasta} || %{with pmix}
+ %{_libdir}/slurmpmi/*
+ %else
+ %{_libdir}/libpmi*
+@@ -603,16 +626,16 @@ rm -rf %{buildroot}
+ 
+ %files torque
+ %defattr(-,root,root)
+-%{_bindir}/pbsnodes
+-%{_bindir}/qalter
+-%{_bindir}/qdel
+-%{_bindir}/qhold
+-%{_bindir}/qrerun
+-%{_bindir}/qrls
+-%{_bindir}/qstat
+-%{_bindir}/qsub
+-%{_bindir}/mpiexec
+-%{_bindir}/generate_pbs_nodefile
++#%{_bindir}/pbsnodes
++#%{_bindir}/qalter
++#%{_bindir}/qdel
++#%{_bindir}/qhold
++#%{_bindir}/qrerun
++#%{_bindir}/qrls
++#%{_bindir}/qstat
++#%{_bindir}/qsub
++#%{_bindir}/mpiexec
++#%{_bindir}/generate_pbs_nodefile
+ %{_libdir}/slurm/job_submit_pbs.so
+ %{_libdir}/slurm/spank_pbs.so
+ #############################################################################
+diff --git a/src/common/proc_args.h b/src/common/proc_args.h
+index 81f0328ed7..290376f1db 100644
+--- a/src/common/proc_args.h
++++ b/src/common/proc_args.h
+@@ -74,6 +74,12 @@ uint64_t str_to_mbytes(const char *arg);
+  */
+ extern char *mbytes_to_str(uint64_t mbytes);
+ 
++/*
++ * str_to_mbytes_pbs(): verify that arg is numeric with optional "K", "M", "G"
++ * or "T" at end and return the number in mega-bytes. Default units are B.
++ */
++long str_to_mbytes_pbs(const char *arg);
++
+ /* verify that a node count in arg is of a known form (count or min-max) */
+ bool verify_node_count(const char *arg, int *min_nodes, int *max_nodes);
+ 
+diff --git a/src/common/slurm_protocol_defs.h b/src/common/slurm_protocol_defs.h
+index 46eec199c4..53a50b19b0 100644
+--- a/src/common/slurm_protocol_defs.h
++++ b/src/common/slurm_protocol_defs.h
+@@ -995,6 +995,8 @@ typedef struct kill_job_msg {
+ 	time_t   start_time;	/* time of job start, track job requeue */
+ 	slurm_step_id_t step_id;
+ 	time_t   time;		/* slurmctld's time of request */
++	uint32_t nnodes; /* Number of nodes allocated to the job */
++	uint16_t *job_node_cpus; /* Number of CPUs required on the nodes for the job */
+ } kill_job_msg_t;
+ 
+ typedef struct reattach_tasks_request_msg {
+@@ -1034,6 +1036,7 @@ typedef struct prolog_launch_msg {
+ 	char *std_err;			/* pathname of stderr */
+ 	char *std_out;			/* pathname of stdout */
+ 	uint32_t uid;
++    uint16_t *job_node_cpus; /* Number of CPUs required on the nodes for the job */
+ 	char *user_name;		/* job's user name */
+ 	char *work_dir;			/* full pathname of working directory */
+ 	uint16_t x11;			/* X11 forwarding setup flags */
+diff --git a/src/common/slurm_protocol_pack.c b/src/common/slurm_protocol_pack.c
+index 3526809ab6..f45a9943bd 100644
+--- a/src/common/slurm_protocol_pack.c
++++ b/src/common/slurm_protocol_pack.c
+@@ -2855,6 +2855,7 @@ _pack_kill_job_msg(kill_job_msg_t * msg, Buf buffer, uint16_t protocol_version)
+ 					     protocol_version);
+ 		packstr_array(msg->spank_job_env, msg->spank_job_env_size,
+ 			      buffer);
++		pack16_array(msg->job_node_cpus, msg->nnodes, buffer);
+ 		pack_time(msg->start_time, buffer);
+ 		pack_time(msg->time, buffer);
+ 	} else if (protocol_version >= SLURM_20_02_PROTOCOL_VERSION) {
+@@ -2870,6 +2871,7 @@ _pack_kill_job_msg(kill_job_msg_t * msg, Buf buffer, uint16_t protocol_version)
+ 					     protocol_version);
+ 		packstr_array(msg->spank_job_env, msg->spank_job_env_size,
+ 			      buffer);
++		pack16_array(msg->job_node_cpus, msg->nnodes, buffer);
+ 		pack_time(msg->start_time, buffer);
+ 		pack_old_step_id(msg->step_id.step_id, buffer);
+ 		pack_time(msg->time, buffer);
+@@ -2885,6 +2887,7 @@ _pack_kill_job_msg(kill_job_msg_t * msg, Buf buffer, uint16_t protocol_version)
+ 					     protocol_version);
+ 		packstr_array(msg->spank_job_env, msg->spank_job_env_size,
+ 			      buffer);
++		pack16_array(msg->job_node_cpus, msg->nnodes, buffer);
+ 		pack_time(msg->start_time, buffer);
+ 		pack_old_step_id(msg->step_id.step_id, buffer);
+ 		pack_time(msg->time, buffer);
+@@ -2920,6 +2923,9 @@ _unpack_kill_job_msg(kill_job_msg_t ** msg, Buf buffer,
+ 			goto unpack_error;
+ 		safe_unpackstr_array(&tmp_ptr->spank_job_env,
+ 				     &tmp_ptr->spank_job_env_size, buffer);
++		safe_unpack16_array(&tmp_ptr->job_node_cpus,
++		             &tmp_ptr->nnodes,
++					 buffer);
+ 		safe_unpack_time(&tmp_ptr->start_time, buffer);
+ 		safe_unpack_time(&tmp_ptr->time, buffer);
+ 	} else if (protocol_version >= SLURM_20_02_PROTOCOL_VERSION) {
+@@ -2937,6 +2943,9 @@ _unpack_kill_job_msg(kill_job_msg_t ** msg, Buf buffer,
+ 			goto unpack_error;
+ 		safe_unpackstr_array(&tmp_ptr->spank_job_env,
+ 				     &tmp_ptr->spank_job_env_size, buffer);
++		safe_unpack16_array(&tmp_ptr->job_node_cpus,
++		             &tmp_ptr->nnodes,
++					 buffer);
+ 		safe_unpack_time(&tmp_ptr->start_time, buffer);
+ 		safe_unpack32(&tmp_ptr->step_id.step_id, buffer);
+ 		convert_old_step_id(&tmp_ptr->step_id.step_id);
+@@ -2958,6 +2967,9 @@ _unpack_kill_job_msg(kill_job_msg_t ** msg, Buf buffer,
+ 			goto unpack_error;
+ 		safe_unpackstr_array(&(tmp_ptr->spank_job_env),
+ 				     &tmp_ptr->spank_job_env_size, buffer);
++		safe_unpack16_array(&tmp_ptr->job_node_cpus,
++		             &tmp_ptr->nnodes,
++					 buffer);
+ 		safe_unpack_time(&(tmp_ptr->start_time), buffer);
+ 		safe_unpack32(&(tmp_ptr->step_id.step_id), buffer);
+ 		convert_old_step_id(&tmp_ptr->step_id.step_id);
+@@ -7530,7 +7542,7 @@ _pack_job_desc_list_msg(List job_req_list, Buf buffer,
+ 	job_desc_msg_t *req;
+ 	ListIterator iter;
+ 	uint16_t cnt = 0;
+- 
++
+ 	if (job_req_list)
+ 		cnt = list_count(job_req_list);
+ 	pack16(cnt, buffer);
+@@ -7557,7 +7569,6 @@ _unpack_job_desc_list_msg(List *job_req_list, Buf buffer,
+ 	job_desc_msg_t *req;
+ 	uint16_t cnt = 0;
+ 	int i;
+- 
+ 	*job_req_list = NULL;
+ 
+ 	safe_unpack16(&cnt, buffer);
+@@ -9211,6 +9222,8 @@ static void _pack_prolog_launch_msg(prolog_launch_msg_t *msg,
+ 
+ 		packstr_array(msg->spank_job_env, msg->spank_job_env_size,
+ 			      buffer);
++		xassert(msg->nnodes > 0);
++        pack16_array(msg->job_node_cpus, msg->nnodes, buffer);
+ 		slurm_cred_pack(msg->cred, buffer, protocol_version);
+ 		packstr(msg->user_name, buffer);
+ 	}
+@@ -9262,6 +9275,9 @@ static int _unpack_prolog_launch_msg(prolog_launch_msg_t **msg,
+ 		safe_unpackstr_array(&launch_msg_ptr->spank_job_env,
+ 				     &launch_msg_ptr->spank_job_env_size,
+ 				     buffer);
++		safe_unpack16_array(&launch_msg_ptr->job_node_cpus,
++                    &launch_msg_ptr->nnodes,
++                    buffer);
+ 		if (!(launch_msg_ptr->cred = slurm_cred_unpack(buffer,
+ 							       protocol_version)))
+ 			goto unpack_error;
+diff --git a/src/plugins/job_submit/pbs/spank_pbs.c b/src/plugins/job_submit/pbs/spank_pbs.c
+index 02a38c82cd..e28c454aa9 100644
+--- a/src/plugins/job_submit/pbs/spank_pbs.c
++++ b/src/plugins/job_submit/pbs/spank_pbs.c
+@@ -38,6 +38,7 @@
+ \*****************************************************************************/
+ #include <stdio.h>
+ #include <stdlib.h>
++#include <string.h>
+ #include <unistd.h>
+ #include "slurm/spank.h"
+ 
+@@ -61,19 +62,32 @@ int slurm_spank_task_init(spank_t sp, int ac, char **av)
+ 		spank_setenv(sp, "PBS_ENVIRONMENT", "PBS_INTERACTIVE", 1);
+ #endif
+ 
+-	if (spank_getenv(sp, "SLURM_ARRAY_JOB_ID", val, sizeof(val)) ==
+-	    ESPANK_SUCCESS)
+-		spank_setenv(sp, "PBS_ARRAY_ID", val, 1);
+ 	if (spank_getenv(sp, "SLURM_ARRAY_TASK_ID", val, sizeof(val)) ==
+ 	    ESPANK_SUCCESS)
+-		spank_setenv(sp, "PBS_ARRAY_INDEX", val, 1);
++		spank_setenv(sp, "PBS_ARRAYID", val, 1);
+ 
+ 	if (getcwd(val, sizeof(val)))
+ 		spank_setenv(sp, "PBS_JOBDIR", val, 1);
+ 
+-	if (spank_getenv(sp, "SLURM_JOB_ID", val, sizeof(val)) ==
+-	    ESPANK_SUCCESS)
+-		spank_setenv(sp, "PBS_JOBID", val, 1);
++
++	if (spank_getenv(sp, "SLURM_ARRAY_JOB_ID", val, sizeof(val)) ==
++	    ESPANK_SUCCESS) {
++        /* 20 is enough for unit32 (max index is 4M) */
++        char aid[20];
++        if (spank_getenv(sp, "SLURM_ARRAY_TASK_ID", aid, sizeof(aid)) ==
++            ESPANK_SUCCESS) {
++            /* 30k val is large enough for job id and array index */
++            strncat(val, "[", 1);
++            strncat(val, aid, sizeof(aid));
++            strncat(val, "]", 1);
++        }
++        spank_setenv(sp, "PBS_JOBID", val, 1);
++    } else {
++        if (spank_getenv(sp, "SLURM_JOB_ID", val, sizeof(val)) ==
++            ESPANK_SUCCESS)
++            spank_setenv(sp, "PBS_JOBID", val, 1);
++    }
++
+ 
+ 	if (spank_getenv(sp, "SLURM_JOB_NAME", val, sizeof(val)) ==
+ 	    ESPANK_SUCCESS)
+@@ -113,6 +127,15 @@ int slurm_spank_task_init(spank_t sp, int ac, char **av)
+ 	if (spank_getenv(sp, "SYSTEM", val, sizeof(val)) == ESPANK_SUCCESS)
+ 		spank_setenv(sp, "PBS_O_SYSTEM", val, 1);
+ 
++	if (spank_getenv(sp, "SLURM_JOB_NUM_NODES", val, sizeof(val)) == ESPANK_SUCCESS)
++		spank_setenv(sp, "PBS_NUM_NODES", val, 1);
++
++	if (spank_getenv(sp, "SLURM_NTASKS", val, sizeof(val)) == ESPANK_SUCCESS)
++		spank_setenv(sp, "PBS_NP", val, 1);
++
++	if (spank_getenv(sp, "SLURM_NTASKS_PER_NODE", val, sizeof(val)) == ESPANK_SUCCESS)
++		spank_setenv(sp, "PBS_NUM_PPN", val, 1);
++
+ 	if (spank_getenv(sp, "SLURM_SUBMIT_DIR", val, sizeof(val)) ==
+ 	    ESPANK_SUCCESS)
+ 		spank_setenv(sp, "PBS_O_WORKDIR", val, 1);
+diff --git a/src/plugins/prep/script/prep_script_slurmd.c b/src/plugins/prep/script/prep_script_slurmd.c
+index 835551eaf8..ae154eeea9 100644
+--- a/src/plugins/prep/script/prep_script_slurmd.c
++++ b/src/plugins/prep/script/prep_script_slurmd.c
+@@ -167,6 +167,9 @@ static char **_build_env(job_env_t *job_env, slurm_cred_t *cred,
+ 	else
+ 		setenvf(&env, "SLURM_SCRIPT_CONTEXT", "prolog_slurmd");
+ 
++    setenvf(&env, "SLURM_JOB_NODE_CPUS", "%d", job_env->job_node_cpus);
++    setenvf(&env, "SLURM_ACTUAL_NODE_CPUS", "%d", conf->actual_cpus); 
++
+ 	if (cred) {
+ 		slurm_cred_arg_t cred_arg;
+ 		slurm_cred_get_args(cred, &cred_arg);
+diff --git a/src/slurmctld/node_scheduler.c b/src/slurmctld/node_scheduler.c
+index 8d7014a0f9..e24a9c15d6 100644
+--- a/src/slurmctld/node_scheduler.c
++++ b/src/slurmctld/node_scheduler.c
+@@ -261,6 +261,7 @@ extern void deallocate_nodes(job_record_t *job_ptr, bool timeout,
+ 	agent_arg_t *agent_args = NULL;
+ 	int down_node_cnt = 0;
+ 	node_record_t *node_ptr;
++	job_resources_t *job_resrcs_ptr;
+ #ifdef HAVE_FRONT_END
+ 	front_end_record_t *front_end_ptr;
+ #endif
+@@ -303,6 +304,9 @@ extern void deallocate_nodes(job_record_t *job_ptr, bool timeout,
+ 	kill_job->spank_job_env = xduparray(job_ptr->spank_job_env_size,
+ 					    job_ptr->spank_job_env);
+ 	kill_job->spank_job_env_size = job_ptr->spank_job_env_size;
++	job_resrcs_ptr = job_ptr->job_resrcs;
++    kill_job->nnodes = job_resrcs_ptr->nhosts;
++	kill_job->job_node_cpus = job_resrcs_ptr->cpus;
+ 
+ #ifdef HAVE_FRONT_END
+ 	if (job_ptr->batch_host &&
+@@ -2857,6 +2861,8 @@ extern void launch_prolog(job_record_t *job_ptr)
+ 	}
+ #endif
+ 
++	xassert(job_ptr->job_resrcs);
++	job_resrcs_ptr = job_ptr->job_resrcs;
+ 	prolog_msg_ptr = xmalloc(sizeof(prolog_launch_msg_t));
+ 
+ 	/* Locks: Write job */
+@@ -2875,6 +2881,8 @@ extern void launch_prolog(job_record_t *job_ptr)
+ 	prolog_msg_ptr->user_name = xstrdup(job_ptr->user_name);
+ 	prolog_msg_ptr->alias_list = xstrdup(job_ptr->alias_list);
+ 	prolog_msg_ptr->nodes = xstrdup(job_ptr->nodes);
++    prolog_msg_ptr->nnodes = job_resrcs_ptr->nhosts;
++    prolog_msg_ptr->job_node_cpus = job_resrcs_ptr->cpus;
+ 	prolog_msg_ptr->partition = xstrdup(job_ptr->partition);
+ 	prolog_msg_ptr->std_err = xstrdup(job_ptr->details->std_err);
+ 	prolog_msg_ptr->std_out = xstrdup(job_ptr->details->std_out);
+@@ -2892,8 +2900,6 @@ extern void launch_prolog(job_record_t *job_ptr)
+ 	prolog_msg_ptr->spank_job_env = xduparray(job_ptr->spank_job_env_size,
+ 						  job_ptr->spank_job_env);
+ 
+-	xassert(job_ptr->job_resrcs);
+-	job_resrcs_ptr = job_ptr->job_resrcs;
+ 	memset(&cred_arg, 0, sizeof(slurm_cred_arg_t));
+ 	cred_arg.step_id.job_id = job_ptr->job_id;
+ 	cred_arg.step_id.step_id = SLURM_EXTERN_CONT;
+diff --git a/src/slurmd/slurmd/req.c b/src/slurmd/slurmd/req.c
+index c7859b31ca..048c4a8af1 100644
+--- a/src/slurmd/slurmd/req.c
++++ b/src/slurmd/slurmd/req.c
+@@ -134,6 +134,8 @@ typedef struct {
+ 	pthread_mutex_t *timer_mutex;
+ } timer_struct_t;
+ 
++static int  _abort_step(uint32_t job_id, uint32_t step_id);
++static char **_build_env(job_env_t *job_env, bool is_epilog);
+ static void _delay_rpc(int host_inx, int host_cnt, int usec_per_rpc);
+ static void _free_job_env(job_env_t *env_ptr);
+ static bool _is_batch_job_finished(uint32_t job_id);
+@@ -1176,7 +1178,6 @@ static int _check_job_credential(launch_tasks_request_msg_t *req,
+ 		step_cpus = 1;
+ 		job_cpus  = 1;
+ 	}
+-
+ 	/* Overwrite any memory limits in the RPC with contents of the
+ 	 * memory limit within the credential.
+ 	 * Reset the CPU count on this node to correct value. */
+@@ -1201,7 +1202,7 @@ static int _check_job_credential(launch_tasks_request_msg_t *req,
+ 	} else
+ 		req->job_mem_lim  = arg.job_mem_limit;
+ 	req->job_core_spec = arg.job_core_spec;
+-	req->node_cpus = step_cpus;
++    req->node_cpus = step_cpus;
+ #if 0
+ 	info("%ps node_id:%d mem orig:%"PRIu64" cpus:%u limit:%"PRIu64"",
+ 	     &req->step_id, node_id, arg.job_mem_limit,
+@@ -2284,9 +2285,35 @@ static int _spawn_prolog_stepd(slurm_msg_t *msg)
+ 	return rc;
+ }
+ 
++static int _get_node_inx(char *hostlist)
++{
++	char *host;
++	int node_inx = -1;
++	hostset_t hset;
++
++	if (!conf->node_name)
++		return node_inx;
++
++	if ((hset = hostset_create(hostlist))) {
++		int inx = 0;
++		while ((host = hostset_shift(hset))) {
++			if (!strcmp(host, conf->node_name)) {
++				node_inx = inx;
++				free(host);
++				break;
++			}
++			inx++;
++			free(host);
++		}
++		hostset_destroy(hset);
++	}
++	return node_inx;
++}
++
+ static void _rpc_prolog(slurm_msg_t *msg)
+ {
+ 	int rc = SLURM_SUCCESS, alt_rc = SLURM_ERROR, node_id = 0;
++    int node_inx = -1;
+ 	prolog_launch_msg_t *req = (prolog_launch_msg_t *)msg->data;
+ 	job_env_t job_env;
+ 	bool     first_job_run;
+@@ -2359,6 +2386,10 @@ static void _rpc_prolog(slurm_msg_t *msg)
+ 		jobid = req->job_id;
+ #endif
+ 
++        node_inx = _get_node_inx(req->nodes);
++		debug("_rpc_prolog: _get_node_inx returned %d", node_inx);
++        job_env.job_node_cpus = (node_inx >= 0 ? req->job_node_cpus[node_inx] : 0);
++
+ 		if ((rc = container_g_create(jobid)))
+ 			error("container_g_create(%u): %m", req->job_id);
+ 		else
+@@ -4812,7 +4843,7 @@ static int _epilog_complete(uint32_t jobid, int rc)
+ 		error("Unable to send epilog complete message: %m");
+ 		return SLURM_ERROR;
+ 	}
+-	
++
+ 	debug("JobId=%u: sent epilog complete msg: rc = %d", jobid, rc);
+ 
+ 	return SLURM_SUCCESS;
+@@ -5197,6 +5228,7 @@ _rpc_terminate_job(slurm_msg_t *msg)
+ 	int             nsteps = 0;
+ 	int		delay;
+ 	int		node_id = 0;
++	int node_inx = -1;
+ 	job_env_t       job_env;
+ 	uint32_t        jobid;
+ 
+@@ -5417,6 +5449,10 @@ _rpc_terminate_job(slurm_msg_t *msg)
+ 	job_env.uid = req->job_uid;
+ 	job_env.gid = req->job_gid;
+ 
++    node_inx = _get_node_inx(req->nodes);
++    job_env.job_node_cpus = (node_inx >= 0 ? req->job_node_cpus[node_inx] : 0);
++    debug2("Setting job_env.job_cpu_nodes to %d", job_env.job_node_cpus);
++
+ 	rc = _run_epilog(&job_env);
+ 	_free_job_env(&job_env);
+ 
+diff --git a/src/slurmd/slurmd/slurmd.h b/src/slurmd/slurmd/slurmd.h
+index 21824ecd08..d5f3889150 100644
+--- a/src/slurmd/slurmd/slurmd.h
++++ b/src/slurmd/slurmd/slurmd.h
+@@ -69,6 +69,7 @@ typedef struct {
+ 	uid_t uid;
+ 	gid_t gid;
+ 	char *user_name;
++    uint16_t job_node_cpus;  /* Number of CPUs used by the job on this node */
+ } job_env_t;
+ 
+ /*
