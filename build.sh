@@ -33,9 +33,10 @@ if grep "release 8.8" /etc/redhat-release; then
    CUDA_VERSION=${CUDA_VERSION:-12.6}
    CUDA_NVML_PKG="cuda-nvml-devel-${CUDA_VERSION//./-}"
 elif grep "release 9.4" /etc/redhat-release; then
-    NVDRV_NVML_PKG="libnvidia-ml"
-    CUDA_VERSION=${CUDA_VERSION:-12.6}
-    CUDA_NVML_PKG="cuda-nvml-devel-${CUDA_VERSION//./-}"
+   NVIDIA_DRIVER=${NVIDIA_DRIVER-555.42.06}
+   NVDRV_NVML_PKG="nvidia-driver-NVML${NVIDIA_DRIVER:+-$NVIDIA_DRIVER}"
+   CUDA_VERSION=${CUDA_VERSION:-12.6}
+   CUDA_NVML_PKG="cuda-nvml-devel-${CUDA_VERSION//./-}"
 fi
 
 # Prepare directory structure
