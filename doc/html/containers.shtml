@@ -78,7 +78,11 @@ job or any given plugin).</li>
 
 <h2 id="prereq">Prerequisites<a class="slurm_link" href="#prereq"></a></h2>
 <p>The host kernel must be configured to allow user land containers:</p>
-<pre>$ sudo sysctl -w kernel.unprivileged_userns_clone=1</pre>
+<pre>
+sudo sysctl -w kernel.unprivileged_userns_clone=1
+sudo sysctl -w kernel.apparmor_restrict_unprivileged_unconfined=0
+sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+</pre>
 
 <p>Docker also provides a tool to verify the kernel configuration:
 <pre>$ dockerd-rootless-setuptool.sh check --force
@@ -353,6 +357,62 @@ exit $rc
 </pre>
 </p>
 
+<h3 id="multiple-runtimes">Handling multiple runtimes
+<a class="slurm_link" href="#multiple-runtimes"></a>
+</h3>
+
+<p>If you wish to accommodate multiple runtimes in your environment,
+it is possible to do so with a bit of extra setup. This section outlines one
+possible way to do so:</p>
+
+<ol>
+<li>Create a generic oci.conf that calls a wrapper script
+<pre>
+IgnoreFileConfigJson=true
+RunTimeRun="/opt/slurm-oci/run %b %m %u %U %n %j %s %t %@"
+RunTimeKill="kill -s SIGTERM %p"
+RunTimeDelete="kill -s SIGKILL %p"
+</pre>
+</li>
+<li>Create the wrapper script to check for user-specific run configuration
+(e.g., /opt/slurm-oci/run)
+<pre>
+#!/bin/bash
+if [[ -e ~/.slurm-oci-run ]]; then
+	~/.slurm-oci-run "$@"
+else
+	/opt/slurm-oci/slurm-oci-run-default "$@"
+fi
+</pre>
+</li>
+<li>Create a generic run configuration to use as the default
+(e.g., /opt/slurm-oci/slurm-oci-run-default)
+<pre>
+#!/bin/bash --login
+# Parse
+CONTAINER="$1"
+SPOOL_DIR="$2"
+USER_NAME="$3"
+USER_ID="$4"
+NODE_NAME="$5"
+JOB_ID="$6"
+STEP_ID="$7"
+TASK_ID="$8"
+shift 8 # subsequent arguments are the command to run in the container
+# Run
+apptainer run --bind /var/spool --containall "$CONTAINER" "$@"
+</pre>
+</li>
+<li>Add executable permissions to both scripts
+<pre>chmod +x /opt/slurm-oci/run /opt/slurm-oci/slurm-oci-run-default</pre>
+</li>
+</ol>
+
+<p>Once this is done, users may create a script at '~/.slurm-oci-run' if
+they wish to customize the container run process, such as using a different
+container runtime. Users should model this file after the default
+'/opt/slurm-oci/slurm-oci-run-default'</p>
+
 <h2 id="testing">Testing OCI runtime outside of Slurm
 <a class="slurm_link" href="#testing"></a>
 </h2>
@@ -458,11 +518,16 @@ scrun being isolated from the network and not being able to communicate with
 the Slurm controller. The container is run by Slurm on the compute nodes which
 makes having Docker setup a network isolation layer ineffective for the
 container.</li>
-<li><pre>docker exec</pre> command is not supported.</li>
-<li><pre>docker compose</pre> command is not supported.</li>
-<li><pre>docker pause</pre> command is not supported.</li>
-<li><pre>docker unpause</pre> command is not supported.</li>
-<li><pre>docker swarm</pre> command is not supported.</li>
+<li><code>docker exec</code> command is not supported.</li>
+<li><code>docker swarm</code> command is not supported.</li>
+<li><code>docker compose</code>/<code>docker-compose</code> command is not
+	supported.</li>
+<li><code>docker pause</code> command is not supported.</li>
+<li><code>docker unpause</code> command is not supported.</li>
+<li><code>docker swarm</code> command is not supported.</li>
+<li>All <code>docker</code> commands are not supported inside of containers.</li>
+<li><a href="https://docs.docker.com/reference/api/engine/">Docker API</a> is
+	not supported inside of containers.</li>
 </ol>
 
 <h3>Setup procedure</h3>
@@ -580,9 +645,16 @@ configuration.</li>
 <li>All containers must use
 <a href="https://github.com/containers/podman/blob/main/docs/tutorials/basic_networking.md">
 host networking</a></li>
-<li><pre>podman exec</pre> command is not supported.</li>
-<li><pre>podman kube</pre> command is not supported.</li>
-<li><pre>podman pod</pre> command is not supported.</li>
+<li><code>podman exec</code> command is not supported.</li>
+<li><code>podman-compose</code> command is not supported, due to only being
+	partially implemented. Some compositions may work but each container
+	may be run on different nodes. The network for all containers must be
+	the <code>network_mode: host</code> device.</li>
+<li><code>podman kube</code> command is not supported.</li>
+<li><code>podman pod</code> command is not supported.</li>
+<li><code>podman farm</code> command is not supported.</li>
+<li>All <code>podman</code> commands are not supported inside of containers.</li>
+<li>Podman REST API is not supported inside of containers.</li>
 </ol>
 
 <h3>Setup procedure</h3>
@@ -875,6 +947,6 @@ Overview slides of Sarus are
 
 <hr size=4 width="100%">
 
-<p style="text-align:center;">Last modified 08 October 2024</p>
+<p style="text-align:center;">Last modified 27 November 2024</p>
 
 <!--#include virtual="footer.txt"-->
