@@ -96,7 +96,7 @@ sudo dnf -y install munge-devel libjwt-devel pam-devel
 sudo dnf -y install http-parser-devel json-c-devel libyaml-devel
 # - features: Nvidia NVML
 sudo dnf -y autoremove cuda-nvml-* nvidia-driver-NVML-* nvidia-driver* libnvidia-ml*
-sudo dnf -y install "$CUDA_NVML_PKG" "$NVDRV_NVML_PKG"
+sudo dnf -y install "$CUDA_NVML_PKG" "$NVDRV_NVML_PKG" "nvidia-driver-devel"
 # - plugins: MPI
 sudo dnf -y install pmix "pmix-devel ${PMIX_VERSION}"  "ucx-devel-${UCX_VERSION}"
 # - plugins: cgroup/v2
