@@ -323,6 +323,8 @@ extern void deallocate_nodes(job_record_t *job_ptr, bool timeout,
 	hostlist_t *hostlist = NULL;
 	uint16_t use_protocol_version = 0;
 	uint16_t msg_flags = 0;
+  job_resources_t	*job_resrcs_ptr = NULL;
+
 #ifdef HAVE_FRONT_END
 	front_end_record_t *front_end_ptr;
 #endif
@@ -346,6 +348,7 @@ extern void deallocate_nodes(job_record_t *job_ptr, bool timeout,
 
 	if (!job_ptr->details->prolog_running)
 		hostlist = hostlist_create(NULL);
+
 
 #ifdef HAVE_FRONT_END
 	if (job_ptr->batch_host &&
@@ -495,8 +498,13 @@ extern void deallocate_nodes(job_record_t *job_ptr, bool timeout,
 	agent_args->msg_flags = msg_flags;
 
 	last_node_update = time(NULL);
-	kill_job = create_kill_job_msg(job_ptr, use_protocol_version);
+    kill_job = create_kill_job_msg(job_ptr, use_protocol_version);
 	kill_job->nodes = xstrdup(job_ptr->nodes);
+
+	// XXX: verify
+	job_resrcs_ptr = job_ptr->job_resrcs;
+    kill_job->nnodes = job_resrcs_ptr->nhosts;
+	kill_job->job_node_cpus = job_resrcs_ptr->cpus;
 
 	agent_args->msg_args = kill_job;
 	set_agent_arg_r_uid(agent_args, SLURM_AUTH_UID_ANY);
@@ -2538,6 +2546,7 @@ extern int select_nodes(job_record_t *job_ptr, bool test_only,
 		{ .assoc = READ_LOCK, .qos = WRITE_LOCK, .tres = READ_LOCK };
 	List gres_list_pre = NULL;
 	bool gres_list_pre_set = false;
+	job_record_t *tmp_job;
 
 	xassert(job_ptr);
 	xassert(job_ptr->magic == JOB_MAGIC);
@@ -2942,7 +2951,10 @@ extern int select_nodes(job_record_t *job_ptr, bool test_only,
 
 	job_end_time_reset(job_ptr);
 
-	(void) job_array_post_sched(job_ptr);
+	tmp_job = job_array_post_sched(job_ptr);
+	if (tmp_job && (tmp_job != job_ptr) && (orig_resv_port_cnt == NO_VAL16))
+		tmp_job->resv_port_cnt = orig_resv_port_cnt;
+
 	if (bb_g_job_begin(job_ptr) != SLURM_SUCCESS) {
 		/* Leave job queued, something is hosed */
 		error_code = ESLURM_INVALID_BURST_BUFFER_REQUEST;
@@ -3101,7 +3113,6 @@ cleanup:
 	}
 
 	if (error_code != SLURM_SUCCESS) {
-		FREE_NULL_BITMAP(job_ptr->node_bitmap);
 		if (gres_list_pre_set &&
 		    (job_ptr->gres_list_req != gres_list_pre)) {
 			FREE_NULL_LIST(job_ptr->gres_list_req);
@@ -3114,6 +3125,7 @@ cleanup:
 			resv_port_job_free(job_ptr);
 			xfree(job_ptr->resv_ports);
 		}
+		FREE_NULL_BITMAP(job_ptr->node_bitmap);
 	} else
 		FREE_NULL_LIST(gres_list_pre);
 
@@ -3345,6 +3357,10 @@ extern void launch_prolog(job_record_t *job_ptr)
 
 	xassert(job_ptr->job_resrcs);
 	job_resrcs_ptr = job_ptr->job_resrcs;
+
+    prolog_msg_ptr->nnodes = job_resrcs_ptr->nhosts;
+    prolog_msg_ptr->job_node_cpus = job_resrcs_ptr->cpus;
+
 	setup_cred_arg(&cred_arg, job_ptr);
 	cred_arg.step_id.job_id = job_ptr->job_id;
 	cred_arg.step_id.step_id = SLURM_EXTERN_CONT;

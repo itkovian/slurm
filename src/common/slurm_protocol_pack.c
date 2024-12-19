@@ -2531,6 +2531,8 @@ _pack_kill_job_msg(kill_job_msg_t * msg, buf_t *buffer, uint16_t protocol_versio
 		packstr(msg->nodes, buffer);
 		packstr_array(msg->spank_job_env, msg->spank_job_env_size,
 			      buffer);
+        pack32(msg->nnodes, buffer);
+		pack16_array(msg->job_node_cpus, msg->nnodes, buffer);
 		pack_time(msg->start_time, buffer);
 		pack_time(msg->time, buffer);
 		packstr(msg->work_dir, buffer);
@@ -2573,6 +2575,10 @@ _unpack_kill_job_msg(kill_job_msg_t ** msg, buf_t *buffer,
 		safe_unpackstr(&tmp_ptr->nodes, buffer);
 		safe_unpackstr_array(&tmp_ptr->spank_job_env,
 				     &tmp_ptr->spank_job_env_size, buffer);
+        safe_unpack32(&tmp_ptr->nnodes, buffer);
+		safe_unpack16_array(&tmp_ptr->job_node_cpus,
+		             &tmp_ptr->nnodes,
+					 buffer);
 		safe_unpack_time(&tmp_ptr->start_time, buffer);
 		safe_unpack_time(&tmp_ptr->time, buffer);
 		safe_unpackstr(&tmp_ptr->work_dir, buffer);
@@ -8245,6 +8251,8 @@ static void _pack_prolog_launch_msg(const slurm_msg_t *smsg, buf_t *buffer)
 
 		packstr_array(msg->spank_job_env, msg->spank_job_env_size,
 			      buffer);
+		xassert(msg->nnodes > 0);
+        pack16_array(msg->job_node_cpus, msg->nnodes, buffer);
 		slurm_cred_pack(msg->cred, buffer, smsg->protocol_version);
 
 		if (msg->job_ptr_buf) {
@@ -8278,6 +8286,8 @@ static void _pack_prolog_launch_msg(const slurm_msg_t *smsg, buf_t *buffer)
 
 		packstr_array(msg->spank_job_env, msg->spank_job_env_size,
 			      buffer);
+		xassert(msg->nnodes > 0);
+        pack16_array(msg->job_node_cpus, msg->nnodes, buffer);
 		slurm_cred_pack(msg->cred, buffer, smsg->protocol_version);
 	} else if (smsg->protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
 		gres_prep_pack(msg->job_gres_prep, buffer,
@@ -8302,6 +8312,8 @@ static void _pack_prolog_launch_msg(const slurm_msg_t *smsg, buf_t *buffer)
 
 		packstr_array(msg->spank_job_env, msg->spank_job_env_size,
 			      buffer);
+		xassert(msg->nnodes > 0);
+        pack16_array(msg->job_node_cpus, msg->nnodes, buffer);
 		slurm_cred_pack(msg->cred, buffer, smsg->protocol_version);
 		packstr(msg->user_name_deprecated, buffer);
 	}
@@ -8336,6 +8348,9 @@ static int _unpack_prolog_launch_msg(slurm_msg_t *smsg, buf_t *buffer)
 		safe_unpackstr_array(&msg->spank_job_env,
 				     &msg->spank_job_env_size,
 				     buffer);
+		safe_unpack16_array(&msg->job_node_cpus,
+                    &msg->nnodes,
+                    buffer);
 		if (!(msg->cred = slurm_cred_unpack(buffer,
 						    smsg->protocol_version)))
 			goto unpack_error;
@@ -8377,6 +8392,9 @@ static int _unpack_prolog_launch_msg(slurm_msg_t *smsg, buf_t *buffer)
 		safe_unpackstr_array(&msg->spank_job_env,
 				     &msg->spank_job_env_size,
 				     buffer);
+		safe_unpack16_array(&msg->job_node_cpus,
+                    &msg->nnodes,
+                    buffer);
 		if (!(msg->cred = slurm_cred_unpack(buffer,
 						    smsg->protocol_version)))
 			goto unpack_error;
@@ -8405,6 +8423,9 @@ static int _unpack_prolog_launch_msg(slurm_msg_t *smsg, buf_t *buffer)
 		safe_unpackstr_array(&msg->spank_job_env,
 				     &msg->spank_job_env_size,
 				     buffer);
+		safe_unpack16_array(&msg->job_node_cpus,
+                    &msg->nnodes,
+                    buffer);
 		if (!(msg->cred = slurm_cred_unpack(buffer,
 						    smsg->protocol_version)))
 			goto unpack_error;

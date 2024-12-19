@@ -607,8 +607,6 @@ static int _handle_job_step_get_info(int fd, stepd_step_rec_t *step, uid_t uid)
 		      buffer);
 	slurm_send_node_msg(msg.conn_fd, &response_msg);
 	FREE_NULL_BUFFER(buffer);
-
-	slurm_send_rc_msg(&msg, SLURM_SUCCESS);
 	slurm_free_msg_members(&msg);
 
 done:
@@ -752,9 +750,10 @@ static int _handle_step_layout(int fd, stepd_step_rec_t *step, uid_t uid)
 			      step_layout);
 		slurm_send_node_msg(msg.conn_fd, &response_msg);
 		slurm_step_layout_destroy(step_layout);
+	} else {
+		slurm_send_rc_msg(&msg, rc);
 	}
 
-	slurm_send_rc_msg(&msg, rc);
 	slurm_free_msg_members(&msg);
 
 done:
@@ -789,6 +788,8 @@ static int _handle_job_sbcast_cred(int fd, stepd_step_rec_t *step, uid_t uid)
 	slurm_send_node_msg(msg.conn_fd, &response_msg);
 
 	slurm_free_sbcast_cred_msg(job_info_resp_msg);
+	slurm_free_msg_members(&msg);
+	return rc;
 
 resp:
 	slurm_send_rc_msg(&msg, rc);
@@ -839,6 +840,8 @@ static int _handle_het_job_alloc_info(int fd, stepd_step_rec_t *step, uid_t uid)
 		      resp_list);
 	slurm_send_node_msg(msg.conn_fd, &response_msg);
 	FREE_NULL_LIST(resp_list);
+	slurm_free_msg_members(&msg);
+	return rc;
 
 resp:
 	slurm_send_rc_msg(&msg, rc);
@@ -2163,31 +2166,39 @@ _handle_completion(int fd, stepd_step_rec_t *step, uid_t uid)
 		goto rwfail;
 	FREE_NULL_BUFFER(buffer);
 
-	if (job_step_ptr && do_stepmgr) {
-		int rem = 0;
-		uint32_t max_rc;
-		slurm_step_id_t temp_id = {
-			.job_id = job_step_ptr->job_id,
-			.step_het_comp = NO_VAL,
-			.step_id = step_id
-		};
+	if (do_stepmgr) {
+		slurm_mutex_lock(&stepmgr_mutex);
+		if (job_step_ptr) {
+			int rem = 0;
+			uint32_t max_rc;
+			slurm_step_id_t temp_id = {
+				.job_id = job_step_ptr->job_id,
+				.step_het_comp = NO_VAL,
+				.step_id = step_id
+			};
 
-		step_complete_msg_t req = {
-			.range_first = first,
-			.range_last = last,
-			.step_id = temp_id,
-			.step_rc = step_rc,
-			.jobacct = jobacct
-		};
+			step_complete_msg_t req = {
+				.range_first = first,
+				.range_last = last,
+				.step_id = temp_id,
+				.step_rc = step_rc,
+				.jobacct = jobacct
+			};
 
-		step_partial_comp(&req, uid, true, &rem, &max_rc);
+			step_partial_comp(&req, uid, true, &rem, &max_rc);
 
-		safe_write(fd, &rc, sizeof(int));
-		safe_write(fd, &errnum, sizeof(int));
+			safe_write(fd, &rc, sizeof(int));
+			safe_write(fd, &errnum, sizeof(int));
 
-		jobacctinfo_destroy(jobacct);
+			jobacctinfo_destroy(jobacct);
 
-		return SLURM_SUCCESS;
+			rc = SLURM_SUCCESS;
+		} else {
+			error("Asked to complete a stepmgr step but we don't have a job_step_ptr. This should never happen.");
+			rc = SLURM_ERROR;
+		}
+		slurm_mutex_unlock(&stepmgr_mutex);
+		return rc;
 	}
 
 	/*
