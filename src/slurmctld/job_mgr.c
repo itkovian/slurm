@@ -3477,6 +3477,8 @@ extern job_record_t *job_array_split(job_record_t *job_ptr)
 	job_ptr_pend->resv_name = xstrdup(job_ptr->resv_name);
 	if (job_ptr->resv_list)
 		job_ptr_pend->resv_list = list_shallow_copy(job_ptr->resv_list);
+	job_ptr_pend->resv_ports = NULL;
+	job_ptr_pend->resv_port_array = NULL;
 	job_ptr_pend->resp_host = xstrdup(job_ptr->resp_host);
 	if (job_ptr->select_jobinfo) {
 		job_ptr_pend->select_jobinfo =
@@ -15673,6 +15675,10 @@ void batch_requeue_fini(job_record_t *job_ptr)
 			(void)gres_job_state_validate(&gres_js_val);
 		}
 	}
+
+	/* Reset the priority (begin and accrue times were reset) */
+	if (job_ptr->priority != 0)
+		set_job_prio(job_ptr);
 
 	/*
 	 * If a reservation ended and was a repeated (e.g., daily, weekly)

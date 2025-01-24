@@ -28,14 +28,15 @@ OUR_RELEASE=${RELEASE:-1}
 # allow _empty_ version, which is used in pipeline
 
 if grep "release 8.8" /etc/redhat-release; then
-   NVIDIA_DRIVER=${NVIDIA_DRIVER-550.90.07}
+   NVIDIA_DRIVER=${NVIDIA_DRIVER-555.42.06}
    NVDRV_NVML_PKG="nvidia-driver-NVML${NVIDIA_DRIVER:+-$NVIDIA_DRIVER}"
    CUDA_VERSION=${CUDA_VERSION:-12.6}
    CUDA_NVML_PKG="cuda-nvml-devel-${CUDA_VERSION//./-}"
 elif grep "release 9.4" /etc/redhat-release; then
-    NVDRV_NVML_PKG="libnvidia-ml"
-    CUDA_VERSION=${CUDA_VERSION:-12.6}
-    CUDA_NVML_PKG="cuda-nvml-devel-${CUDA_VERSION//./-}"
+   NVIDIA_DRIVER=${NVIDIA_DRIVER-555.42.06}
+   NVDRV_NVML_PKG="nvidia-driver-NVML${NVIDIA_DRIVER:+-$NVIDIA_DRIVER}"
+   CUDA_VERSION=${CUDA_VERSION:-12.6}
+   CUDA_NVML_PKG="cuda-nvml-devel-${CUDA_VERSION//./-}"
 fi
 
 # Prepare directory structure
@@ -96,7 +97,7 @@ sudo dnf -y install munge-devel libjwt-devel pam-devel
 sudo dnf -y install http-parser-devel json-c-devel libyaml-devel
 # - features: Nvidia NVML
 sudo dnf -y autoremove cuda-nvml-* nvidia-driver-NVML-* nvidia-driver* libnvidia-ml*
-sudo dnf -y install "$CUDA_NVML_PKG" "$NVDRV_NVML_PKG"
+sudo dnf -y install "$CUDA_NVML_PKG" "$NVDRV_NVML_PKG" "nvidia-driver-devel"
 # - plugins: MPI
 sudo dnf -y install pmix "pmix-devel ${PMIX_VERSION}"  "ucx-devel-${UCX_VERSION}"
 # - plugins: cgroup/v2
