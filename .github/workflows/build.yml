@@ -2,16 +2,16 @@ name: slurm C/C++ build
 
 on:
   push:
-    branches: [20.11.ug, 22.05.ug, 24.05.ug]
+    branches: [24.05.ug]
   pull_request:
-    branches: [20.11.ug, 22.05.ug, 24.05.ug]
+    branches: [24.05.ug]
 
 jobs:
   build:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
 
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4.2.2
       - name: Install deps
         run: sudo apt-get install -y libmunge-dev
       - name: configure
