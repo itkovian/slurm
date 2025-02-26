@@ -1,5 +1,5 @@
 Name:		slurm
-Version:	24.05.5
+Version:	24.05.6
 %define rel	1
 Release:        %{rel}.%{gittag}%{?dist}%{?gpu}.ug
 Summary:	Slurm Workload Manager
