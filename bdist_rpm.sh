@@ -22,6 +22,8 @@ mkdir -p BUILD SOURCES SPECS SRPMS RPMS BUILDROOT
 git archive --format=tar.gz -o "SOURCES/slurm-${SUFFIX}.tar.gz" --prefix="slurm-${SUFFIX}/" HEAD
 cp slurm.spec "SPECS"
 
+sudo dnf module switch-to nvidia-driver:570-dkms
+
 # remove json-c12 -> use plain json-c?
 sudo yum install -y json-c-devel json-c
 if grep "release 7" /etc/redhat-release; then
@@ -56,7 +58,7 @@ sudo yum install -y munge-devel mariadb-devel pam-devel readline-devel
 # TODO: what if more than one cuda is available/installed, then the * thingies will probably not work
 # pmix-3 as rebuild from github src.rpm includes the devel rpms in the rpm
 sudo yum remove -y cuda-nvml-dev-10-1 cuda-nvml-dev-10-2 cuda-nvml-devel-11-6 cuda-nvml-devel-12-2
-sudo yum install -y nvidia-driver-devel nvidia-driver-NVML cuda-nvml-devel-12-2
+sudo yum install -y nvidia-driver-devel libnvidia-ml-570.86.15-1.el8.x86_64 cuda-nvml-devel-12-2
 
 
 # glob expansion in list
