@@ -1,4 +1,4 @@
-.TH sacct "1" "Slurm Commands" "August 2024" "Slurm Commands"
+.TH sacct "1" "Slurm Commands" "March 2025" "Slurm Commands"
 
 .SH "NAME"
 sacct \- displays accounting data for all jobs and job steps in the
@@ -173,7 +173,8 @@ all records that match the selection criteria will be returned.
 \fB\-E\fR, \fB\-\-endtime\fR=<\fIend_time\fR>
 Select jobs in any state before the specified time. If states are
 given with the \-s option return jobs in this state before this period.
-See the \fBDEFAULT TIME WINDOW\fR for more details.
+See the \fBDEFAULT TIME WINDOW\fR section (below) for details about how the
+default values for \-\-starttime and \-\-endtime are determined.
 
 Valid time formats are:
 .br
@@ -288,18 +289,19 @@ MaxVMSizeNode       MaxVMSizeTask       McsLabel            MinCPU
 MinCPUNode          MinCPUTask          NCPUS               NNodes
 NodeList            NTasks              Partition           Planned
 PlannedCPU          PlannedCPURAW       Priority            QOS
-QOSRAW              Reason              ReqCPUFreq          ReqCPUFreqGov
-ReqCPUFreqMax       ReqCPUFreqMin       ReqCPUS             ReqMem
-ReqNodes            ReqTRES             Reservation         ReservationId
-Start               State               StdErr              StdIn
-StdOut              Submit              SubmitLine          Suspended
-SystemComment       SystemCPU           Timelimit           TimelimitRaw
-TotalCPU            TRESUsageInAve      TRESUsageInMax      TRESUsageInMaxNode
-TRESUsageInMaxTask  TRESUsageInMin      TRESUsageInMinNode  TRESUsageInMinTask
-TRESUsageInTot      TRESUsageOutAve     TRESUsageOutMax     TRESUsageOutMaxNode
-TRESUsageOutMaxTask TRESUsageOutMin     TRESUsageOutMinNode TRESUsageOutMinTask
-TRESUsageOutTot     UID                 User                UserCPU
-WCKey               WCKeyID             WorkDir
+QOSRAW              QOSREQ              Reason              ReqCPUFreq
+ReqCPUFreqGov       ReqCPUFreqMax       ReqCPUFreqMin       ReqCPUS
+ReqMem              ReqNodes            ReqTRES             Reservation
+ReservationId       Restarts            SLUID               Start
+State               StdErr              StdIn               StdOut
+Submit              SubmitLine          Suspended           SystemComment
+SystemCPU           Timelimit           TimelimitRaw        TotalCPU
+TRESUsageInAve      TRESUsageInMax      TRESUsageInMaxNode  TRESUsageInMaxTask
+TRESUsageInMin      TRESUsageInMinNode  TRESUsageInMinTask  TRESUsageInTot
+TRESUsageOutAve     TRESUsageOutMax     TRESUsageOutMaxNode TRESUsageOutMaxTask
+TRESUsageOutMin     TRESUsageOutMinNode TRESUsageOutMinTask TRESUsageOutTot
+UID                 User                UserCPU             WCKey
+WCKeyID             WorkDir
 .ft 1
 .fi
 .RE
@@ -337,8 +339,8 @@ option the non\-eligible will be also shown.
 .br
 \fBNOTE\fR: If \-\-state is also specified, as non\-eligible are not PD,
 then non\-eligible jobs will not be displayed.
-See the \fBDEFAULT TIME WINDOW\fR for details about how this option
-changes the default \-S and \-E options.
+See the \fBDEFAULT TIME WINDOW\fR section (below) for details about how this
+option changes the default values for \-\-starttime and \-\-endtime.
 .IP
 
 .TP
@@ -445,7 +447,8 @@ current day, unless the '\-s' or '\-j' options are used. If the '\-s' option is
 used, then the default is 'now'. If states are given with the '\-s' option then
 only jobs in this state at this time will be returned. If the '\-j' option is
 used, then the default time is Unix Epoch 0. See the \fBDEFAULT TIME WINDOW\fR
-for more details.
+section (below) for details about how default values for \-\-starttime and
+\-\-endtime are determined.
 
 Valid time formats are:
 .br
@@ -486,7 +489,9 @@ they are pending indefinitely.
 \fBNOTE\fR: When specifying states and no start time is given the default
 start time is 'now'. This is only when \-j is not used. If \-j is used the
 start time will default to 'Epoch'. In both cases if no end time is given it
-will default to 'now'. See the \fBDEFAULT TIME WINDOW\fR for more details.
+will default to 'now'. See the \fBDEFAULT TIME WINDOW\fR section (below) for
+details about how this option changes the default values for \-\-starttime
+and \-\-endtime.
 .IP
 
 .TP
@@ -572,10 +577,12 @@ data_parser with parameters. Sorting and formatting arguments will be ignored.
 .IP
 
 .SS "Job Accounting Fields"
-Descriptions of each job accounting field can be found below.
+Descriptions of each field option can be found below.
 Note that the Ave*, Max* and Min* accounting fields look at the values for
 all the tasks of each step in a job and return the average, maximum or minimum
-values for the job step.
+values of the task for that job step. For example, for MaxRSS, the returned
+value is the maximum memory consumption seen by one of the tasks of the step,
+and MaxRSSTask shows which task it is.
 .RS
 .TP "10"
 \f3ALL\fP
@@ -1073,6 +1080,11 @@ Reservation Name.
 .TP
 \f3ReservationId\fP
 Reservation Id.
+.IP
+
+.TP
+\f3Restarts\fP
+How many times this job has been requeued/restarted.
 .IP
 
 .TP

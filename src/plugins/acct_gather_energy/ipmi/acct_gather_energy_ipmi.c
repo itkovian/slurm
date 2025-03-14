@@ -60,6 +60,7 @@
 #include "src/common/slurm_protocol_defs.h"
 #include "src/common/fd.h"
 #include "src/common/xstring.h"
+#include "src/common/node_conf.h"
 #include "src/interfaces/proctrack.h"
 
 #include "src/slurmd/slurmd/slurmd.h"
@@ -150,6 +151,9 @@ typedef struct sensor_status {
 static sensor_status_t *sensors = NULL;
 static uint16_t sensors_len = 0;
 static uint64_t *start_current_energies = NULL;
+static uint64_t *start_energy_adjustment = NULL;
+static uint64_t *restart_last_energies = NULL;
+static bool faulty_ipmi = false;
 
 /* array of struct describing the configuration of the sensors */
 typedef struct description {
@@ -698,6 +702,7 @@ static void _update_energy(acct_gather_energy_t *e, uint32_t last_update_watt,
 		e->current_watts = last_update_watt;
 	}
 	e->poll_time = time(NULL);
+	e->slurmd_start_time = slurmd_start_time;
 }
 
 /*
@@ -739,12 +744,13 @@ static int _thread_update_node_energy(ipmi_ctx_t *ipmi_dcmi_ctx_p)
 			else
 				xstrfmtcat(log_str, "%u", sensors[i].id);
 
-			info("ipmi-thread: sensor %s current_watts: %u, consumed %"PRIu64" Joules %"PRIu64" new, ave watts %u",
+			info("ipmi-thread: sensor %s current_watts: %u, consumed %"PRIu64" Joules %"PRIu64" new, ave watts %u, slurmd start time: %ld",
 			     log_str,
 			     sensors[i].energy.current_watts,
 			     sensors[i].energy.consumed_energy,
 			     sensors[i].energy.base_consumed_energy,
-			     sensors[i].energy.ave_watts);
+			     sensors[i].energy.ave_watts,
+			     sensors[i].energy.slurmd_start_time);
 
 			xfree(log_str);
 		}
@@ -958,7 +964,6 @@ static void *_thread_launcher(void *no_data)
 
 static int _get_joules_task(uint16_t delta)
 {
-	time_t now = time(NULL);
 	static bool first = true;
 	uint64_t adjustment = 0;
 	uint16_t i;
@@ -969,6 +974,10 @@ static int _get_joules_task(uint16_t delta)
 	uint16_t sensor_cnt = 0;
 
 	xassert(context_id != -1);
+
+	if (faulty_ipmi)
+		return SLURM_ERROR;
+
 
 	if (slurm_get_node_energy(conf->node_name, context_id, delta,
 				  &sensor_cnt, &energies)) {
@@ -982,6 +991,10 @@ static int _get_joules_task(uint16_t delta)
 		sensors_len = sensor_cnt;
 		sensors = xmalloc(sizeof(sensor_status_t) * sensors_len);
 		start_current_energies =
+			xmalloc(sizeof(uint64_t) * sensors_len);
+		start_energy_adjustment =
+			xcalloc(sensors_len, sizeof(uint64_t));
+		restart_last_energies =
 			xmalloc(sizeof(uint64_t) * sensors_len);
 	}
 
@@ -1000,41 +1013,123 @@ static int _get_joules_task(uint16_t delta)
 
 		if (slurm_ipmi_conf.adjustment)
 			adjustment = _get_additional_consumption(
-				new->poll_time, now,
+				new->poll_time, time(NULL),
 				new->current_watts,
 				new->current_watts);
 
 		if (!first) {
-			/* if slurmd is reloaded while the step is alive */
-			if (old->consumed_energy > new->consumed_energy)
-				new->base_consumed_energy =
+			/*
+			 * Faulty IPMI/slurmd restart detection.
+			 *
+			 * If slurmd is restarted we need to record our current
+			 * consumption in restart_last_energies and set a new
+			 * start_current_energies.
+			 *
+			 * We will consider a IPMI interface to be faulty when
+			 * slurmd returns 0 consumed joules but slurmd has not
+			 * been restarted.
+			 */
+			if (old->slurmd_start_time != new->slurmd_start_time) {
+				log_flag(ENERGY, "slurmd restart detected, resetting initial energies.");
+				new->base_consumed_energy = 0;
+				start_current_energies[i] =
 					new->consumed_energy + adjustment;
-			else {
-				new->consumed_energy -=
-					start_current_energies[i];
+				start_energy_adjustment[i] = adjustment;
+				adjustment = 0;
+				/*
+				 * Resetting adjustment so we don't subtract
+				 * it later
+				 */
+				old->last_adjustment = 0;
+				restart_last_energies[i] =
+					old->consumed_energy;
+			} else {
+				new->consumed_energy += adjustment;
+
+				/*
+				 * If the following conditions hold, then
+				 * assume the IPMI interface is faulty and
+				 * disable further energy gathering.
+				 *
+				 * The new gathered+estimated consumed energy
+				 * cannot be less than the real gathered initial
+				 * energy, nor it can be less than the old real
+				 * gathered energy.
+				 */
+				if (new->consumed_energy <
+				    start_current_energies[i]) {
+					start_current_energies[i] -=
+						start_energy_adjustment[i];
+					start_energy_adjustment[i] = 0;
+				}
+				if ((new->consumed_energy <
+				     start_current_energies[i]) ||
+				    ((new->consumed_energy +
+				      old->last_adjustment -
+				      start_current_energies[i]) <
+				     (old->consumed_energy -
+				      restart_last_energies[i]))) {
+					/* Invalidate this step energy acct. */
+					old->ave_watts = 0;
+					old->base_consumed_energy = 0;
+					old->consumed_energy = 0;
+					old->current_watts = 0;
+					old->previous_consumed_energy = 0;
+					old->poll_time = 0;
+
+					/* Disable further energy gathering. */
+					faulty_ipmi = true;
+
+					error("IPMI failure detected, energy reading for this step will not be accurate.");
+					goto end_it;
+				}
+
 				new->base_consumed_energy =
-					adjustment +
-					(new->consumed_energy -
-					 old->consumed_energy);
+					new->consumed_energy -
+					start_current_energies[i] -
+					(old->consumed_energy -
+					 old->last_adjustment -
+					 restart_last_energies[i]);
 			}
 		} else {
-			/* This is just for the step, so take all the pervious
-			   consumption out of the mix.
-			   */
+			/*
+			 * First time we enter this function actions:
+			 *
+			 * start_current_energies is the consumption recorded
+			 * just for the step, so we need to take all the
+			 * previous consumption that slurmd had, and that has
+			 * been returned by slurmd, out of the mix.
+			 */
 			start_current_energies[i] =
 				new->consumed_energy + adjustment;
+			start_energy_adjustment[i] = adjustment;
+
+			/*
+			 * Set also the accumulated energies after a restart to
+			 * zero, as it is the first time the step is gathering
+			 * energy data.
+			 */
+			restart_last_energies[i] = 0;
+			/*
+			 * The base energy for the step is 0, as it has just
+			 * started and thus has not consumed energy yet.
+			 */
 			new->base_consumed_energy = 0;
+			adjustment = 0;
 		}
 
-		new->consumed_energy = new->previous_consumed_energy
-			+ new->base_consumed_energy;
+		new->last_adjustment = adjustment;
+		new->consumed_energy = new->previous_consumed_energy -
+				       old->last_adjustment +
+				       new->base_consumed_energy;
 		memcpy(old, new, sizeof(acct_gather_energy_t));
 
-		log_flag(ENERGY, "%s: consumed %"PRIu64" Joules (received %"PRIu64"(%u watts) from slurmd)",
-			 __func__, new->consumed_energy,
+		log_flag(ENERGY, "consumed %"PRIu64" Joules (received %"PRIu64"(%u watts) from slurmd)",
+			 new->consumed_energy,
 			 new->base_consumed_energy, new->current_watts);
 	}
 
+end_it:
 	acct_gather_energy_destroy(energies);
 
 	first = false;
@@ -1078,6 +1173,9 @@ static void _get_node_energy(acct_gather_energy_t *energy, uint16_t sensor_cnt)
 	} else {
 		_sum_energy(energy, &sensors[0].energy);
 	}
+
+	/* This value gives information about if slurmd has been restarted. */
+	energy->slurmd_start_time = slurmd_start_time;
 }
 
 /*
@@ -1541,7 +1639,7 @@ extern void acct_gather_energy_p_conf_set(int context_id_in,
 	verbose("%s loaded", plugin_name);
 }
 
-extern void acct_gather_energy_p_conf_values(List *data)
+extern void acct_gather_energy_p_conf_values(list_t **data)
 {
 	xassert(*data);
 
