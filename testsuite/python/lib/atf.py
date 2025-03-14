@@ -535,6 +535,8 @@ def start_slurmctld(clean=False, quiet=False):
     if not properties["auto-config"]:
         require_auto_config("wants to start slurmctld")
 
+    logging.debug("Starting slurmctld...")
+
     if not is_slurmctld_running(quiet=quiet):
         # Start slurmctld
         command = f"{properties['slurm-sbin-dir']}/slurmctld"
@@ -550,7 +552,19 @@ def start_slurmctld(clean=False, quiet=False):
         if not repeat_command_until(
             "scontrol ping", lambda results: re.search(r"is UP", results["stdout"])
         ):
-            pytest.fail(f"Slurmctld is not running")
+            logging.warning(
+                "scontrol ping is not responding, trying to get slurmctld backtrace..."
+            )
+            pids = pids_from_exe(f"{properties['slurm-sbin-dir']}/slurmctld")
+            if not pids:
+                logging.warning("process slurmctld not found")
+            for pid in pids:
+                run_command(
+                    f'sudo gdb -p {pid} -ex "set debuginfod enabled on" -ex "set pagination off" -ex "set confirm off" -ex "set print pretty on" -ex "set max-value-size unlimited" -ex "set print array-indexes on" -ex "set print array off" -ex "thread apply all bt full" -ex "quit"'
+                )
+            pytest.fail("Slurmctld is not running")
+        else:
+            logging.debug("Slurmctld started successfully")
 
 
 def start_slurmdbd(clean=False, quiet=False):
@@ -591,7 +605,17 @@ def start_slurmdbd(clean=False, quiet=False):
         if not repeat_command_until(
             "sacctmgr show cluster", lambda results: results["exit_code"] == 0
         ):
-            pytest.fail(f"Slurmdbd is not running")
+            logging.warning(
+                "sacctmgr show cluster is not responding, trying to get slurmdbd backtrace..."
+            )
+            pids = pids_from_exe(f"{properties['slurm-sbin-dir']}/slurmdbd")
+            if not pids:
+                logging.warning("process slurmdbd not found")
+            for pid in pids:
+                run_command(
+                    f'sudo gdb -p {pid} -ex "set debuginfod enabled on" -ex "set pagination off" -ex "set confirm off" -ex "set print pretty on" -ex "set max-value-size unlimited" -ex "set print array-indexes on" -ex "set print array off" -ex "thread apply all bt full" -ex "quit"'
+                )
+            pytest.fail("Slurmdbd is not running")
         else:
             logging.debug("Slurmdbd started successfully")
 
@@ -813,7 +837,7 @@ def stop_slurm(fatal=True, quiet=False):
         logging.warning("Getting the bt of the still running slurmctld")
         for pid in pids:
             run_command(
-                f'sudo gdb -p {pid} -ex "set debuginfod enabled on" -ex "set pagination off" -ex "set confirm off" -ex "thread apply all bt" -ex "quit"'
+                f'sudo gdb -p {pid} -ex "set debuginfod enabled on" -ex "set pagination off" -ex "set confirm off" -ex "set print pretty on" -ex "set max-value-size unlimited" -ex "set print array-indexes on" -ex "set print array off" -ex "thread apply all bt full" -ex "quit"'
             )
 
     # Build list of slurmds
@@ -844,7 +868,7 @@ def stop_slurm(fatal=True, quiet=False):
         failures.append(f"Some slurmds are still running ({pids})")
         for pid in pids:
             run_command(
-                f'sudo gdb -p {pid} -ex "set debuginfod enabled on" -ex "set pagination off" -ex "set confirm off" -ex "thread apply all bt" -ex "quit"'
+                f'sudo gdb -p {pid} -ex "set debuginfod enabled on" -ex "set pagination off" -ex "set confirm off" -ex "set print pretty on" -ex "set max-value-size unlimited" -ex "set print array-indexes on" -ex "set print array off" -ex "thread apply all bt full" -ex "quit"'
             )
         run_command(f"pgrep -f {properties['slurm-sbin-dir']}/slurmd -a", quiet=quiet)
 
@@ -855,6 +879,7 @@ def stop_slurm(fatal=True, quiet=False):
             properties["slurmrestd"].wait(timeout=60)
         except:
             properties["slurmrestd"].kill()
+        properties["slurmrestd_log"].close()
 
     if failures:
         if fatal:
@@ -1869,6 +1894,13 @@ def start_slurmrestd():
     port = None
     attempts = 0
 
+    log_dir = os.path.dirname(
+        get_config_parameter("SlurmctldLogFile", live=False, quiet=True)
+    )
+    properties["slurmrestd_log"] = open(f"{log_dir}/slurmrestd.log", "w")
+    if not properties["slurmrestd_log"]:
+        pytest.fail(f"Unable to open slurmrestd log: {log_dir}/slurmrestd.log")
+
     while not port and attempts < 15:
         port = get_open_port()
         attempts += 1
@@ -1888,8 +1920,8 @@ def start_slurmrestd():
         properties["slurmrestd"] = subprocess.Popen(
             args,
             stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=properties["slurmrestd_log"],
+            stderr=properties["slurmrestd_log"],
         )
         s = None
 
