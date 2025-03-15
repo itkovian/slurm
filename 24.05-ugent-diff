@@ -1,0 +1,516 @@
+diff --git a/.github/workflows/build.yml b/.github/workflows/build.yml
+new file mode 100644
+index 0000000000..5cf04e1d16
+--- /dev/null
++++ b/.github/workflows/build.yml
+@@ -0,0 +1,24 @@
++name: slurm C/C++ build
++
++on:
++  push:
++    branches: [24.05.ug]
++  pull_request:
++    branches: [24.05.ug]
++
++jobs:
++  build:
++    runs-on: ubuntu-24.04
++
++    steps:
++      - uses: actions/checkout@v4.2.2
++      - name: Install deps
++        run: sudo apt-get install -y libmunge-dev
++      - name: configure
++        run: ./configure --enable-multiple-slurmd --prefix=/tmp/slurm/
++      - name: make
++        run: make -j
++      - name: make check
++        run: make -j check
++      - name: make install
++        run: make -j install
+diff --git a/bdist_rpm.sh b/bdist_rpm.sh
+new file mode 100755
+index 0000000000..294a641273
+--- /dev/null
++++ b/bdist_rpm.sh
+@@ -0,0 +1,7 @@
++#!/bin/bash
++
++set -e
++set -x
++
++
++./build.sh
+diff --git a/build.sh b/build.sh
+new file mode 100755
+index 0000000000..9e4b715b3c
+--- /dev/null
++++ b/build.sh
+@@ -0,0 +1,150 @@
++#!/bin/bash
++
++set -e  # exit whenever command in pipeline fails
++set -x  # print commands as they are executed
++
++VERSION=`grep "Version:.*[0-9]" slurm.spec | tr -s " " |  awk '{print $2;}'`
++RELEASE=`grep "%define rel.*[-1-9]" slurm.spec | tr -s " " | awk '{print $3}'`
++
++if [ "${RELEASE}" != "1" ]; then
++    SUFFIX=${VERSION}-${RELEASE}
++else
++    SUFFIX=${VERSION}
++fi
++
++GITTAG=$(git log --format=%ct.%h -1)
++
++SCRIPT=$(readlink -f "${BASH_SOURCE[0]}")
++ORIGIN=$(dirname "$SCRIPT")
++
++# which version to download from github
++SLURM_VERSION=${VERSION:-24.05.3}
++UPSTREAM_REL=${UPSTREAM_REL:-1}
++
++# which release should be used for our RPMs
++OUR_RELEASE=${RELEASE:-1}
++
++# NVML
++# allow _empty_ version, which is used in pipeline
++
++if grep "release 8.8" /etc/redhat-release; then
++   NVIDIA_DRIVER=${NVIDIA_DRIVER-555.42.06}
++   NVDRV_NVML_PKG="nvidia-driver-NVML${NVIDIA_DRIVER:+-$NVIDIA_DRIVER}"
++   CUDA_VERSION=${CUDA_VERSION:-12.6}
++   CUDA_NVML_PKG="cuda-nvml-devel-${CUDA_VERSION//./-}"
++elif grep "release 9.4" /etc/redhat-release; then
++   NVIDIA_DRIVER=${NVIDIA_DRIVER-555.42.06}
++   NVDRV_NVML_PKG="nvidia-driver-NVML${NVIDIA_DRIVER:+-$NVIDIA_DRIVER}"
++   CUDA_VERSION=${CUDA_VERSION:-12.6}
++   CUDA_NVML_PKG="cuda-nvml-devel-${CUDA_VERSION//./-}"
++fi
++
++# Prepare directory structure
++rm -Rf $ORIGIN/rpmbuild/ $ORIGIN/dist/
++mkdir -p $ORIGIN/rpmbuild/{BUILD,RPMS,SRPMS,SOURCES} $ORIGIN/dist
++echo "Building source tarball"
++
++# archive git repo
++echo "archive suffix: ${SUFFIX}"
++git archive --format=tar.gz -o "rpmbuild/SOURCES/slurm-${SUFFIX}.tar.gz" --prefix="slurm-${SUFFIX}/" HEAD
++
++cp slurm.spec "SPECS"
++
++# Patch sources
++#for src_patch in $ORIGIN/src-patches/*.patch; do
++    #echo "Patching $src_patch"
++    #git am $src_patch
++#done
++
++# Patch spec file
++#for spec_patch in $ORIGIN/spec-patches/*.patch; do
++    #echo "Patching $spec_patch"
++    #patch -p1 -b -i $spec_patch
++#done
++
++# Install dependencies
++# see https://slurm.schedmd.com/quickstart_admin.html#build_install
++
++echo "Installing specfile requires"
++# this goes first because it might install undesired stuff related to `--with` options
++sudo dnf -y builddep slurm.spec
++
++# dependecy versions
++
++if grep "release 8.8" /etc/redhat-release; then
++    UCX_VERSION="1.13.1-2.el8.x86_64"
++    PMIX_VERSION=">= 4.2.6"
++    HWLOC_VERSION=">= 2.2.0-3"
++elif grep "release 9.2" /etc/redhat-release; then
++    UCX_VERSION="1.13.1-2.el9.x86_64"
++    PMIX_VERSION=">= 4.2.7"
++    HWLOC_VERSION=">= 2.4.1-5"
++elif grep "release 9.4" /etc/redhat-release; then
++    UCX_VERSION="1.15.0-2.el9.x86_64"
++    PMIX_VERSION=">= 4.2.7"
++    HWLOC_VERSION=">= 2.4.1-5"
++else
++    echo "unsupported OS release"
++    exit 1
++fi
++
++echo "Installing dependencies"
++# - features: basic
++sudo dnf -y install lua-devel mariadb-devel lz4-devel
++# - features: authentication (MUNGE: yes, JWT: yes, PAM: yes)
++sudo dnf -y install munge-devel libjwt-devel pam-devel
++# - features: slurmrestd
++sudo dnf -y install http-parser-devel json-c-devel libyaml-devel
++# - features: Nvidia NVML
++sudo dnf -y autoremove cuda-nvml-* nvidia-driver-NVML-* nvidia-driver* libnvidia-ml*
++sudo dnf -y install "$CUDA_NVML_PKG" "$NVDRV_NVML_PKG" "nvidia-driver-devel"
++# - plugins: MPI
++sudo dnf -y install pmix "pmix-devel ${PMIX_VERSION}"  "ucx-devel-${UCX_VERSION}"
++# - plugins: cgroup/v2
++# see https://slurm.schedmd.com/cgroup_v2.html
++sudo dnf -y install kernel-headers dbus-devel
++# - plugins: task/cgroup, task/affinity
++sudo dnf -y install "hwloc-devel ${HWLOC_VERSION}" numactl-devel
++# - plugins: acct_gather_profile/hdf5
++sudo dnf -y install hdf5-devel
++
++# Build defines
++RPM_DEFINES=( --define "gittag ${GITTAG}" --define "_topdir $ORIGIN/rpmbuild" )
++
++# Build options
++SLURM_BUILDOPTS=( --with slurmrestd --without debug )
++# basic features
++SLURM_BUILDOPTS+=( --with lua --with mysql --with x11 )
++# plugins
++SLURM_BUILDOPTS+=( --with numa --with hwloc --with pmix --with ucx )
++# authentication
++SLURM_BUILDOPTS+=( --with pam --with jwt )
++
++echo "Running rpmbuild (without nvml)"
++rpmbuild -ba "${RPM_DEFINES[@]}" "${SLURM_BUILDOPTS[@]}" --without nvml \
++    slurm.spec 2>&1 | tee rpmbuild-without-nvml.out
++
++
++echo "Doing rpm rebuild (without nvml)"
++for rpm in $ORIGIN/rpmbuild/RPMS/x86_64/slurm-*$SUFFIX*.rpm ; do
++    rpmrebuild --release=${OUR_RELEASE}.${GITTAG}$(rpm -E '%dist').nogpu.ug -d $ORIGIN/dist -p $rpm
++done
++
++
++echo "Running rpmbuild (with nvml)"
++RPM_DEFINES+=( --define "_cuda_version $CUDA_VERSION" )
++rpmbuild -ba "${RPM_DEFINES[@]}" "${SLURM_BUILDOPTS[@]}" --with nvml \
++    slurm.spec 2>&1 | tee rpmbuild-with-nvml.out
++
++echo "Doing rpm rebuild (with nvml)"
++for rpm in $ORIGIN/rpmbuild/RPMS/x86_64/slurm-*$SUFFIX*.rpm ; do
++    rpmrebuild --release=${OUR_RELEASE}.${GITTAG}$(rpm -E '%dist').ug -d $ORIGIN/dist -p $rpm
++done
++
++# strip out torque binaries/wrapper from slurm-torque
++rpmrebuild -d $ORIGIN/dist --change-spec-files="sed '/\(pbsnodes\|mpiexec\|bin\/q.\+\)/d'" -p $ORIGIN/dist/x86_64/slurm-torque-*-${OUR_RELEASE}.${GITTAG}$(rpm -E '%dist').nogpu.ug*.rpm
++rpmrebuild -d $ORIGIN/dist --change-spec-files="sed '/\(pbsnodes\|mpiexec\|bin\/q.\+\)/d'" -p $ORIGIN/dist/x86_64/slurm-torque-*-${OUR_RELEASE}.${GITTAG}$(rpm -E '%dist').ug.*.rpm
++
++# get the RPMs out of the subdirectories
++find rpmbuild -type f -name "*.rpm" -exec rm {} ";"
++find $ORIGIN/dist/ -type f -name '*.rpm' -print0 | xargs -0 -I{} mv {} rpmbuild/RPMS/x86_64/
+diff --git a/contribs/pam_slurm_adopt/pam_slurm_adopt.c b/contribs/pam_slurm_adopt/pam_slurm_adopt.c
+index 336c01fa61..de6766819a 100644
+--- a/contribs/pam_slurm_adopt/pam_slurm_adopt.c
++++ b/contribs/pam_slurm_adopt/pam_slurm_adopt.c
+@@ -75,6 +75,8 @@ typedef enum {
+ 	CALLERID_ACTION_ALLOW,
+ 	CALLERID_ACTION_IGNORE,
+ 	CALLERID_ACTION_DENY,
++	CALLERID_ACTION_ADOPT_AND_CHECK,
++	CALLERID_ACTION_ONLY_CHECK,
+ } callerid_action_t;
+ 
+ /* module options */
+@@ -88,6 +90,7 @@ static struct {
+ 	callerid_action_t action_unknown;
+ 	callerid_action_t action_adopt_failure;
+ 	callerid_action_t action_generic_failure;
++	callerid_action_t action_adopt;
+ 	log_level_t log_level;
+ 	char *node_name;
+ 	bool disable_x11;
+@@ -103,6 +106,7 @@ static void _init_opts(void)
+ 	opts.action_unknown = CALLERID_ACTION_NEWEST;
+ 	opts.action_adopt_failure = CALLERID_ACTION_ALLOW;
+ 	opts.action_generic_failure = CALLERID_ACTION_IGNORE;
++	opts.action_adopt = CALLERID_ACTION_ADOPT_AND_CHECK;
+ 	opts.log_level = LOG_LEVEL_INFO;
+ 	opts.node_name = NULL;
+ 	opts.disable_x11 = false;
+@@ -429,9 +433,15 @@ static int _action_unknown(pam_handle_t *pamh, struct passwd *pwd, list_t *steps
+ 	rc = _indeterminate_multiple(pamh, steps, pwd->pw_uid, &stepd);
+ 	if (rc == PAM_SUCCESS) {
+ 		info("action_unknown: Picked job %u", stepd->step_id.job_id);
+-		if (_adopt_process(pamh, getpid(), stepd) == SLURM_SUCCESS) {
+-			return PAM_SUCCESS;
+-		}
++		if (opts.action_adopt == CALLERID_ACTION_ADOPT_AND_CHECK) {
++			if (_adopt_process(pamh, getpid(), stepd) == SLURM_SUCCESS) {
++				return PAM_SUCCESS;
++			}
++			if (opts.action_adopt_failure == CALLERID_ACTION_ALLOW)
++				return PAM_SUCCESS;
++			else
++				return PAM_PERM_DENIED;
++ 		}
+ 		if (opts.action_adopt_failure == CALLERID_ACTION_ALLOW)
+ 			return PAM_SUCCESS;
+ 		else
+@@ -536,24 +546,27 @@ static int _try_rpc(pam_handle_t *pamh, struct passwd *pwd)
+ 	/* Ask the slurmd at the source IP address about this connection */
+ 	rc = _rpc_network_callerid(&conn, pwd->pw_name, &job_id);
+ 	if (rc == SLURM_SUCCESS) {
+-		step_loc_t stepd;
+-		memset(&stepd, 0, sizeof(stepd));
+-		/* We only need the step_id struct needed to be filled in here
+-		   all the rest isn't needed for the adopt.
+-		*/
+-		stepd.step_id.job_id = job_id;
+-		stepd.step_id.step_id = SLURM_EXTERN_CONT;
+-		stepd.step_id.step_het_comp = NO_VAL;
+-
+-		/* Adopt the process. If the adoption succeeds, return SUCCESS.
+-		 * If not, maybe the adoption failed because the user hopped
+-		 * into one node and was adopted into a job there that isn't on
+-		 * our node here. In that case we got a bad jobid so we'll fall
+-		 * through to the next action */
+-		if (_adopt_process(pamh, getpid(), &stepd) == SLURM_SUCCESS)
+-			return PAM_SUCCESS;
+-		else
+-			return PAM_IGNORE;
++		if (opts.action_adopt == CALLERID_ACTION_ADOPT_AND_CHECK) {
++			step_loc_t stepd;
++			memset(&stepd, 0, sizeof(stepd));
++			/* We only need the step_id struct needed to be filled in here
++			all the rest isn't needed for the adopt.
++			*/
++			stepd.step_id.job_id = job_id;
++			stepd.step_id.step_id = SLURM_EXTERN_CONT;
++			stepd.step_id.step_het_comp = NO_VAL;
++
++			/* Adopt the process. If the adoption succeeds, return SUCCESS.
++			* If not, maybe the adoption failed because the user hopped
++			* into one node and was adopted into a job there that isn't on
++			* our node here. In that case we got a bad jobid so we'll fall
++			* through to the next action */
++			if (_adopt_process(pamh, getpid(), &stepd) == SLURM_SUCCESS)
++				return PAM_SUCCESS;
++			else
++				return PAM_IGNORE;
++		}
++		return PAM_SUCCESS;
+ 	}
+ 
+ 	info("From %s port %d as %s: unable to determine source job",
+@@ -645,6 +658,10 @@ static void _parse_opts(pam_handle_t *pamh, int argc, const char **argv)
+ 					   "unrecognized action_unknown=%s, setting to 'newest'",
+ 					   v);
+ 			}
++		} else if (!xstrncasecmp(*argv, "action_adopt=", 13)){
++			v = (char *)(13 + *argv);
++			if (!xstrncasecmp(v, "check_only", 10))
++				opts.action_adopt = CALLERID_ACTION_ONLY_CHECK;
+ 		} else if (!xstrncasecmp(*argv,"action_generic_failure=",23)) {
+ 			v = (char *)(23 + *argv);
+ 			if (!xstrncasecmp(v, "allow", 5))
+@@ -747,9 +764,8 @@ static int check_pam_service(pam_handle_t *pamh)
+  *	3) Pick a job semi-randomly (default) or skip the adoption (if
+  *		configured)
+  */
+-PAM_EXTERN int pam_sm_acct_mgmt(pam_handle_t *pamh, int flags
+-				__attribute__((unused)), int argc, const char **argv)
+-{
++PAM_EXTERN int _adopt_and_or_check(pam_handle_t *pamh, int flags
++				__attribute__((unused)), int argc, const char **argv) {
+ 	int retval = PAM_IGNORE, rc = PAM_IGNORE, slurmrc, bufsize, user_jobs;
+ 	char *user_name;
+ 	list_t *steps = NULL;
+@@ -876,20 +892,24 @@ PAM_EXTERN int pam_sm_acct_mgmt(pam_handle_t *pamh, int flags
+ 		if (opts.single_job_skip_rpc) {
+ 			info("Connection by user %s: user has only one job %u",
+ 			     user_name, stepd->step_id.job_id);
+-			slurmrc = _adopt_process(pamh, getpid(), stepd);
+-			/* If adoption into the only job fails, it is time to
+-			 * exit. Return code is based on the
+-			 * action_adopt_failure setting */
+-			if (slurmrc == SLURM_SUCCESS ||
+-			    (opts.action_adopt_failure ==
+-			     CALLERID_ACTION_ALLOW))
++			if (opts.action_adopt == CALLERID_ACTION_ADOPT_AND_CHECK) {
++				slurmrc = _adopt_process(pamh, getpid(), stepd);
++				/* If adoption into the only job fails, it is time to
++				* exit. Return code is based on the
++				* action_adopt_failure setting */
++				if (slurmrc == SLURM_SUCCESS ||
++					(opts.action_adopt_failure ==
++					CALLERID_ACTION_ALLOW))
++					rc = PAM_SUCCESS;
++				else {
++				  send_user_msg(pamh, "Access denied by "
++						PAM_MODULE_NAME
++  				        ": failed to adopt process into cgroup, denying access because action_adopt_failure=deny");
++				  rc = PAM_PERM_DENIED;
++				}
++			} else {
+ 				rc = PAM_SUCCESS;
+-			else {
+-				send_user_msg(pamh, "Access denied by "
+-					      PAM_MODULE_NAME
+-					      ": failed to adopt process into cgroup, denying access because action_adopt_failure=deny");
+-				rc = PAM_PERM_DENIED;
+-			}
++ 			}
+ 			goto cleanup;
+ 		}
+ 	} else {
+@@ -916,6 +936,33 @@ cleanup:
+ 	return rc;
+ }
+ 
++/* Take control of the session, to avoid other pam modules doing the
++ * same and change e.g., cgroups.
++ */
++PAM_EXTERN int pam_sm_open_session(pam_handle_t *pamh, int flags
++				__attribute__((unused)), int argc, const char **argv)
++{
++	return _adopt_and_or_check(pamh, flags, argc, argv);
++}
++
++/* Close the session. Always succeeds, we do not need to do anything here.
++ */
++PAM_EXTERN int pam_sm_close_session(pam_handle_t *pamh, int flags
++				__attribute__((unused)), int argc, const char **argv)
++{
++	return PAM_SUCCESS;
++}
++
++
++/* Implementation for the pam_acct_mgmt API call.
++ */
++PAM_EXTERN int pam_sm_acct_mgmt(pam_handle_t *pamh, int flags
++				__attribute__((unused)), int argc, const char **argv)
++{
++	return _adopt_and_or_check(pamh, flags, argc, argv);
++}
++
++
+ #ifdef PAM_STATIC
+ struct pam_module _pam_slurm_adopt_modstruct = {
+ 	PAM_MODULE_NAME,
+diff --git a/slurm.spec b/slurm.spec
+index 59a13298db..d111a23363 100644
+--- a/slurm.spec
++++ b/slurm.spec
+@@ -1,7 +1,7 @@
+ Name:		slurm
+ Version:	24.05.5
+ %define rel	1
+-Release:	%{rel}%{?dist}
++Release:        %{rel}.%{gittag}%{?dist}%{?gpu}.ug
+ Summary:	Slurm Workload Manager
+ 
+ Group:		System Environment/Base
+@@ -15,7 +15,10 @@ URL:		https://slurm.schedmd.com/
+ %global slurm_source_dir %{name}-%{version}-%{rel}
+ %endif
+ 
+-Source:		%{slurm_source_dir}.tar.bz2
++#  We do not need this, but then duplicate file warning will pop up
++#  %define _build_id_links none
++
++Source:		%{slurm_source_dir}.tar.gz
+ 
+ # build options		.rpmmacros options	change to default action
+ # ====================  ====================	========================
+@@ -301,7 +304,9 @@ database changes to slurmctld daemons on each cluster
+ Summary: Slurm\'s implementation of the pmi libraries
+ Group: System Environment/Base
+ Requires: %{name}%{?_isa} = %{version}-%{release}
++%if ! %{with pmix}
+ Conflicts: pmix-libpmi
++%endif
+ %description libpmi
+ Slurm\'s version of libpmi. For systems using Slurm, this version
+ is preferred over the compatibility libraries shipped by the PMIx project.
+@@ -362,7 +367,13 @@ BuildRequires: http-parser-devel
+ %if %{defined suse_version}
+ BuildRequires: libjson-c-devel
+ %else
++%if 0%{?fedora} || 0%{?rhel} > 7
+ BuildRequires: json-c-devel
++Requires: json-c
++%else
++BuildRequires: json-c12-devel
++Requires: json-c12
++%endif
+ %endif
+ %description slurmrestd
+ Provides a REST interface to Slurm.
+@@ -407,7 +418,7 @@ export QA_RPATHS=0x5
+ # Strip out some dependencies
+ 
+ cat > find-requires.sh <<'EOF'
+-exec %{__find_requires} "$@" | egrep -v '^libpmix.so|libevent|libnvidia-ml'
++exec %{__find_requires} "$@" | egrep -v '^libpmix.so|libevent'
+ EOF
+ chmod +x find-requires.sh
+ %global _use_internal_dependency_generator 0
+@@ -594,16 +605,6 @@ rm -rf %{buildroot}
+ 
+ %files torque
+ %defattr(-,root,root)
+-%{_bindir}/pbsnodes
+-%{_bindir}/qalter
+-%{_bindir}/qdel
+-%{_bindir}/qhold
+-%{_bindir}/qrerun
+-%{_bindir}/qrls
+-%{_bindir}/qstat
+-%{_bindir}/qsub
+-%{_bindir}/mpiexec
+-%{_bindir}/generate_pbs_nodefile
+ %{_libdir}/slurm/job_submit_pbs.so
+ %{_libdir}/slurm/spank_pbs.so
+ #############################################################################
+diff --git a/src/plugins/job_submit/pbs/spank_pbs.c b/src/plugins/job_submit/pbs/spank_pbs.c
+index 3559c90230..943d253ad9 100644
+--- a/src/plugins/job_submit/pbs/spank_pbs.c
++++ b/src/plugins/job_submit/pbs/spank_pbs.c
+@@ -65,14 +65,28 @@ int slurm_spank_task_init(spank_t sp, int ac, char **av)
+ 		spank_setenv(sp, "PBS_ARRAY_ID", val, 1);
+ 	if (spank_getenv(sp, "SLURM_ARRAY_TASK_ID", val, sizeof(val)) ==
+ 	    ESPANK_SUCCESS)
+-		spank_setenv(sp, "PBS_ARRAY_INDEX", val, 1);
++		spank_setenv(sp, "PBS_ARRAYID", val, 1);
+ 
+ 	if (getcwd(val, sizeof(val)))
+ 		spank_setenv(sp, "PBS_JOBDIR", val, 1);
+ 
+-	if (spank_getenv(sp, "SLURM_JOB_ID", val, sizeof(val)) ==
+-	    ESPANK_SUCCESS)
+-		spank_setenv(sp, "PBS_JOBID", val, 1);
++	if (spank_getenv(sp, "SLURM_ARRAY_JOB_ID", val, sizeof(val)) ==
++	    ESPANK_SUCCESS) {
++        /* 20 is enough for unit32 (max index is 4M) */
++        char aid[20];
++        if (spank_getenv(sp, "SLURM_ARRAY_TASK_ID", aid, sizeof(aid)) ==
++            ESPANK_SUCCESS) {
++            /* 30k val is large enough for job id and array index */
++            strncat(val, "[", 1);
++            strncat(val, aid, sizeof(aid));
++            strncat(val, "]", 1);
++        }
++        spank_setenv(sp, "PBS_JOBID", val, 1);
++    } else {
++        if (spank_getenv(sp, "SLURM_JOB_ID", val, sizeof(val)) ==
++            ESPANK_SUCCESS)
++            spank_setenv(sp, "PBS_JOBID", val, 1);
++    }
+ 
+ 	if (spank_getenv(sp, "SLURM_JOB_NAME", val, sizeof(val)) ==
+ 	    ESPANK_SUCCESS)
+@@ -112,6 +126,15 @@ int slurm_spank_task_init(spank_t sp, int ac, char **av)
+ 	if (spank_getenv(sp, "SYSTEM", val, sizeof(val)) == ESPANK_SUCCESS)
+ 		spank_setenv(sp, "PBS_O_SYSTEM", val, 1);
+ 
++	if (spank_getenv(sp, "SLURM_JOB_NUM_NODES", val, sizeof(val)) == ESPANK_SUCCESS)
++		spank_setenv(sp, "PBS_NUM_NODES", val, 1);
++
++	if (spank_getenv(sp, "SLURM_NTASKS", val, sizeof(val)) == ESPANK_SUCCESS)
++		spank_setenv(sp, "PBS_NP", val, 1);
++
++	if (spank_getenv(sp, "SLURM_NTASKS_PER_NODE", val, sizeof(val)) == ESPANK_SUCCESS)
++		spank_setenv(sp, "PBS_NUM_PPN", val, 1);
++
+ 	if (spank_getenv(sp, "SLURM_SUBMIT_DIR", val, sizeof(val)) ==
+ 	    ESPANK_SUCCESS)
+ 		spank_setenv(sp, "PBS_O_WORKDIR", val, 1);

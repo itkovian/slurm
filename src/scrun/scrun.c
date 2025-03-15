@@ -82,6 +82,7 @@ const char *OCI_VERSION = "1.0.0";
 extern void update_logging(void)
 {
 	bool json = false;
+	int rc;
 
 	if (!log_file) {
 		/* do nothing */
@@ -95,7 +96,11 @@ extern void update_logging(void)
 		      __func__, log_format);
 	}
 
-	log_alter(log_opt, log_fac, log_file);
+	if (log_file && (log_opt.logfile_level <= LOG_LEVEL_QUIET))
+		log_opt.logfile_level = LOG_LEVEL_FATAL;
+
+	if ((rc = log_alter(log_opt, log_fac, log_file)))
+		fatal("Logging failure: %s", slurm_strerror(rc));
 
 	if (json) {
 		/* docker requires RFC3339 timestamps */
@@ -568,9 +573,12 @@ static int _parse_commandline(int argc, char **argv)
 	if (optind >= argc)
 		fatal("command not provided");
 
-	for (int i = 0; i < ARRAY_SIZE(commands); i++)
-		if (!xstrcasecmp(argv[optind], commands[i].command))
+	for (int i = 0; i < ARRAY_SIZE(commands); i++) {
+		if (!xstrcasecmp(argv[optind], commands[i].command)) {
 			command_requested = i;
+			break;
+		}
+	}
 
 	if (command_requested == -1)
 		fatal("unknown command: %s", argv[optind]);
@@ -667,9 +675,6 @@ extern int main(int argc, char **argv)
 	argv_offset = _parse_commandline(argc, argv) - 1;
 
 	slurm_init(slurm_conf_filename);
-	if ((rc = gres_init()))
-		fatal("%s: Unable to GRES plugins: %s", __func__,
-		      slurm_strerror(rc));
 	if ((rc = get_oci_conf(&oci_conf)))
 		fatal("%s: unable to load oci.conf: %s",
 		      __func__, slurm_strerror(rc));
@@ -708,17 +713,17 @@ extern int main(int argc, char **argv)
 
 	rc = commands[command_requested].func();
 
+	debug("exiting[%d]=%s", rc, slurm_strerror(rc));
+
 #ifdef MEMORY_LEAK_DEBUG
 	destroy_state();
 	FREE_NULL_OCI_CONF(oci_conf);
 	xfree(slurm_conf_filename);
 	xfree(command_argv);
-	auth_g_fini();
 	fini_setproctitle();
-	gres_fini();
 	select_g_fini();
+	slurm_fini();
 	log_fini();
-	slurm_conf_destroy();
 #endif /* MEMORY_LEAK_DEBUG */
 
 	return rc;

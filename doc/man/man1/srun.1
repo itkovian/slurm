@@ -1,4 +1,4 @@
-.TH srun "1" "Slurm Commands" "November 2024" "Slurm Commands"
+.TH srun "1" "Slurm Commands" "December 2024" "Slurm Commands"
 
 .SH "NAME"
 srun \- Run parallel jobs
@@ -519,13 +519,6 @@ Verbosely report binding before task runs
 .TP
 .B no[ne]
 Do not bind tasks to CPUs (default unless auto binding is applied)
-.IP
-
-.TP
-.B rank
-Automatically bind by task rank.
-The lowest numbered task on each node is bound to socket (or core or thread) zero, etc.
-Not supported unless the entire node is allocated to the job.
 .IP
 
 .TP
@@ -1875,8 +1868,7 @@ per task; \fB\-\-mem\-per\-cpu\fR will be reduced to a value no larger than
 \fBMaxMemPerCPU\fR; \fB\-\-cpus\-per\-task\fR will be set and the value of
 \fB\-\-cpus\-per\-task\fR multiplied by the new \fB\-\-mem\-per\-cpu\fR
 value will equal the original \fB\-\-mem\-per\-cpu\fR value specified by
-the user. If the user already specified a value for \fB\-\-cpus\-per\-task\fR,
-it will be respected and only the total amount of allocated CPUs will change.
+the user.
 This parameter would generally be used if individual processors
 are allocated to jobs (\fBSelectType=select/cons_tres\fR).
 If resources are allocated by core, socket, or whole nodes, then the number
@@ -2391,6 +2383,16 @@ is specified.
 .IP
 
 .TP
+\fB\-\-oom\-kill\-step\fR[={0|1}]
+Whether to kill the entire step if an OOM event is detected in any task of the
+step. This overwrites the "OOMKillStep" setting in TaskPluginParam from
+slurm.conf and the allocation settings. When unset it will use the setting in
+slurm.conf. When set, a value of "0" will disable killing the entire step, while
+a value of "1" will enable it.
+Default is "1" (enabled) when the option is found with no value.
+.IP
+
+.TP
 \fB\-\-open\-mode\fR={append|truncate}
 Open the output and error files using append or truncate mode as specified.
 For heterogeneous job steps the default value is "append".
@@ -2649,7 +2651,10 @@ This option applies to step allocations.
 
 .TP
 \fB\-q\fR, \fB\-\-qos\fR=<\fIqos\fR>
-Request a quality of service for the job. QOS values can be defined
+Request a quality of service for the job, or comma separated list of QOS.
+If requesting a list it will be ordered based on the priority of the QOS given
+with the first being the highest priority.
+QOS values can be defined
 for each user/cluster/account association in the Slurm database.
 Users will be limited to their association's defined set of qos's when
 the Slurm configuration parameter, AccountingStorageEnforce, includes
@@ -2752,7 +2757,9 @@ By default, no signal is sent before the job's end time.
 If a \fIsig_num\fR is specified without any \fIsig_time\fR,
 the default time will be 60 seconds. This option applies to job allocations.
 Use the "R:" option to allow this job to overlap with a reservation with
-MaxStartDelay set.
+MaxStartDelay set. If the "R:" option is used, preemption must be enabled on the
+system, and if the job is preempted it will be requeued if allowed otherwise the
+job will be canceled.
 To have the signal sent at preemption time see the \fBsend_user_signal\fR
 \fBPreemptParameter\fR.
 .IP
@@ -3582,7 +3589,8 @@ Same as \fB\-G, \-\-gpus\fR
 
 .TP
 \fBSLURM_GPUS_PER_NODE\fR
-Same as \fB\-\-gpus\-per\-node\fR
+Same as \fB\-\-gpus\-per\-node\fR except within an existing allocation, in which
+case it will be ignored if \fB\-\-gpus\fR is specified.
 .IP
 
 .TP
@@ -3710,6 +3718,11 @@ Same as \fB\-\-ntasks\-per\-node\fR
 .TP
 \fBSLURM_NTASKS_PER_SOCKET\fR
 Same as \fB\-\-ntasks\-per\-socket\fR
+.IP
+
+.TP
+\fBSLURM_OOMKILLSTEP\fR
+Same as \fB\-\-oom\-kill\-step\fR
 .IP
 
 .TP
@@ -3876,9 +3889,7 @@ in \fBSLURM_TRES_BIND\fR as if it were specified in \fB\-\-tres\-bind\fR.
 
 .TP
 \fBSLURM_TRES_PER_TASK\fR
-Set to the value of \fB\-\-tres\-per\-task\fR. If \fB\-\-cpus\-per\-task\fR or
-\fB\-\-gpus\-per\-task\fR is specified, it is also set in
-\fBSLURM_TRES_PER_TASK\fR as if it were specified in \fB\-\-tres\-per\-task\fR.
+Same as \fB\-\-tres\-per\-task\fR.
 .IP
 
 .TP
@@ -4296,7 +4307,9 @@ A period is used to separate each hardware component type.
 
 .TP
 \fBSLURM_TRES_PER_TASK\fR
-Set to the value of \fB\-\-tres\-per\-task\fR.
+Set to the value of \fB\-\-tres\-per\-task\fR. If \fB\-\-cpus\-per\-task\fR or
+\fB\-\-gpus\-per\-task\fR is specified, it is also set in
+\fBSLURM_TRES_PER_TASK\fR as if it were specified in \fB\-\-tres\-per\-task\fR.
 .IP
 
 .TP

@@ -1,4 +1,4 @@
-.TH squeue "1" "Slurm Commands" "October 2024" "Slurm Commands"
+.TH squeue "1" "Slurm Commands" "December 2024" "Slurm Commands"
 
 .SH "NAME"
 squeue \- view information about jobs located in the Slurm scheduling queue.
@@ -315,6 +315,9 @@ The value may be "NOT_SET" if not yet established or "UNLIMITED" for no limit.
 \fB%m\fR
 Minimum size of memory (in MB) requested by the job.
 (Valid for jobs only)
+If memory was request per CPU, or per GPU the value is shown
+with the assumption that at least one CPU, GPU will be allocated
+respectively.
 .IP
 
 .TP
@@ -1340,7 +1343,7 @@ Use the environment variable SLURM_BITSTR_LEN to specify larger field sizes.
 Dump information as JSON using the default data_parser plugin or explicit
 data_parser with parameters. All information is dumped, even if it would
 normally not be. Sorting and formatting arguments passed to other options are
-ignored; however, filtering arguments are still used.
+ignored; however, most filtering arguments are still used.
 .IP
 
 .TP
@@ -1516,7 +1519,7 @@ Print version information and exit.
 Dump information as YAML using the default data_parser plugin or explicit
 data_parser with parameters. All information is dumped, even if it would
 normally not be. Sorting and formatting arguments passed to other options are
-ignored; however, filtering arguments are still used.
+ignored; however, most filtering arguments are still used.
 .IP
 
 .SH "JOB REASON CODES"
@@ -1525,7 +1528,7 @@ There may be multiple reasons why a job cannot start yet, in which case only the
 reason that was encountered by the attempted scheduling method will be displayed.
 
 The Reasons listed below are some of the more common ones you might see.
-For a full list of Reason codes refer to this page page:
+For a full list of Reason codes refer to this page:
 <https://slurm.schedmd.com/job_reason_codes.html>
 
 .TP 22
