@@ -28,14 +28,14 @@ OUR_RELEASE=${RELEASE:-1}
 # allow _empty_ version, which is used in pipeline
 
 if grep "release 8.8" /etc/redhat-release; then
-   NVIDIA_DRIVER=${NVIDIA_DRIVER-555.42.06}
+   NVIDIA_DRIVER=${NVIDIA_DRIVER-545.23.08}
    NVDRV_NVML_PKG="nvidia-driver-NVML${NVIDIA_DRIVER:+-$NVIDIA_DRIVER}"
    CUDA_VERSION=${CUDA_VERSION:-12.6}
    CUDA_NVML_PKG="cuda-nvml-devel-${CUDA_VERSION//./-}"
 elif grep "release 9.4" /etc/redhat-release; then
-   NVIDIA_DRIVER=${NVIDIA_DRIVER-555.42.06}
+   NVIDIA_DRIVER=${NVIDIA_DRIVER-570.86.15}
    NVDRV_NVML_PKG="nvidia-driver-NVML${NVIDIA_DRIVER:+-$NVIDIA_DRIVER}"
-   CUDA_VERSION=${CUDA_VERSION:-12.6}
+   CUDA_VERSION=${CUDA_VERSION:-12.8}
    CUDA_NVML_PKG="cuda-nvml-devel-${CUDA_VERSION//./-}"
 fi
 
