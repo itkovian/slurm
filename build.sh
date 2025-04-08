@@ -36,7 +36,7 @@ if grep "release 8.8" /etc/redhat-release; then
     CUDA_NVML_PKG="cuda-nvml-devel-${CUDA_VERSION//./-}"
 elif grep "release 9.4" /etc/redhat-release; then
     NVIDIA_MAJOR_VERSION=570
-    NVIDIA_MINOR_VERSION=86.15
+    NVIDIA_MINOR_VERSION=124.06
     NVIDIA_DRIVER=${NVIDIA_DRIVER-${NVIDIA_MAJOR_VERSION}.${NVIDIA_MINOR_VERSION}}
     NVDRV_NVML_PKG="libnvidia-ml${NVIDIA_DRIVER:+-$NVIDIA_DRIVER}"
     CUDA_VERSION=${CUDA_VERSION:-12.8}
