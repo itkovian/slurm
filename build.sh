@@ -18,7 +18,7 @@ SCRIPT=$(readlink -f "${BASH_SOURCE[0]}")
 ORIGIN=$(dirname "$SCRIPT")
 
 # which version to download from github
-SLURM_VERSION=${VERSION:-24.05.3}
+SLURM_VERSION=${VERSION:-24.05.7}
 UPSTREAM_REL=${UPSTREAM_REL:-1}
 
 # which release should be used for our RPMs
@@ -28,16 +28,22 @@ OUR_RELEASE=${RELEASE:-1}
 # allow _empty_ version, which is used in pipeline
 
 if grep "release 8.8" /etc/redhat-release; then
-   NVIDIA_DRIVER=${NVIDIA_DRIVER-545.23.08}
-   NVDRV_NVML_PKG="nvidia-driver-NVML${NVIDIA_DRIVER:+-$NVIDIA_DRIVER}"
-   CUDA_VERSION=${CUDA_VERSION:-12.6}
-   CUDA_NVML_PKG="cuda-nvml-devel-${CUDA_VERSION//./-}"
+    NVIDIA_MAJOR_VERSION=545
+    NVIDIA_MINOR_VERSION=23.08
+    NVIDIA_DRIVER=${NVIDIA_DRIVER-${NVIDIA_MAJOR_VERSION}.${NVIDIA_MINOR_VERSION}}
+    NVDRV_NVML_PKG="nvidia-driver-NVML${NVIDIA_DRIVER:+-$NVIDIA_DRIVER}"
+    CUDA_VERSION=${CUDA_VERSION:-12.3}
+    CUDA_NVML_PKG="cuda-nvml-devel-${CUDA_VERSION//./-}"
 elif grep "release 9.4" /etc/redhat-release; then
-   NVIDIA_DRIVER=${NVIDIA_DRIVER-570.86.15}
-   NVDRV_NVML_PKG="nvidia-driver-NVML${NVIDIA_DRIVER:+-$NVIDIA_DRIVER}"
-   CUDA_VERSION=${CUDA_VERSION:-12.8}
-   CUDA_NVML_PKG="cuda-nvml-devel-${CUDA_VERSION//./-}"
+    NVIDIA_MAJOR_VERSION=570
+    NVIDIA_MINOR_VERSION=86.15
+    NVIDIA_DRIVER=${NVIDIA_DRIVER-${NVIDIA_MAJOR_VERSION}.${NVIDIA_MINOR_VERSION}}
+    NVDRV_NVML_PKG="libnvidia-ml${NVIDIA_DRIVER:+-$NVIDIA_DRIVER}"
+    CUDA_VERSION=${CUDA_VERSION:-12.8}
+    CUDA_NVML_PKG="cuda-nvml-devel-${CUDA_VERSION//./-}"
 fi
+
+dnf module switch-to nvidia-driver:${NVIDIA_MAJOR_VERSION}-dkms
 
 # Prepare directory structure
 rm -Rf $ORIGIN/rpmbuild/ $ORIGIN/dist/
