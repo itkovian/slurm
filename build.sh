@@ -43,7 +43,7 @@ elif grep "release 9.4" /etc/redhat-release; then
     CUDA_NVML_PKG="cuda-nvml-devel-${CUDA_VERSION//./-}"
 fi
 
-dnf module switch-to nvidia-driver:${NVIDIA_MAJOR_VERSION}-dkms
+sudo dnf module switch-to nvidia-driver:${NVIDIA_MAJOR_VERSION}-dkms
 
 # Prepare directory structure
 rm -Rf $ORIGIN/rpmbuild/ $ORIGIN/dist/
