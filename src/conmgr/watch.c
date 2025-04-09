@@ -700,7 +700,7 @@ static int _handle_connection(conmgr_fd_t *con, handle_connection_args_t *args)
 		con_unset_flag(con, FLAG_CAN_READ);
 
 		if (list_count(mgr.connections) >= mgr.max_connections) {
-			log_flag(CONMGR, "%s: [%s] Deferring incoming connection due to %d/%d connections",
+			warning("%s: [%s] Deferring incoming connection due to %d/%d connections",
 				 __func__, con->name,
 				 list_count(mgr.connections),
 				 mgr.max_connections);
@@ -738,10 +738,11 @@ static int _handle_connection(conmgr_fd_t *con, handle_connection_args_t *args)
 		/* must wait until poll allows read from this socket */
 		if (con_flag(con, FLAG_IS_LISTEN)) {
 			if (list_count(mgr.connections) >= mgr.max_connections) {
-				log_flag(CONMGR, "%s: [%s] Deferring polling for new connections due to %d/%d connections",
+				warning("%s: [%s] Deferring polling for new connections due to %d/%d connections",
 					 __func__, con->name,
 					 list_count(mgr.connections),
 					 mgr.max_connections);
+
 				con_set_polling(con, PCTL_TYPE_CONNECTED,
 						__func__);
 			} else {
@@ -1003,10 +1004,17 @@ static void _inspect_connections(conmgr_callback_args_t conmgr_args, void *arg)
 	mgr.watch_max_sleep = (struct timespec) {0};
 	args.time = timespec_now();
 
-	if (list_transfer_match(mgr.listen_conns, mgr.complete_conns,
+	/*
+	 * Always check mgr.connections list first to avoid
+	 * _is_accept_deferred() returning a different answer which could result
+	 * in listeners not being set to PCTL_TYPE_LISTEN after enough
+	 * connections were closed to fall below the max connection count.
+	 */
+
+	if (list_transfer_match(mgr.connections, mgr.complete_conns,
 				_list_transfer_handle_connection, &args))
 		send_signal = true;
-	if (list_transfer_match(mgr.connections, mgr.complete_conns,
+	if (list_transfer_match(mgr.listen_conns, mgr.complete_conns,
 				_list_transfer_handle_connection, &args))
 		send_signal = true;
 
@@ -1329,6 +1337,18 @@ static bool _watch_loop(void)
 					   &mgr.mutex);
 
 			log_flag(CONMGR, "%s: END: quiesced state", __func__);
+
+			/*
+			 * All the worker threads may be waiting for a
+			 * worker_sleep event and not an on_start_quiesced
+			 * event. Wake them all up right now if there is any
+			 * pending work queued to avoid workers remaining
+			 * sleeping until add_work() is called enough times to
+			 * wake them all up independent of the size of the
+			 * mgr.work queue.
+			 */
+			if (!list_is_empty(mgr.work))
+				EVENT_BROADCAST(&mgr.worker_sleep);
 		}
 	}
 
