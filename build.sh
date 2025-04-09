@@ -18,7 +18,7 @@ SCRIPT=$(readlink -f "${BASH_SOURCE[0]}")
 ORIGIN=$(dirname "$SCRIPT")
 
 # which version to download from github
-SLURM_VERSION=${VERSION:-24.05.3}
+SLURM_VERSION=${VERSION:-24.11.4}
 UPSTREAM_REL=${UPSTREAM_REL:-1}
 
 # which release should be used for our RPMs
@@ -28,16 +28,23 @@ OUR_RELEASE=${RELEASE:-1}
 # allow _empty_ version, which is used in pipeline
 
 if grep "release 8.8" /etc/redhat-release; then
-   NVIDIA_DRIVER=${NVIDIA_DRIVER-555.42.06}
-   NVDRV_NVML_PKG="nvidia-driver-NVML${NVIDIA_DRIVER:+-$NVIDIA_DRIVER}"
-   CUDA_VERSION=${CUDA_VERSION:-12.6}
-   CUDA_NVML_PKG="cuda-nvml-devel-${CUDA_VERSION//./-}"
+    NVIDIA_MAJOR_VERSION=545
+    NVIDIA_MINOR_VERSION=23.08
+    NVIDIA_DRIVER=${NVIDIA_DRIVER-${NVIDIA_MAJOR_VERSION}.${NVIDIA_MINOR_VERSION}}
+    NVDRV_NVML_PKG="nvidia-driver-NVML${NVIDIA_DRIVER:+-$NVIDIA_DRIVER}"
+    CUDA_VERSION=${CUDA_VERSION:-12.3}
+    CUDA_NVML_PKG="cuda-nvml-devel-${CUDA_VERSION//./-}"
 elif grep "release 9.4" /etc/redhat-release; then
-   NVIDIA_DRIVER=${NVIDIA_DRIVER-555.42.06}
-   NVDRV_NVML_PKG="nvidia-driver-NVML${NVIDIA_DRIVER:+-$NVIDIA_DRIVER}"
-   CUDA_VERSION=${CUDA_VERSION:-12.6}
-   CUDA_NVML_PKG="cuda-nvml-devel-${CUDA_VERSION//./-}"
+    NVIDIA_MAJOR_VERSION=570
+    NVIDIA_MINOR_VERSION=86.15
+    NVIDIA_DRIVER=${NVIDIA_DRIVER-${NVIDIA_MAJOR_VERSION}.${NVIDIA_MINOR_VERSION}}
+    NVDRV_NVML_PKG="libnvidia-ml${NVIDIA_DRIVER:+-$NVIDIA_DRIVER}"
+    CUDA_VERSION=${CUDA_VERSION:-12.8}
+    CUDA_NVML_PKG="cuda-nvml-devel-${CUDA_VERSION//./-}"
 fi
+
+
+
 
 # Prepare directory structure
 rm -Rf $ORIGIN/rpmbuild/ $ORIGIN/dist/
@@ -97,7 +104,10 @@ sudo dnf -y install munge-devel libjwt-devel pam-devel
 sudo dnf -y install http-parser-devel json-c-devel libyaml-devel
 # - features: Nvidia NVML
 sudo dnf -y autoremove cuda-nvml-* nvidia-driver-NVML-* nvidia-driver* libnvidia-ml*
-sudo dnf -y install "$CUDA_NVML_PKG" "$NVDRV_NVML_PKG" "nvidia-driver-devel"
+
+sudo dnf -y module switch-to nvidia-driver:${NVIDIA_MAJOR_VERSION}-dkms
+
+sudo dnf -y install "$CUDA_NVML_PKG" "$NVDRV_NVML_PKG" # "nvidia-driver-devel"
 # - plugins: MPI
 sudo dnf -y install pmix "pmix-devel ${PMIX_VERSION}"  "ucx-devel-${UCX_VERSION}"
 # - plugins: cgroup/v2
