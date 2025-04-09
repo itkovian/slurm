@@ -107,7 +107,7 @@ sudo dnf -y autoremove cuda-nvml-* nvidia-driver-NVML-* nvidia-driver* libnvidia
 
 sudo dnf -y module switch-to nvidia-driver:${NVIDIA_MAJOR_VERSION}-dkms
 
-sudo dnf -y install "$CUDA_NVML_PKG" "$NVDRV_NVML_PKG" "nvidia-driver-devel"
+sudo dnf -y install "$CUDA_NVML_PKG" "$NVDRV_NVML_PKG" # "nvidia-driver-devel"
 # - plugins: MPI
 sudo dnf -y install pmix "pmix-devel ${PMIX_VERSION}"  "ucx-devel-${UCX_VERSION}"
 # - plugins: cgroup/v2
