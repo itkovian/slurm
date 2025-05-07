@@ -29,14 +29,14 @@ OUR_RELEASE=${RELEASE:-1}
 
 if grep "release 8.8" /etc/redhat-release; then
     NVIDIA_MAJOR_VERSION=570
-    NVIDIA_MINOR_VERSION=86.15
+    NVIDIA_MINOR_VERSION=133.20
     NVIDIA_DRIVER=${NVIDIA_DRIVER-${NVIDIA_MAJOR_VERSION}.${NVIDIA_MINOR_VERSION}}
     NVDRV_NVML_PKG="libnvidia-ml${NVIDIA_DRIVER:+-$NVIDIA_DRIVER}"
     CUDA_VERSION=${CUDA_VERSION:-12.8}
     CUDA_NVML_PKG="cuda-nvml-devel-${CUDA_VERSION//./-}"
 elif grep "release 9.4" /etc/redhat-release; then
     NVIDIA_MAJOR_VERSION=570
-    NVIDIA_MINOR_VERSION=86.15
+    NVIDIA_MINOR_VERSION=133.20
     NVIDIA_DRIVER=${NVIDIA_DRIVER-${NVIDIA_MAJOR_VERSION}.${NVIDIA_MINOR_VERSION}}
     NVDRV_NVML_PKG="libnvidia-ml${NVIDIA_DRIVER:+-$NVIDIA_DRIVER}"
     CUDA_VERSION=${CUDA_VERSION:-12.8}
@@ -138,7 +138,7 @@ rpmbuild -ba "${RPM_DEFINES[@]}" "${SLURM_BUILDOPTS[@]}" --without nvml \
 echo "Doing rpm rebuild (without nvml)"
 for rpm in $ORIGIN/rpmbuild/RPMS/x86_64/slurm-*$SUFFIX*.rpm ; do
     rpmrebuild --release=${OUR_RELEASE}.${GITTAG}$(rpm -E '%dist').nogpu.ug -d $ORIGIN/dist -p $rpm
-done
+done 2>&1 | tee rpmrebuild-without-nvml.out
 
 
 echo "Running rpmbuild (with nvml)"
@@ -149,7 +149,7 @@ rpmbuild -ba "${RPM_DEFINES[@]}" "${SLURM_BUILDOPTS[@]}" --with nvml \
 echo "Doing rpm rebuild (with nvml)"
 for rpm in $ORIGIN/rpmbuild/RPMS/x86_64/slurm-*$SUFFIX*.rpm ; do
     rpmrebuild --release=${OUR_RELEASE}.${GITTAG}$(rpm -E '%dist').ug -d $ORIGIN/dist -p $rpm
-done
+done 2>&1 | tee rpmrebuild-with-nvml.out
 
 # strip out torque binaries/wrapper from slurm-torque
 rpmrebuild -d $ORIGIN/dist --change-spec-files="sed '/\(pbsnodes\|mpiexec\|bin\/q.\+\)/d'" -p $ORIGIN/dist/x86_64/slurm-torque-*-${OUR_RELEASE}.${GITTAG}$(rpm -E '%dist').nogpu.ug*.rpm
