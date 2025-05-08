@@ -18,7 +18,7 @@ SCRIPT=$(readlink -f "${BASH_SOURCE[0]}")
 ORIGIN=$(dirname "$SCRIPT")
 
 # which version to download from github
-SLURM_VERSION=${VERSION:-24.05.3}
+SLURM_VERSION=${VERSION:-24.05.7}
 UPSTREAM_REL=${UPSTREAM_REL:-1}
 
 # which release should be used for our RPMs
@@ -28,16 +28,23 @@ OUR_RELEASE=${RELEASE:-1}
 # allow _empty_ version, which is used in pipeline
 
 if grep "release 8.8" /etc/redhat-release; then
-   NVIDIA_DRIVER=${NVIDIA_DRIVER-555.42.06}
-   NVDRV_NVML_PKG="nvidia-driver-NVML${NVIDIA_DRIVER:+-$NVIDIA_DRIVER}"
-   CUDA_VERSION=${CUDA_VERSION:-12.6}
-   CUDA_NVML_PKG="cuda-nvml-devel-${CUDA_VERSION//./-}"
+    NVIDIA_MAJOR_VERSION=570
+    NVIDIA_MINOR_VERSION=133.20
+    NVIDIA_DRIVER=${NVIDIA_DRIVER-${NVIDIA_MAJOR_VERSION}.${NVIDIA_MINOR_VERSION}}
+    NVDRV_NVML_PKG="libnvidia-ml${NVIDIA_DRIVER:+-$NVIDIA_DRIVER}"
+    CUDA_VERSION=${CUDA_VERSION:-12.8}
+    CUDA_NVML_PKG="cuda-nvml-devel-${CUDA_VERSION//./-}"
 elif grep "release 9.4" /etc/redhat-release; then
-   NVIDIA_DRIVER=${NVIDIA_DRIVER-555.42.06}
-   NVDRV_NVML_PKG="nvidia-driver-NVML${NVIDIA_DRIVER:+-$NVIDIA_DRIVER}"
-   CUDA_VERSION=${CUDA_VERSION:-12.6}
-   CUDA_NVML_PKG="cuda-nvml-devel-${CUDA_VERSION//./-}"
+    NVIDIA_MAJOR_VERSION=570
+    NVIDIA_MINOR_VERSION=133.20
+    NVIDIA_DRIVER=${NVIDIA_DRIVER-${NVIDIA_MAJOR_VERSION}.${NVIDIA_MINOR_VERSION}}
+    NVDRV_NVML_PKG="libnvidia-ml${NVIDIA_DRIVER:+-$NVIDIA_DRIVER}"
+    CUDA_VERSION=${CUDA_VERSION:-12.8}
+    CUDA_NVML_PKG="cuda-nvml-devel-${CUDA_VERSION//./-}"
 fi
+
+
+
 
 # Prepare directory structure
 rm -Rf $ORIGIN/rpmbuild/ $ORIGIN/dist/
@@ -97,7 +104,10 @@ sudo dnf -y install munge-devel libjwt-devel pam-devel
 sudo dnf -y install http-parser-devel json-c-devel libyaml-devel
 # - features: Nvidia NVML
 sudo dnf -y autoremove cuda-nvml-* nvidia-driver-NVML-* nvidia-driver* libnvidia-ml*
-sudo dnf -y install "$CUDA_NVML_PKG" "$NVDRV_NVML_PKG" "nvidia-driver-devel"
+
+sudo dnf -y module switch-to nvidia-driver:${NVIDIA_MAJOR_VERSION}-dkms
+
+sudo dnf -y install "$CUDA_NVML_PKG" "$NVDRV_NVML_PKG" # "nvidia-driver-devel"
 # - plugins: MPI
 sudo dnf -y install pmix "pmix-devel ${PMIX_VERSION}"  "ucx-devel-${UCX_VERSION}"
 # - plugins: cgroup/v2
@@ -128,7 +138,7 @@ rpmbuild -ba "${RPM_DEFINES[@]}" "${SLURM_BUILDOPTS[@]}" --without nvml \
 echo "Doing rpm rebuild (without nvml)"
 for rpm in $ORIGIN/rpmbuild/RPMS/x86_64/slurm-*$SUFFIX*.rpm ; do
     rpmrebuild --release=${OUR_RELEASE}.${GITTAG}$(rpm -E '%dist').nogpu.ug -d $ORIGIN/dist -p $rpm
-done
+done 2>&1 | tee rpmrebuild-without-nvml.out
 
 
 echo "Running rpmbuild (with nvml)"
@@ -139,7 +149,7 @@ rpmbuild -ba "${RPM_DEFINES[@]}" "${SLURM_BUILDOPTS[@]}" --with nvml \
 echo "Doing rpm rebuild (with nvml)"
 for rpm in $ORIGIN/rpmbuild/RPMS/x86_64/slurm-*$SUFFIX*.rpm ; do
     rpmrebuild --release=${OUR_RELEASE}.${GITTAG}$(rpm -E '%dist').ug -d $ORIGIN/dist -p $rpm
-done
+done 2>&1 | tee rpmrebuild-with-nvml.out
 
 # strip out torque binaries/wrapper from slurm-torque
 rpmrebuild -d $ORIGIN/dist --change-spec-files="sed '/\(pbsnodes\|mpiexec\|bin\/q.\+\)/d'" -p $ORIGIN/dist/x86_64/slurm-torque-*-${OUR_RELEASE}.${GITTAG}$(rpm -E '%dist').nogpu.ug*.rpm
