@@ -538,6 +538,7 @@ extern int as_mysql_add_users(mysql_conn_t *mysql_conn, uint32_t uid,
 	int affect_rows = 0;
 	list_t *assoc_list;
 	list_t *wckey_list;
+	bool is_admin = false;
 
 	if (check_connection(mysql_conn) != SLURM_SUCCESS)
 		return ESLURM_DB_CONNECTION;
@@ -592,7 +593,7 @@ extern int as_mysql_add_users(mysql_conn_t *mysql_conn, uint32_t uid,
 
 		if (object->admin_level != SLURMDB_ADMIN_NOTSET) {
 			if (!is_admin) {
-				error("Only admins/operators can add make a user and operator/admin");
+				error("Only admins/operators can add an admin/operator");
 				rc = ESLURM_ACCESS_DENIED;
 				break;
 			}
@@ -727,7 +728,7 @@ extern char *as_mysql_add_users_cond(mysql_conn_t *mysql_conn, uint32_t uid,
 		};
 
 		if (user->admin_level != SLURMDB_ADMIN_NOTSET) {
-			ret_str = xstrdup("Only admins/operators can add make a user and admin/operator");
+			ret_str = xstrdup("Only admins/operators can add an admin/operator");
 			error("%s", ret_str);
 			errno = ESLURM_ACCESS_DENIED;
 			return ret_str;
