@@ -277,10 +277,10 @@ extern void job_record_delete(void *job_entry)
 	FREE_NULL_LIST(job_ptr->het_job_list);
 	xfree(job_ptr->partition);
 	FREE_NULL_LIST(job_ptr->part_ptr_list);
-	if (job_ptr->part_prio) {
-		xfree(job_ptr->part_prio->priority_array);
-		xfree(job_ptr->part_prio->priority_array_names);
-		xfree(job_ptr->part_prio);
+	if (job_ptr->prio_mult) {
+		xfree(job_ptr->prio_mult->priority_array);
+		xfree(job_ptr->prio_mult->priority_array_names);
+		xfree(job_ptr->prio_mult);
 	}
 	slurm_destroy_priority_factors(job_ptr->prio_factors);
 	FREE_NULL_LIST(job_ptr->qos_list);
@@ -2607,6 +2607,8 @@ extern int job_record_unpack(job_record_t **out,
 		safe_unpack32(&job_ptr->wait4switch, buffer);
 		safe_unpack32(&job_ptr->profile, buffer);
 		safe_unpack32(&job_ptr->db_flags, buffer);
+		if (job_ptr->db_index && (job_ptr->db_index != NO_VAL64))
+			job_ptr->db_flags |= SLURMDB_JOB_FLAG_START_R;
 
 		safe_unpack_time(&job_ptr->last_sched_eval, buffer);
 		safe_unpack_time(&job_ptr->preempt_time, buffer);
@@ -2838,6 +2840,8 @@ extern int job_record_unpack(job_record_t **out,
 		safe_unpack32(&job_ptr->wait4switch, buffer);
 		safe_unpack32(&job_ptr->profile, buffer);
 		safe_unpack32(&job_ptr->db_flags, buffer);
+		if (job_ptr->db_index && (job_ptr->db_index != NO_VAL64))
+			job_ptr->db_flags |= SLURMDB_JOB_FLAG_START_R;
 
 		safe_unpack_time(&job_ptr->last_sched_eval, buffer);
 		safe_unpack_time(&job_ptr->preempt_time, buffer);
