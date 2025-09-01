@@ -41,6 +41,13 @@ elif grep "release 9.4" /etc/redhat-release; then
     NVDRV_NVML_PKG="libnvidia-ml${NVIDIA_DRIVER:+-$NVIDIA_DRIVER}"
     CUDA_VERSION=${CUDA_VERSION:-12.8}
     CUDA_NVML_PKG="cuda-nvml-devel-${CUDA_VERSION//./-}"
+elif grep "release 9.6" /etc/redhat-release; then
+    NVIDIA_MAJOR_VERSION=575
+    NVIDIA_MINOR_VERSION=57.08
+    NVIDIA_DRIVER=${NVIDIA_DRIVER-${NVIDIA_MAJOR_VERSION}.${NVIDIA_MINOR_VERSION}}
+    NVDRV_NVML_PKG="libnvidia-ml${NVIDIA_DRIVER:+-$NVIDIA_DRIVER}"
+    CUDA_VERSION=${CUDA_VERSION:-13.0}
+    CUDA_NVML_PKG="cuda-nvml-devel-${CUDA_VERSION//./-}"
 fi
 
 
@@ -89,6 +96,10 @@ elif grep "release 9.2" /etc/redhat-release; then
 elif grep "release 9.4" /etc/redhat-release; then
     UCX_VERSION="1.15.0-2.el9.x86_64"
     PMIX_VERSION="== 4.2.7"
+    HWLOC_VERSION=">= 2.4.1-5"
+elif grep "release 9.6" /etc/redhat-release; then
+    UCX_VERSION="1.17.0-2.el9.x86_64"
+    PMIX_VERSION=">= 5.0.7"
     HWLOC_VERSION=">= 2.4.1-5"
 else
     echo "unsupported OS release"
