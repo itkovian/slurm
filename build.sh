@@ -81,7 +81,7 @@ elif grep "release 9.2" /etc/redhat-release; then
     HWLOC_VERSION=">= 2.4.1-5"
 elif grep "release 9.4" /etc/redhat-release; then
     UCX_VERSION="1.15.0-2.el9.x86_64"
-    PMIX_VERSION=">= 4.2.7"
+    PMIX_VERSION="== 4.2.7"
     HWLOC_VERSION=">= 2.4.1-5"
 else
     echo "unsupported OS release"
@@ -99,7 +99,7 @@ sudo dnf -y install http-parser-devel json-c-devel libyaml-devel
 sudo dnf -y autoremove cuda-nvml-* nvidia-driver-NVML-* nvidia-driver* libnvidia-ml*
 sudo dnf -y install "$CUDA_NVML_PKG" "$NVDRV_NVML_PKG" "nvidia-driver-devel"
 # - plugins: MPI
-sudo dnf -y install pmix "pmix-devel ${PMIX_VERSION}"  "ucx-devel-${UCX_VERSION}"
+sudo dnf -y install "pmix ${PMIX_VERSION}" "pmix-devel ${PMIX_VERSION}"  "ucx-devel-${UCX_VERSION}"
 # - plugins: cgroup/v2
 # see https://slurm.schedmd.com/cgroup_v2.html
 sudo dnf -y install kernel-headers dbus-devel
