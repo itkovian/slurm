@@ -256,7 +256,6 @@ extern bool disable_remote_singleton;
 extern int listen_nports;
 extern int max_depend_depth;
 extern uint32_t max_powered_nodes;
-extern bool node_features_updated;
 extern pthread_cond_t purge_thread_cond;
 extern pthread_mutex_t purge_thread_lock;
 extern pthread_mutex_t check_bf_running_lock;
@@ -277,12 +276,6 @@ extern bool running_configless;
 extern bool ping_nodes_now;		/* if set, ping nodes immediately */
 extern bool want_nodes_reboot;		/* if set, check for idle nodes */
 extern bool ignore_state_errors;
-
-typedef struct node_features {
-	uint32_t magic;		/* magic cookie to test data integrity */
-	char *name;		/* name of a feature */
-	bitstr_t *node_bitmap;	/* bitmap of nodes with this feature */
-} node_feature_t;
 
 extern list_t *conf_includes_list;  /* list of conf_includes_map_t */
 
@@ -1306,11 +1299,6 @@ extern void load_part_uid_allow_list(bool force);
  */
 extern int load_all_part_state(uint16_t reconfig_flags);
 
-/*
- * Log contents of avail_feature_list and active_feature_list
- */
-extern void log_feature_lists(void);
-
 /* make_node_alloc - flag specified node as allocated to a job
  * IN node_ptr - pointer to node being allocated
  * IN job_ptr  - pointer to job that is starting
@@ -1620,7 +1608,7 @@ void purge_old_job(void);
 extern void free_old_jobs(void);
 
 /* Convert a comma delimited list of QOS names into a bitmap */
-extern void qos_list_build(char *qos, bitstr_t **qos_bits);
+extern void qos_list_build(char *qos, bool locked, bitstr_t **qos_bits);
 
 /* Request that the job scheduler execute soon (typically within seconds) */
 extern void queue_job_scheduler(void);
@@ -2358,5 +2346,11 @@ extern void controller_reconfig_scheduling(void);
  * part_record_t's.
  */
 extern char *part_list_to_xstr(list_t *list);
+
+/* Allow listener sockets to accept() new incoming requests */
+extern void listeners_unquiesce(void);
+
+/* Stop listener sockets from accept()ing new incoming requests */
+extern void listeners_quiesce(void);
 
 #endif /* !_HAVE_SLURMCTLD_H */

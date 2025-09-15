@@ -67,6 +67,7 @@
 #include "src/common/forward.h"
 #include "src/common/hostlist.h"
 #include "src/common/id_util.h"
+#include "src/common/node_features.h"
 #include "src/common/parse_time.h"
 #include "src/common/port_mgr.h"
 #include "src/common/slurm_protocol_pack.h"
@@ -3522,22 +3523,25 @@ extern job_record_t *job_array_split(job_record_t *job_ptr, bool list_add)
 	job_ptr_pend->part_ptr_list = part_list_copy(job_ptr->part_ptr_list);
 	/* On jobs that are held the priority_array isn't set up yet,
 	 * so check to see if it exists before copying. */
-	if (job_ptr->part_ptr_list &&
-	    job_ptr->part_prio) {
-		job_ptr_pend->part_prio =
-			xmalloc(sizeof(*job_ptr_pend->part_prio));
+	if ((job_ptr->part_ptr_list || job_ptr->qos_list) &&
+	    job_ptr->prio_mult) {
+		job_ptr_pend->prio_mult =
+			xmalloc(sizeof(*job_ptr_pend->prio_mult));
 
-		if (job_ptr->part_prio->priority_array) {
-			i = list_count(job_ptr->part_ptr_list);
-			job_ptr_pend->part_prio->priority_array =
-				xcalloc(i, sizeof(uint32_t));
-			memcpy(job_ptr_pend->part_prio->priority_array,
-			       job_ptr->part_prio->priority_array,
-			       i * sizeof(uint32_t));
+		if (job_ptr->prio_mult->priority_array) {
+			i = xsize(job_ptr->prio_mult->priority_array);
+			job_ptr_pend->prio_mult->priority_array = xmalloc(i);
+			memcpy(job_ptr_pend->prio_mult->priority_array,
+			       job_ptr->prio_mult->priority_array, i);
 		}
 
-		job_ptr_pend->part_prio->priority_array_names =
-			xstrdup(job_ptr->part_prio->priority_array_names);
+		job_ptr_pend->prio_mult->priority_array_names =
+			xstrdup(job_ptr->prio_mult->priority_array_names);
+	} else if (job_ptr->prio_mult) {
+		/* this should never happen */
+		error("%s: prio_mult is set without part_ptr_list or qos_list, setting prio_mult to NULL.",
+		      __func__);
+		job_ptr_pend->prio_mult = NULL;
 	}
 	if (job_ptr->qos_list)
 		job_ptr_pend->qos_list = list_shallow_copy(job_ptr->qos_list);
@@ -3808,7 +3812,7 @@ static int _select_nodes_base(job_node_select_t *job_node_select)
 						   job_node_select->test_only,
 						   true,
 						   SLURMDB_JOB_FLAG_SUBMIT);
-	} else {
+	} else if (job_node_select->rc_part_limits != WAIT_PART_CONFIG) {
 		job_node_select->rc = select_nodes(job_node_select,
 						   true,
 						   true,
@@ -6947,18 +6951,23 @@ extern int job_limits_check(job_record_t **job_pptr, bool check_min_time)
 			job_desc.cpus_per_task = 1;
 		else
 			job_desc.cpus_per_task = detail_ptr->orig_cpus_per_task;
-		if (detail_ptr->num_tasks)
-			job_desc.num_tasks = detail_ptr->num_tasks;
-		else {
-			job_desc.num_tasks = job_desc.min_nodes;
-			if (detail_ptr->ntasks_per_node != NO_VAL16)
-				job_desc.num_tasks *=
-					detail_ptr->ntasks_per_node;
-		}
+		/*
+		 * Passing the value directly since detail_ptr->num_tasks
+		 * already set correctly. If it is zero _valid_pn_min_mem()
+		 * already handles it.
+		 */
+		job_desc.num_tasks = detail_ptr->num_tasks;
 		//job_desc.min_cpus = detail_ptr->min_cpus; /* init'ed above */
 		job_desc.max_cpus = detail_ptr->orig_max_cpus;
 		job_desc.shared = (uint16_t)detail_ptr->share_res;
-		job_desc.ntasks_per_node = detail_ptr->ntasks_per_node;
+		/*
+		 * At this point detail_ptr->ntasks_per_node is expected to
+		 * hold 0 (not set) or a regular value, but never NO_VAL16.
+		 * _valid_pn_min_mem will check for job_desc.ntasks_per_node
+		 * being different than NO_VAL16, which is its initial value.
+		 */
+		if (detail_ptr->ntasks_per_node)
+			job_desc.ntasks_per_node = detail_ptr->ntasks_per_node;
 		job_desc.ntasks_per_tres = detail_ptr->ntasks_per_tres;
 		job_desc.pn_min_cpus = detail_ptr->orig_pn_min_cpus;
 		job_desc.job_id = job_ptr->job_id;
@@ -7748,7 +7757,7 @@ static void _figure_out_num_tasks(
 			job_desc->num_tasks = num_tasks;
 			job_desc->bitflags |= TASKS_CHANGED;
 		}
-	} else if (num_tasks != NO_VAL) {
+	} else if (num_tasks != job_desc->num_tasks) {
 		job_desc->num_tasks = num_tasks;
 		job_desc->bitflags |= TASKS_CHANGED;
 	}
@@ -8882,15 +8891,60 @@ static bool _valid_pn_min_mem(job_desc_msg_t *job_desc_msg,
 
 		if ((job_desc_msg->pn_min_cpus == NO_VAL16) ||
 		    (job_desc_msg->pn_min_cpus < min_cpus)) {
-			debug("JobId=%u: Setting job's pn_min_cpus to %u due to memory limit",
-			      job_desc_msg->job_id, min_cpus);
 			job_desc_msg->pn_min_cpus = min_cpus;
+			if (min_cpus > job_desc_msg->min_cpus) {
+				job_desc_msg->min_cpus = min_cpus;
+				job_desc_msg->max_cpus =
+					MAX(min_cpus, job_desc_msg->max_cpus);
+			}
 			cpus_per_node = MAX(cpus_per_node, min_cpus);
-			if (job_desc_msg->ntasks_per_node)
+			if (job_desc_msg->ntasks_per_node != NO_VAL16) {
 				job_desc_msg->cpus_per_task =
 					(job_desc_msg->pn_min_cpus +
 					 job_desc_msg->ntasks_per_node - 1) /
 					job_desc_msg->ntasks_per_node;
+				job_desc_msg->pn_min_cpus =
+					MAX(job_desc_msg->cpus_per_task *
+					    job_desc_msg->ntasks_per_node,
+					    job_desc_msg->pn_min_cpus);
+			} else if (job_desc_msg->num_tasks &&
+				   (job_desc_msg->num_tasks != NO_VAL) &&
+				   job_desc_msg->min_nodes &&
+				   (job_desc_msg->min_nodes != NO_VAL)) {
+				/*
+				 * Calculate a new value of cpus/task given the
+				 * current nodes and tasks values:
+				 * CPUs/Task = (min_cpus_per_node * min_nodes) / num_tasks
+				 */
+				uint32_t cpus =
+					min_cpus * job_desc_msg->min_nodes;
+				job_desc_msg->cpus_per_task =
+					ROUNDUP(cpus, job_desc_msg->num_tasks);
+				/*
+				 * Recalculate pn_min_cpus based on the new
+				 * CPUs/task. This formula aims to get
+				 * an allocation with the least amount of
+				 * CPUs combining all the nodes from the job.
+				 */
+				min_cpus = (job_desc_msg->cpus_per_task *
+					    job_desc_msg->num_tasks) /
+					   job_desc_msg->min_nodes;
+				job_desc_msg->pn_min_cpus = min_cpus;
+				job_desc_msg->min_cpus =
+					MAX(min_cpus,
+					    job_desc_msg->pn_min_cpus);
+			} else if (!job_desc_msg->num_tasks) {
+				/*
+				 * The job did not request any amount of tasks
+				 * explicitly. Assuming 1 per node.
+				 */
+				job_desc_msg->cpus_per_task =
+					MAX(job_desc_msg->pn_min_cpus,
+					    job_desc_msg->cpus_per_task);
+			}
+			debug("JobId=%u: Setting job's pn_min_cpus to %u due to memory limit",
+			      job_desc_msg->job_id,
+			      job_desc_msg->pn_min_cpus);
 		}
 		sys_mem_limit *= cpus_per_node;
 	}
@@ -10299,12 +10353,12 @@ void pack_job(job_record_t *dump_job_ptr, uint16_t show_flags, buf_t *buffer,
 		pack_time(start_time, buffer);
 		pack_time(end_time, buffer);
 
-		if (dump_job_ptr->part_prio) {
-			pack32_array(dump_job_ptr->part_prio->priority_array,
-				     (dump_job_ptr->part_prio->priority_array) ?
+		if (dump_job_ptr->prio_mult) {
+			pack32_array(dump_job_ptr->prio_mult->priority_array,
+				     (dump_job_ptr->prio_mult->priority_array) ?
 				     list_count(dump_job_ptr->part_ptr_list) :
 				     0, buffer);
-			packstr(dump_job_ptr->part_prio->priority_array_names,
+			packstr(dump_job_ptr->prio_mult->priority_array_names,
 				buffer);
 		} else {
 			packnull(buffer);
@@ -10489,12 +10543,12 @@ void pack_job(job_record_t *dump_job_ptr, uint16_t show_flags, buf_t *buffer,
 		pack_time(dump_job_ptr->last_sched_eval, buffer);
 		pack_time(dump_job_ptr->preempt_time, buffer);
 		pack32(dump_job_ptr->priority, buffer);
-		if (dump_job_ptr->part_prio) {
-			pack32_array(dump_job_ptr->part_prio->priority_array,
-				     (dump_job_ptr->part_prio->priority_array) ?
+		if (dump_job_ptr->prio_mult) {
+			pack32_array(dump_job_ptr->prio_mult->priority_array,
+				     (dump_job_ptr->prio_mult->priority_array) ?
 				     list_count(dump_job_ptr->part_ptr_list) :
 				     0, buffer);
-			packstr(dump_job_ptr->part_prio->priority_array_names,
+			packstr(dump_job_ptr->prio_mult->priority_array_names,
 				buffer);
 		} else {
 			packnull(buffer);
@@ -12026,11 +12080,11 @@ static void _hold_job_rec(job_record_t *job_ptr, uid_t uid)
 		acct_policy_remove_accrue_time(job_ptr, false);
 
 	if (job_ptr->part_ptr_list &&
-	    job_ptr->part_prio &&
-	    job_ptr->part_prio->priority_array) {
+	    job_ptr->prio_mult &&
+	    job_ptr->prio_mult->priority_array) {
 		j = list_count(job_ptr->part_ptr_list);
 		for (i = 0; i < j; i++) {
-			job_ptr->part_prio->priority_array[i] = 0;
+			job_ptr->prio_mult->priority_array[i] = 0;
 		}
 	}
 	sched_info("%s: hold on %pJ by uid %u", __func__, job_ptr, uid);
@@ -13263,8 +13317,8 @@ static int _update_job(job_record_t *job_ptr, job_desc_msg_t *job_desc,
 		rebuild_job_part_list(job_ptr);
 
 		/* Rebuilt in priority/multifactor plugin */
-		if (job_ptr->part_prio)
-			xfree(job_ptr->part_prio->priority_array);
+		if (job_ptr->prio_mult)
+			xfree(job_ptr->prio_mult->priority_array);
 
 		info("%s: setting partition to %s for %pJ",
 		     __func__, job_desc->partition, job_ptr);
@@ -13739,12 +13793,12 @@ static int _update_job(job_record_t *job_ptr, job_desc_msg_t *job_desc,
 					error_code = ESLURM_PRIO_RESET_FAIL;
 				job_ptr->priority = job_desc->priority;
 				if (job_ptr->part_ptr_list &&
-				    job_ptr->part_prio &&
-				    job_ptr->part_prio->priority_array) {
+				    job_ptr->prio_mult &&
+				    job_ptr->prio_mult->priority_array) {
 					int i, j = list_count(
 						job_ptr->part_ptr_list);
 					for (i = 0; i < j; i++) {
-						job_ptr->part_prio->
+						job_ptr->prio_mult->
 							priority_array[i] =
 							job_desc->priority;
 					}
@@ -16201,6 +16255,7 @@ extern bool job_epilog_complete(uint32_t job_id, char *node_name,
 	 * really started. Very rare obviously.
 	 */
 	if ((IS_JOB_PENDING(job_ptr) && (!IS_JOB_COMPLETING(job_ptr))) ||
+	    ((!job_ptr->node_bitmap_cg) && (!IS_JOB_COMPLETING(job_ptr))) ||
 	    (job_ptr->node_bitmap == NULL)) {
 #ifndef HAVE_FRONT_END
 		uint32_t base_state = NODE_STATE_UNKNOWN;

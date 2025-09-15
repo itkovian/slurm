@@ -57,6 +57,7 @@
 #include "src/common/fetch_config.h"
 #include "src/common/hostlist.h"
 #include "src/common/macros.h"
+#include "src/common/node_features.h"
 #include "src/common/pack.h"
 #include "src/common/parse_time.h"
 #include "src/common/read_config.h"
@@ -455,10 +456,11 @@ extern int load_all_node_state ( bool state_only )
 					node_state_rec->node_hostname);
 			}
 			if (IS_NODE_FUTURE(node_ptr) &&
-			    (node_state & NODE_STATE_DYNAMIC_FUTURE)) {
-				/* Preserve active dynamic future node state */
-				node_ptr->node_state    = node_state;
-
+			    ((node_state & NODE_STATE_DYNAMIC_FUTURE) ||
+			     (slurm_conf.reconfig_flags &
+			      RECONFIG_KEEP_NODE_STATE_FUTURE))) {
+				/* preserve state for conf FUTURE nodes */
+				node_ptr->node_state = node_state;
 			} else if (IS_NODE_CLOUD(node_ptr)) {
 				if ((!power_save_mode) &&
 				    ((node_state & NODE_STATE_POWERED_DOWN) ||
@@ -2496,8 +2498,8 @@ extern int update_node_active_features(char *node_names, char *active_features,
 			     node_names);
 			return rc;
 		}
-		update_feature_list(active_feature_list, active_features,
-				    node_bitmap);
+		node_features_update_list(active_feature_list, active_features,
+					  node_bitmap);
 		(void) node_features_g_node_update(active_features,
 						   node_bitmap);
 	}
@@ -2577,8 +2579,8 @@ extern int update_node_avail_features(char *node_names, char *avail_features,
 		}
 		list_iterator_destroy(config_iterator);
 		if (avail_feature_list) {	/* list not set at startup */
-			update_feature_list(avail_feature_list, avail_features,
-					    node_bitmap);
+			node_features_update_list(avail_feature_list,
+						  avail_features, node_bitmap);
 		}
 	}
 
@@ -3020,6 +3022,10 @@ static int _set_gpu_spec(node_record_t *node_ptr, char **reason_down)
 		/* info("%d has %s", i, */
 		/*      bit_fmt_full(gres_ns->topo_core_bitmap[i])); */
 		for (int j = 0; j < node_ptr->tot_cores; j++) {
+			/* Skip general spec cores */
+			if (node_ptr->node_spec_bitmap &&
+			    !bit_test(node_ptr->node_spec_bitmap, j))
+				continue;
 			/* Only look at the ones set */
 			if (!bit_test(gres_ns->topo_core_bitmap[i], j))
 				continue;
@@ -4911,8 +4917,7 @@ extern int send_nodes_to_accounting(time_t event_time)
 /* node_fini - free all memory associated with node records */
 extern void node_fini (void)
 {
-	FREE_NULL_LIST(active_feature_list);
-	FREE_NULL_LIST(avail_feature_list);
+	node_features_free_lists();
 	FREE_NULL_BITMAP(asap_node_bitmap);
 	FREE_NULL_BITMAP(avail_node_bitmap);
 	FREE_NULL_BITMAP(bf_ignore_node_bitmap);
@@ -5245,10 +5250,12 @@ extern int create_nodes(char *nodeline, char **err_msg)
 	}
 
 	if (config_ptr->feature) {
-		update_feature_list(avail_feature_list, config_ptr->feature,
-				    config_ptr->node_bitmap);
-		update_feature_list(active_feature_list, config_ptr->feature,
-				    config_ptr->node_bitmap);
+		node_features_update_list(avail_feature_list,
+					  config_ptr->feature,
+					  config_ptr->node_bitmap);
+		node_features_update_list(active_feature_list,
+					  config_ptr->feature,
+					  config_ptr->node_bitmap);
 	}
 
 	_queue_consolidate_config_list();
@@ -5355,11 +5362,11 @@ extern int create_dynamic_reg_node(slurm_msg_t *msg)
 	bit_set(power_up_node_bitmap, node_ptr->index);
 
 	node_ptr->features = xstrdup(node_ptr->config_ptr->feature);
-	update_feature_list(avail_feature_list, node_ptr->features,
-			    config_ptr->node_bitmap);
+	node_features_update_list(avail_feature_list, node_ptr->features,
+				  config_ptr->node_bitmap);
 	node_ptr->features_act = xstrdup(node_ptr->config_ptr->feature);
-	update_feature_list(active_feature_list, node_ptr->features_act,
-			    config_ptr->node_bitmap);
+	node_features_update_list(active_feature_list, node_ptr->features_act,
+				  config_ptr->node_bitmap);
 
 	_queue_consolidate_config_list();
 
@@ -5391,8 +5398,8 @@ static void _remove_node_from_features(node_record_t *node_ptr)
 {
 	bitstr_t *node_bitmap = bit_alloc(node_record_count);
 	bit_set(node_bitmap, node_ptr->index);
-	update_feature_list(avail_feature_list, NULL, node_bitmap);
-	update_feature_list(active_feature_list, NULL, node_bitmap);
+	node_features_update_list(avail_feature_list, NULL, node_bitmap);
+	node_features_update_list(active_feature_list, NULL, node_bitmap);
 	FREE_NULL_BITMAP(node_bitmap);
 }
 

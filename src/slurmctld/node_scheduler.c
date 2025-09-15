@@ -58,6 +58,7 @@
 #include "src/common/id_util.h"
 #include "src/common/job_features.h"
 #include "src/common/list.h"
+#include "src/common/node_features.h"
 #include "src/common/port_mgr.h"
 #include "src/common/slurm_protocol_pack.h"
 #include "src/common/xassert.h"
@@ -2452,10 +2453,10 @@ static int _get_resv_mpi_ports(job_record_t *job_ptr,
 			    job_ptr->details->ntasks_per_node ||
 			    job_ptr->details->ntasks_per_tres)) {
 			for (int i = 0; i < node_cnt; i++) {
+				uint16_t tasks =
+					job_ptr->job_resrcs->tasks_per_node[i];
 				job_ptr->resv_port_cnt =
-					MAX(job_ptr->resv_port_cnt,
-					    job_ptr->job_resrcs->
-					    tasks_per_node[i]) * 2;
+					MAX(job_ptr->resv_port_cnt, tasks * 2);
 			}
 		} else if (!job_ptr->details->overcommit) {
 			uint16_t max_node_cpus = 0;

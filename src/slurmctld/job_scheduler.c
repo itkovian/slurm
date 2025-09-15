@@ -61,8 +61,9 @@
 #include "src/common/job_features.h"
 #include "src/common/list.h"
 #include "src/common/macros.h"
-#include "src/common/strlcpy.h"
+#include "src/common/node_features.h"
 #include "src/common/parse_time.h"
+#include "src/common/strlcpy.h"
 #include "src/common/timers.h"
 #include "src/common/track_script.h"
 #include "src/common/uid.h"
@@ -607,9 +608,9 @@ static int _build_job_queue_for_qos(void *x, void *arg)
 		return 0;
 
 	setup_job->job_prio_pairs++;
-	if (job_ptr->part_prio && job_ptr->part_prio->priority_array) {
+	if (job_ptr->prio_mult && job_ptr->prio_mult->priority_array) {
 		_job_queue_append(setup_job->job_queue, job_ptr,
-				  job_ptr->part_prio->
+				  job_ptr->prio_mult->
 				  priority_array[setup_job->prio_inx]);
 	} else {
 		_job_queue_append(setup_job->job_queue, job_ptr,
@@ -1239,6 +1240,7 @@ static int _schedule(bool full_queue)
 	uint32_t prio_reserve;
 	DEF_TIMERS;
 	job_node_select_t job_node_select = { 0 };
+	static bool ignore_prefer_val = false;
 
 	if (slurmctld_config.shutdown_time)
 		return 0;
@@ -1454,6 +1456,12 @@ static int _schedule(bool full_queue)
 		} else {
 			sched_max_job_start = 0;
 		}
+
+		if (xstrcasestr(slurm_conf.sched_params,
+				"ignore_prefer_validation"))
+			ignore_prefer_val = true;
+		else
+			ignore_prefer_val = false;
 
 		sched_update = slurm_conf.last_update;
 		if (slurm_conf.sched_params && strlen(slurm_conf.sched_params))
@@ -1866,6 +1874,26 @@ next_task:
 			 */
 			fed_mgr_job_start(job_ptr, job_ptr->start_time);
 		} else {
+			/*
+			 * Node config unavailable plus state_reason
+			 * FAIL_BAD_CONSTRAINTS causes the job to be held
+			 * later. If job specs were unsatisfied due to
+			 * --prefer, give the opportunity to test the record
+			 * without it in a second attempt by resetting
+			 * state_reason to FAIL_CONSTRAINTS.
+			 */
+			if (ignore_prefer_val && job_ptr->details->prefer &&
+			    job_ptr->details->prefer_list &&
+			    (job_ptr->details->prefer_list ==
+			     job_ptr->details->feature_list_use) &&
+			    (error_code ==
+			     ESLURM_REQUESTED_NODE_CONFIG_UNAVAILABLE) &&
+			    (job_ptr->state_reason == FAIL_BAD_CONSTRAINTS)) {
+				sched_debug2("StateReason='%s' set after evaluating %pJ in partition %s (maybe unsatisfied due to --prefer while ignore_prefer_validation configured). Re-testing without --prefer if needed.",
+					     job_state_reason_string(job_ptr->state_reason), job_ptr, job_ptr->part_ptr->name);
+				job_ptr->state_reason = FAIL_CONSTRAINTS;
+			}
+
 			fed_mgr_job_unlock(job_ptr);
 		}
 
@@ -1989,6 +2017,12 @@ skip_start:
 				}
 			}
 			continue;
+		} else if ((error_code ==
+			    ESLURM_REQUESTED_NODE_CONFIG_UNAVAILABLE) &&
+			   (job_ptr->resv_ptr)) {
+			debug("%pJ non-runnable in reservation %s: %s",
+			      job_ptr, job_ptr->resv_ptr->name,
+			      slurm_strerror(error_code));
 		} else if ((error_code ==
 			    ESLURM_REQUESTED_NODE_CONFIG_UNAVAILABLE) &&
 			   job_ptr->part_ptr_list) {
@@ -2283,16 +2317,16 @@ extern int sort_job_queue2(void *x, void *y)
 			p1 = details->priority;
 		else {
 			if (job_rec1->job_ptr->part_ptr_list &&
-			    job_rec1->job_ptr->part_prio &&
-			    job_rec1->job_ptr->part_prio->priority_array)
+			    job_rec1->job_ptr->prio_mult &&
+			    job_rec1->job_ptr->prio_mult->priority_array)
 				p1 = job_rec1->priority;
 			else
 				p1 = job_rec1->job_ptr->priority;
 		}
 	} else {
 		if (job_rec1->job_ptr->part_ptr_list &&
-		    job_rec1->job_ptr->part_prio &&
-		    job_rec1->job_ptr->part_prio->priority_array)
+		    job_rec1->job_ptr->prio_mult &&
+		    job_rec1->job_ptr->prio_mult->priority_array)
 			p1 = job_rec1->priority;
 		else
 			p1 = job_rec1->job_ptr->priority;
@@ -2305,16 +2339,16 @@ extern int sort_job_queue2(void *x, void *y)
 			p2 = details->priority;
 		else {
 			if (job_rec2->job_ptr->part_ptr_list &&
-			    job_rec2->job_ptr->part_prio &&
-			    job_rec2->job_ptr->part_prio->priority_array)
+			    job_rec2->job_ptr->prio_mult &&
+			    job_rec2->job_ptr->prio_mult->priority_array)
 				p2 = job_rec2->priority;
 			else
 				p2 = job_rec2->job_ptr->priority;
 		}
 	} else {
 		if (job_rec2->job_ptr->part_ptr_list &&
-		    job_rec2->job_ptr->part_prio &&
-		    job_rec2->job_ptr->part_prio->priority_array)
+		    job_rec2->job_ptr->prio_mult &&
+		    job_rec2->job_ptr->prio_mult->priority_array)
 			p2 = job_rec2->priority;
 		else
 			p2 = job_rec2->job_ptr->priority;

@@ -206,6 +206,11 @@ static bool plugins_registered = false;
 bool refresh_cached_features = true;
 pthread_mutex_t cached_features_mutex = PTHREAD_MUTEX_INITIALIZER;
 
+/* Reference to active listening socket */
+pthread_mutex_t listen_mutex = PTHREAD_MUTEX_INITIALIZER;
+conmgr_fd_ref_t *listener = NULL;
+bool unquiesce_listener = false;
+
 static int       _convert_spec_cores(void);
 static int       _core_spec_init(void);
 static void _create_msg_socket(void);
@@ -318,6 +323,21 @@ static void _on_sigusr2(conmgr_callback_args_t conmgr_args, void *arg)
 static void _on_sigpipe(conmgr_callback_args_t conmgr_args, void *arg)
 {
 	info("Caught SIGPIPE. Ignoring.");
+}
+
+static void _unquiesce_fd_listener(void)
+{
+	conmgr_fd_t *con = NULL;
+
+	slurm_mutex_lock(&listen_mutex);
+	if (listener) {
+		con = conmgr_fd_get_ref(listener);
+		conmgr_unquiesce_fd(con);
+	} else {
+		/* Need to unquiesce when on_connect() called */
+		unquiesce_listener = true;
+	}
+	slurm_mutex_unlock(&listen_mutex);
 }
 
 int
@@ -469,11 +489,16 @@ main (int argc, char **argv)
 	if (!under_systemd)
 		pidfd = create_pidfile(conf->pidfile, 0);
 
+	conmgr_run(false);
+
 	if (original)
 		run_script_health_check();
 
 	record_launched_jobs();
 	slurm_thread_create_detached(_registration_engine, NULL);
+
+	/* Allow listening socket to start accept()ing incoming */
+	_unquiesce_fd_listener();
 
 	conmgr_run(true);
 
@@ -709,7 +734,7 @@ static void *_service_connection(void *arg)
 
 	xassert(args->magic == SERVICE_CONNECTION_ARGS_MAGIC);
 
-	debug3("%s: [%pA] processing new RPC connection", __func__, &addr);
+	debug3("%s: [%pA] processing new RPC connection", __func__, addr);
 
 	msg = xmalloc_nz(sizeof(*msg));
 	slurm_msg_t_init(msg);
@@ -1766,6 +1791,9 @@ _print_config(void)
 	hours = (conf->up_time / 3600) % 24;
 	days  = (conf->up_time / 86400);
 	printf("UpTime=%u-%2.2u:%2.2u:%2.2u\n", days, hours, mins, secs);
+
+	xfree(gres_str);
+	xfree(autodetect_str);
 }
 
 static void _print_gres(void)
@@ -1979,6 +2007,16 @@ static void *_on_listen_connect(conmgr_fd_t *con, void *arg)
 	debug3("%s: [%s] Successfully opened slurm listen port %u",
 	       __func__, conmgr_fd_get_name(con), conf->port);
 
+	slurm_mutex_lock(&listen_mutex);
+	xassert(!listener);
+	listener = conmgr_fd_new_ref(con);
+
+	if (unquiesce_listener) {
+		/* on_connect() happened after _unquiesce_fd_listener() */
+		conmgr_unquiesce_fd(con);
+	}
+	slurm_mutex_unlock(&listen_mutex);
+
 	slurmd_req(NULL);	/* initialize timer */
 
 	return con;
@@ -1987,6 +2025,10 @@ static void *_on_listen_connect(conmgr_fd_t *con, void *arg)
 static void _on_listen_finish(conmgr_fd_t *con, void *arg)
 {
 	xassert(con == arg);
+
+	slurm_mutex_lock(&listen_mutex);
+	conmgr_fd_free_ref(&listener);
+	slurm_mutex_unlock(&listen_mutex);
 
 	debug3("%s: [%s] closed RPC listener. Queuing up cleanup.",
 	       __func__, conmgr_fd_get_name(con));
@@ -2133,7 +2175,7 @@ static void _create_msg_socket(void)
 	}
 
 	if ((rc = conmgr_process_fd_listen(conf->lfd, CON_TYPE_RPC, &events,
-					   CON_FLAG_NONE, NULL)))
+					   CON_FLAG_QUIESCE, NULL)))
 		fatal("%s: unable to process fd:%d error:%s",
 		      __func__, conf->lfd, slurm_strerror(rc));
 }
@@ -2737,6 +2779,11 @@ _slurmd_fini(void)
 extern void slurmd_shutdown(void)
 {
 	_shutdown = 1;
+
+	slurm_mutex_lock(&listen_mutex);
+	conmgr_fd_free_ref(&listener);
+	slurm_mutex_unlock(&listen_mutex);
+
 	conmgr_request_shutdown();
 }
 

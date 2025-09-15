@@ -931,6 +931,7 @@ extern void slurmdb_destroy_job_rec(void *object)
 		xfree(job->lineage);
 		xfree(job->mcs_label);
 		xfree(job->partition);
+		xfree(job->qos_req);
 		xfree(job->nodes);
 		xfree(job->resv_name);
 		xfree(job->script);
@@ -2299,6 +2300,7 @@ extern int slurmdb_ping(char *rem_host)
 	persist_conn->rem_host = xstrdup(rem_host);
 	persist_conn->rem_port = slurm_conf.accounting_storage_port;
 	persist_conn->timeout = slurm_conf.msg_timeout * 1000;
+	persist_conn->version = SLURM_PROTOCOL_VERSION;
 
 	rc = slurm_persist_conn_open(persist_conn);
 	slurm_persist_conn_destroy(persist_conn);
