@@ -356,7 +356,8 @@ static void _job_post_submit(ctxt_t *ctxt, job_desc_msg_t *job, char *script)
 		job->script = xstrdup(script);
 	}
 
-	if (!job->script || !job->script[0]) {
+	if ((!job->script || !job->script[0]) &&
+	    !(job->bitflags & EXTERNAL_JOB)) {
 		resp_error(ctxt, ESLURM_JOB_SCRIPT_MISSING, "script",
 			   "Batch job script empty or missing");
 	} else if (slurm_submit_batch_job(job, &resp) || !resp) {
@@ -473,7 +474,8 @@ static void _job_post(ctxt_t *ctxt)
 		goto cleanup;
 
 	if (!req.jobs && (!req.script || !req.script[0]) &&
-	    (!req.job || !req.job->script)) {
+	    (!req.job ||
+	     (!req.job->script && !(req.job->bitflags & EXTERNAL_JOB)))) {
 		resp_error(ctxt, ESLURM_REST_INVALID_QUERY, __func__,
 			   "Populated \"script\" field is required for job submission");
 		goto cleanup;
@@ -485,7 +487,7 @@ static void _job_post(ctxt_t *ctxt)
 	}
 	if (!req.job && !req.jobs) {
 		resp_error(ctxt, ESLURM_REST_INVALID_QUERY, __func__,
-			   "Specifing either \"job\" or \"jobs\" fields are required to submit job");
+			   "Specifying either \"job\" or \"jobs\" fields are required to submit job");
 		goto cleanup;
 	}
 
@@ -583,7 +585,7 @@ static int _foreach_alloc_job(void *x, void *arg)
 	/* Force disable status updates */
 	job->other_port = 0;
 
-	/* force atleast 1 node for job */
+	/* force at least 1 node for job */
 	if (!job->min_nodes || (job->min_nodes >= NO_VAL))
 		job->min_nodes = 1;
 
@@ -729,7 +731,7 @@ extern int op_handler_alloc_job(openapi_ctxt_t *ctxt)
 	}
 	if (!req.job && !req.hetjob) {
 		rc = resp_error(ctxt, ESLURM_REST_INVALID_QUERY, __func__,
-				"Specifing either \"job\" or \"hetjob\" fields are required to allocate job");
+				"Specifying either \"job\" or \"hetjob\" fields are required to allocate job");
 		goto cleanup;
 	}
 

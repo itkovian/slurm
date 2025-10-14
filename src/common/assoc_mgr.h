@@ -138,6 +138,7 @@ extern bool verify_assoc_unlock(assoc_mgr_lock_datatype_t datatype);
 #endif
 
 extern int assoc_mgr_find_nondirect_coord_by_name(void *x, void *y);
+extern int assoc_mgr_find_flag_coord_by_name(void *x, void *y);
 
 /* ran after a new tres_list is given */
 extern int assoc_mgr_post_tres_list(list_t *new_list);
@@ -491,7 +492,7 @@ extern void assoc_mgr_set_uid(uid_t uid, char *username);
  * Sets the uids of users added to the system after the start of the
  * calling program.
  */
-extern int assoc_mgr_set_missing_uids(void);
+extern int assoc_mgr_set_missing_uids(bool *uid_set);
 
 /* Normalize shares for an association. External so a priority plugin
  * can call it if needed.
@@ -595,7 +596,7 @@ extern void assoc_mgr_get_default_qos_info(
  * Calculate a weighted tres value.
  * IN: tres_cnt - array of tres values of size g_tres_count.
  * IN: weights - weights to apply to tres values of size g_tres_count.
- * IN: flags - priority flags (toogle between MAX or SUM of tres).
+ * IN: flags - priority flags (toggle between MAX or SUM of tres).
  * IN: locked - whether the tres read assoc mgr lock is locked or not.
  * RET: returns the calculated tres weight.
  */

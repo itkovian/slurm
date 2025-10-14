@@ -40,6 +40,7 @@
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
 
 #include "src/common/macros.h"
 #include "src/common/plugin.h"
@@ -52,6 +53,7 @@
 #include "src/common/xstring.h"
 
 #include "src/interfaces/auth.h"
+#include "src/interfaces/conn.h"
 
 typedef struct {
 	int index;
@@ -182,7 +184,6 @@ extern int auth_g_init(void)
 	char *auth_alt_types = NULL, *list = NULL;
 	char *type, *last = NULL;
 	char *plugin_type = "auth";
-	static bool daemon_run = false, daemon_set = false;
 
 	slurm_rwlock_wrlock(&context_lock);
 
@@ -205,7 +206,7 @@ extern int auth_g_init(void)
 	if (!type || type[0] == '\0')
 		goto done;
 
-	if (run_in_daemon(&daemon_run, &daemon_set, "slurmctld,slurmdbd"))
+	if (run_in_daemon(IS_SLURMCTLD | IS_SLURMDBD))
 		list = auth_alt_types = xstrdup(slurm_conf.authalttypes);
 	g_context_num = 0;
 
@@ -415,8 +416,8 @@ extern uid_t auth_g_get_uid(void *cred)
 
 extern char *auth_g_get_host(void *slurm_msg)
 {
-	slurm_addr_t addr;
 	slurm_msg_t *msg = slurm_msg;
+	slurm_addr_t *addr = &msg->address;
 	cred_wrapper_t *wrap = NULL;
 	char *host = NULL;
 
@@ -441,18 +442,26 @@ extern char *auth_g_get_host(void *slurm_msg)
 		return host;
 	}
 
-	if (slurm_get_peer_addr(msg->conn_fd, &addr)) {
-		error("%s: unable to determine host", __func__);
-		return NULL;
+	if (addr->ss_family == AF_UNSPEC) {
+		int rc;
+		int fd = conn_g_get_fd(msg->tls_conn);
+
+		if ((rc = slurm_get_peer_addr(fd, addr))) {
+			error("%s: [fd:%d] unable to determine socket remote host: %s",
+			      __func__, fd, slurm_strerror(rc));
+			return NULL;
+		}
+
+		xassert(addr->ss_family != AF_UNSPEC);
 	}
 
 	/* use remote host IP, then look it up */
-	if ((host = xgetnameinfo(&addr))) {
+	if ((host = xgetnameinfo(addr))) {
 		debug3("%s: looked up from connection's IP address: %s",
 		       __func__, host);
 	} else {
 		host = xmalloc(INET6_ADDRSTRLEN);
-		slurm_get_ip_str(&addr, host, INET6_ADDRSTRLEN);
+		slurm_get_ip_str(addr, host, INET6_ADDRSTRLEN);
 		debug3("%s: using connection's IP address: %s", __func__, host);
 	}
 

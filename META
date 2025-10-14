@@ -5,10 +5,10 @@
 ##
   Meta:		1
   Name:		slurm
-  Major:	24
-  Minor:	11
-  Micro:	6
-  Version:	24.11.6
+  Major:	25
+  Minor:	05
+  Micro:	3
+  Version:	25.05.3
   Release:	1
 
 ##
@@ -26,6 +26,6 @@
 #        the config.h file that may be used throughout Slurm, so don't remove
 #	 them.
 ##
-  API_CURRENT:	42
+  API_CURRENT:	43
   API_AGE:	0
   API_REVISION:	0

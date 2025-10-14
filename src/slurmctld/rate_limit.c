@@ -39,6 +39,9 @@
 #include "src/common/slurm_protocol_defs.h"
 #include "src/common/xstring.h"
 
+#include "src/interfaces/conn.h"
+
+#include "src/slurmctld/proc_req.h"
 #include "src/slurmctld/slurmctld.h"
 
 /*
@@ -109,11 +112,15 @@ extern void rate_limit_shutdown(void)
  */
 extern bool rate_limit_exceeded(slurm_msg_t *msg)
 {
+	slurmctld_rpc_t *this_rpc = NULL;
 	bool exceeded = false;
 	int start_position = 0, position = 0;
 	time_t now;
 
 	if (!rate_limit_enabled)
+		return false;
+
+	if ((this_rpc = find_rpc(msg->msg_type)) && this_rpc->rl_exempt)
 		return false;
 
 	/*
@@ -190,8 +197,10 @@ extern bool rate_limit_exceeded(slurm_msg_t *msg)
 	    ((user_buckets[position].last_logged + log_freq) <= now)) {
 		slurm_addr_t *cli_addr = &msg->address;
 
-		if ((cli_addr->ss_family == AF_UNSPEC) && (msg->conn_fd >= 0))
-			(void) slurm_get_peer_addr(msg->conn_fd, cli_addr);
+		if (cli_addr->ss_family == AF_UNSPEC) {
+			int fd = conn_g_get_fd(msg->tls_conn);
+			(void) slurm_get_peer_addr(fd, cli_addr);
+		}
 
 		info("RPC rate limit exceeded by uid %u with %s from %pA, telling to back off",
 		     msg->auth_uid, rpc_num2string(msg->msg_type), cli_addr);

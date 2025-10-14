@@ -77,6 +77,7 @@ typedef struct {
 	uint16_t threads;	/* number of threads per core */
 	uint32_t tmp_disk;	/* MB total storage in TMP_FS file system */
 	uint16_t tot_sockets;	/* number of sockets per node */
+	char *topology_str; /* topology address string */
 	double  *tres_weights;	/* array of TRES weights */
 	char    *tres_weights_str; /* per TRES billing weight string */
 	uint32_t weight;	/* arbitrary priority of node for
@@ -84,16 +85,22 @@ typedef struct {
 } config_record_t;
 extern list_t *config_list;	/* list of config_record entries */
 
-extern list_t *front_end_list;	/* list of slurm_conf_frontend_t entries */
-
 typedef struct node_record node_record_t;
 struct node_record {
+	/*
+	 * alloc fields are managed by the select plugin
+	 * call select_g_select_nodeinfo_set_all() to update
+	 */
+	uint16_t alloc_cpus;		/* allocated cpus */
+	uint64_t alloc_memory;		/* allocated memory */
+	char *alloc_tres_fmt_str;	/* allocated TRES */
 	char *arch;			/* computer architecture */
 	char *bcast_address;		/* BcastAddr */
 	uint16_t boards; 		/* count of boards configured */
 	time_t boot_req_time;		/* Time of node boot request */
 	time_t boot_time;		/* Time of node boot,
 					 * computed from up_time */
+	time_t cert_last_renewal;	/* Time of last TLS cert renewal */
 	char *cert_token;		/* unique token for certmgr validation */
 	char *comm_name;		/* communications path name to node */
 	char *comment;			/* arbitrary comment */
@@ -177,15 +184,14 @@ struct node_record {
 	uint16_t run_job_cnt;		/* count of jobs running on node */
 	uint64_t sched_weight;		/* Node's weight for scheduling
 					 * purposes. For cons_tres use */
-	dynamic_plugin_data_t *select_nodeinfo; /* opaque data structure,
-						 * use select_g_get_nodeinfo()
-						 * to access contents */
 	time_t slurmd_start_time;	/* Time of slurmd startup */
 	uint16_t sus_job_cnt;		/* count of jobs suspended on node */
 	uint32_t suspend_time; 		/* node idle for this long before
 					 * power save mode */
 	uint16_t suspend_timeout;	/* time required in order to perform a
 					 * node suspend operation */
+	char *topology_str; /* topology address string
+			     * (used by topology_plugin) */
 	uint64_t *tres_cnt;		/* tres this node has. NO_PACK*/
 	char *tres_fmt_str;		/* tres this node has */
 	char *tres_str;                 /* tres this node has */
@@ -197,7 +203,7 @@ struct node_record {
 	char *version;			/* Slurm version */
 	uint16_t tpc;	                /* number of threads we are using per
 					 * core */
-	uint32_t weight;		/* orignal weight, used only for state
+	uint32_t weight;		/* original weight, used only for state
 					 * save/restore, DO NOT use for
 					 * scheduling purposes. */
 };
@@ -258,13 +264,6 @@ hostlist_t *bitmap2hostlist(bitstr_t *bitmap);
 extern int build_all_nodeline_info(bool set_bitmap, int tres_cnt);
 
 /*
- * build_all_frontend_info - get a array of slurm_conf_frontend_t structures
- *	from the slurm.conf reader, build table, and set values
- * is_slurmd_context: set to true if run from slurmd
- */
-extern void build_all_frontend_info (bool is_slurmd_context);
-
-/*
  * Build a node's node_spec_bitmap and core_spec_cnt from it's cpu_spec_list.
  */
 extern int build_node_spec_bitmap(node_record_t *node_ptr);
@@ -312,8 +311,8 @@ extern void grow_node_record_table_ptr(void);
  * create_node_record - create a node record and set its values to defaults
  * IN config_ptr - pointer to node's configuration information
  * IN node_name - name of the node
- * OUT node_ptr - node_record_t** with created node on SUCESS, NULL otherwise.
- * RET SUCESS, or error code
+ * OUT node_ptr - node_record_t** with created node on SUCCESS, NULL otherwise.
+ * RET SUCCESS, or error code
  * NOTE: grows node_record_table_ptr if needed and appends a new node_record_t *
  *       to node_record_table_ptr and increases node_record_count.
  */
@@ -328,7 +327,7 @@ extern int create_node_record(config_record_t *config_ptr, char *node_name,
  *            less than node_record_count.
  * IN node_name - name of node to create
  * IN config_ptr - pointer to node's configuration information
- * RET new node_record_t * on sucess, NULL otherwise.
+ * RET new node_record_t * on success, NULL otherwise.
  * NOTE: node_record_count isn't changed.
  */
 extern node_record_t *create_node_record_at(int index, char *node_name,
@@ -340,8 +339,8 @@ extern node_record_t *create_node_record_at(int index, char *node_name,
  *
  * IN alias - name of node.
  * IN config_ptr - config_record_t* to initialize node with.
- * OUT node_ptr - node_record_t** with added node on SUCESS, NULL otherwise.
- * RET SUCESS, or error code
+ * OUT node_ptr - node_record_t** with added node on SUCCESS, NULL otherwise.
+ * RET SUCCESS, or error code
  */
 extern int add_node_record(char *alias, config_record_t *config_ptr,
 			   node_record_t **node_ptr);
@@ -542,6 +541,18 @@ extern void node_record_pack_state(void *in,
 extern int node_record_unpack(void **out,
 			      uint16_t protocol_version,
 			      buf_t *buffer);
+
+/*
+ * Convert CPU list to reserve whole cores
+ * OUT:
+ *	node_ptr->cpu_spec_list
+ */
+extern void node_conf_convert_cpu_spec_list(node_record_t *node_ptr);
+
+/*
+ * Select cores and CPUs to be reserved for core specialization.
+ */
+extern void node_conf_select_spec_cores(node_record_t *node_ptr);
 
 /* Create config_record_t from a packed node_record_t */
 extern config_record_t *config_record_from_node_record(node_record_t *node_ptr);

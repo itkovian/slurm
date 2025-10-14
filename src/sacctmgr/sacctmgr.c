@@ -66,6 +66,7 @@ int rollback_flag;       /* immediate execute=1, else = 0 */
 int with_assoc_flag = 0;
 void *db_conn = NULL;
 uint32_t my_uid = 0;
+char *my_user_name = NULL;
 list_t *g_qos_list = NULL;
 list_t *g_res_list = NULL;
 list_t *g_tres_list = NULL;
@@ -181,14 +182,12 @@ int main(int argc, char **argv)
 		case OPT_LONG_JSON :
 			mime_type = MIME_TYPE_JSON;
 			data_parser = optarg;
-			if (serializer_g_init(MIME_TYPE_JSON_PLUGIN, NULL))
-				fatal("JSON plugin load failure");
+			serializer_required(MIME_TYPE_JSON);
 			break;
 		case OPT_LONG_YAML :
 			mime_type = MIME_TYPE_YAML;
 			data_parser = optarg;
-			if (serializer_g_init(MIME_TYPE_YAML_PLUGIN, NULL))
-				fatal("YAML plugin load failure");
+			serializer_required(MIME_TYPE_YAML);
 			break;
 		default:
 			exit_code = 1;
@@ -219,6 +218,7 @@ int main(int argc, char **argv)
 		have_db_conn = true;
 
 	my_uid = getuid();
+	my_user_name = uid_to_string_cached(my_uid);
 
 	if (persist_conn_flags & PERSIST_FLAG_P_USER_CASE)
 		user_case_norm = false;
@@ -272,10 +272,15 @@ int main(int argc, char **argv)
 	if (local_exit_code)
 		exit_code = local_exit_code;
 	slurmdb_connection_close(&db_conn);
-	acct_storage_g_fini();
+
+#ifdef MEMORY_LEAK_DEBUG
+	log_fini();
+	slurm_fini();
+	uid_cache_clear();
 	FREE_NULL_LIST(g_qos_list);
 	FREE_NULL_LIST(g_res_list);
 	FREE_NULL_LIST(g_tres_list);
+#endif
 
 	exit(exit_code);
 }
@@ -588,18 +593,25 @@ static int _process_command (int argc, char **argv)
 			my_end = parse_time(argv[2], 1);
 		if (argc > 3)
 			archive_data = atoi(argv[3]);
-		if (slurmdb_usage_roll(db_conn, my_start,
-				       my_end, archive_data, NULL)
-		   == SLURM_SUCCESS) {
+		if (slurmdb_usage_roll(db_conn, my_start, my_end, archive_data,
+				       NULL) == SLURM_SUCCESS) {
 			if (commit_check("Would you like to commit rollup?")) {
-				slurmdb_connection_commit(db_conn, 1);
+				exit_code =
+					slurmdb_connection_commit(db_conn, 1);
+				if (exit_code != SLURM_SUCCESS)
+					fprintf(stderr, " Error committing changes: %s\n",
+						slurm_strerror(exit_code));
 			} else {
 				printf(" Rollup Discarded\n");
-				slurmdb_connection_commit(db_conn, 0);
+				exit_code =
+					slurmdb_connection_commit(db_conn, 0);
+				if (exit_code != SLURM_SUCCESS)
+					fprintf(stderr, " Error rolling back changes: %s\n",
+						slurm_strerror(exit_code));
 			}
 		}
-	} else if (xstrncasecmp(argv[0], "shutdown",
-				MAX(command_len, 4)) == 0) {
+	} else if (xstrncasecmp(argv[0], "shutdown", MAX(command_len, 4)) ==
+		   0) {
 		if (argc > 1) {
 			exit_code = 1;
 			fprintf (stderr,

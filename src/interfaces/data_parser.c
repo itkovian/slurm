@@ -92,6 +92,8 @@ typedef struct {
 				   void **references_ptr, data_t *dst,
 				   data_t *schemas);
 	void (*release_refs)(void *arg, void **references_ptr);
+	bool (*is_complex)(void *arg);
+	int (*dump_flags)(void *arg, data_t *dst);
 } parse_funcs_t;
 
 typedef struct {
@@ -115,6 +117,8 @@ static const char *parse_syms[] = {
 	"data_parser_p_populate_schema",
 	"data_parser_p_populate_parameters",
 	"data_parser_p_release_references",
+	"data_parser_p_is_complex",
+	"data_parser_p_dump_flags",
 };
 
 static plugins_t *plugins = NULL;
@@ -273,8 +277,7 @@ static int _load_plugins(plugin_param_t *pparams, plugrack_foreach_t listf,
 
 	slurm_mutex_lock(&init_mutex);
 
-	if ((rc = serializer_g_init(MIME_TYPE_JSON_PLUGIN, NULL)))
-		fatal("JSON plugin loading failed: %s", slurm_strerror(rc));
+	serializer_required(MIME_TYPE_JSON);
 
 	xassert(sizeof(parse_funcs_t) ==
 		(sizeof(void *) * ARRAY_SIZE(parse_syms)));
@@ -620,7 +623,7 @@ extern openapi_resp_meta_t *data_parser_cli_meta(int argc, char **argv,
 		.plugin = {
 			.data_parser = NULL,
 			.accounting_storage =
-				slurm_conf.accounting_storage_type,
+				xstrdup(slurm_conf.accounting_storage_type),
 		},
 		.command = argvnt,
 		.client = {
@@ -783,8 +786,13 @@ extern int data_parser_dump_cli_stdout(data_parser_type_t type, void *obj,
 
 	if (!data_parser_g_dump(parser, type, obj, obj_bytes, dresp) &&
 	    (data_get_type(dresp) != DATA_TYPE_NULL)) {
+		serializer_flags_t sflags = SER_FLAGS_NONE;
+
+		if (data_parser_g_is_complex(parser))
+			sflags |= SER_FLAGS_COMPLEX;
+
 		serialize_g_data_to_string(&out, NULL, dresp, mime_type,
-					   SER_FLAGS_PRETTY);
+					   sflags);
 	}
 
 	if (out && out[0])
@@ -948,4 +956,37 @@ extern void data_parser_g_release_references(data_parser_t *parser,
 	xassert(parser->plugin_offset < plugins->count);
 
 	return funcs->release_refs(parser->arg, references_ptr);
+}
+
+extern bool data_parser_g_is_complex(data_parser_t *parser)
+{
+	const parse_funcs_t *funcs;
+
+	if (!parser)
+		return false;
+
+	funcs = plugins->functions[parser->plugin_offset];
+
+	xassert(parser->magic == PARSE_MAGIC);
+	xassert(parser->plugin_offset < plugins->count);
+
+	return funcs->is_complex(parser->arg);
+}
+
+extern int data_parser_g_dump_flags(data_parser_t *parser, data_t *dst)
+{
+	const parse_funcs_t *funcs;
+
+	if (!parser)
+		return EINVAL;
+
+	xassert(data_get_type(dst));
+	xassert(parser->magic == PARSE_MAGIC);
+	xassert(plugins && (plugins->magic == PLUGINS_MAGIC));
+	xassert(parser->plugin_offset < plugins->count);
+	xassert(plugins->functions[parser->plugin_offset]);
+
+	funcs = plugins->functions[parser->plugin_offset];
+
+	return funcs->dump_flags(parser->arg, dst);
 }

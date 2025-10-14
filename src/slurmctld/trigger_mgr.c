@@ -76,8 +76,6 @@
 list_t *trigger_list = NULL;
 uint32_t next_trigger_id = 1;
 static pthread_mutex_t trigger_mutex = PTHREAD_MUTEX_INITIALIZER;
-bitstr_t *trigger_down_front_end_bitmap = NULL;
-bitstr_t *trigger_up_front_end_bitmap = NULL;
 bitstr_t *trigger_down_nodes_bitmap = NULL;
 bitstr_t *trigger_drained_nodes_bitmap = NULL;
 bitstr_t *trigger_fail_nodes_bitmap = NULL;
@@ -119,7 +117,7 @@ typedef struct trig_mgr_info {
 	char *   program;	/* program to execute */
 	uint8_t  state;		/* 0=pending, 1=pulled, 2=completed */
 
-	/* The orig_ fields are used to save  and clone the orignal values */
+	/* The orig_ fields are used to save  and clone the original values */
 	bitstr_t *orig_bitmap;	/* bitmap of requested nodes (if applicable) */
 	char *   orig_res_id;	/* original node name or job_id (string) */
 	time_t   orig_time;	/* offset (pending) or time stamp (complete) */
@@ -508,32 +506,6 @@ fini:	slurm_mutex_unlock(&trigger_mutex);
 	return rc;
 }
 
-extern void trigger_front_end_down(front_end_record_t *front_end_ptr)
-{
-	int inx = front_end_ptr - front_end_nodes;
-
-	xassert(verify_lock(NODE_LOCK, READ_LOCK));
-
-	slurm_mutex_lock(&trigger_mutex);
-	if (trigger_down_front_end_bitmap == NULL)
-		trigger_down_front_end_bitmap = bit_alloc(front_end_node_cnt);
-	bit_set(trigger_down_front_end_bitmap, inx);
-	slurm_mutex_unlock(&trigger_mutex);
-}
-
-extern void trigger_front_end_up(front_end_record_t *front_end_ptr)
-{
-	int inx = front_end_ptr - front_end_nodes;
-
-	xassert(verify_lock(NODE_LOCK, READ_LOCK));
-
-	slurm_mutex_lock(&trigger_mutex);
-	if (trigger_up_front_end_bitmap == NULL)
-		trigger_up_front_end_bitmap = bit_alloc(front_end_node_cnt);
-	bit_set(trigger_up_front_end_bitmap, inx);
-	slurm_mutex_unlock(&trigger_mutex);
-}
-
 extern void trigger_node_down(node_record_t *node_ptr)
 {
 	xassert(verify_lock(NODE_LOCK, READ_LOCK));
@@ -841,27 +813,6 @@ extern int trigger_state_save(void)
 	return error_code;
 }
 
-/* Open the trigger state save file, or backup if necessary.
- * state_file IN - the name of the state save file used
- * RET the file description to read from or error code
- */
-static buf_t *_open_trigger_state_file(char **state_file)
-{
-	buf_t *buf;
-
-	*state_file = xstrdup(slurm_conf.state_save_location);
-	xstrcat(*state_file, "/trigger_state");
-	if (!(buf = create_mmap_buf(*state_file)))
-		error("Could not open trigger state file %s: %m",
-		      *state_file);
-	else
-		return buf;
-
-	error("NOTE: Trying backup state save file. Triggers may be lost!");
-	xstrcat(*state_file, ".old");
-	return create_mmap_buf(*state_file);;
-}
-
 extern void trigger_state_restore(void)
 {
 	uint16_t protocol_version = NO_VAL16;
@@ -874,15 +825,15 @@ extern void trigger_state_restore(void)
 	/* read the file */
 	xassert(verify_lock(CONF_LOCK, READ_LOCK));
 
-	lock_state_files();
-	if (!(buffer = _open_trigger_state_file(&state_file))) {
+	if (!(buffer = state_save_open("trigger_state", &state_file))) {
+		if ((clustername_existed == 1) && (!ignore_state_errors))
+			fatal("No trigger state file (%s) to recover",
+			      state_file);
 		info("No trigger state file (%s) to recover", state_file);
 		xfree(state_file);
-		unlock_state_files();
 		return;
 	}
 	xfree(state_file);
-	unlock_state_files();
 
 	safe_unpackstr(&ver_str, buffer);
 	if (ver_str && !xstrcmp(ver_str, TRIGGER_STATE_VERSION))
@@ -918,28 +869,6 @@ fini:	verbose("State of %d triggers recovered", trigger_cnt);
 	FREE_NULL_BUFFER(buffer);
 }
 
-static bool _front_end_job_test(bitstr_t *front_end_bitmap,
-				job_record_t *job_ptr)
-{
-#ifdef HAVE_FRONT_END
-	int i;
-
-	/* Need node read lock for reading front_end_node_cnt. */
-	xassert(verify_lock(NODE_LOCK, READ_LOCK));
-
-	if ((front_end_bitmap == NULL) || (job_ptr->batch_host == NULL))
-		return false;
-
-	for (i = 0; i < front_end_node_cnt; i++) {
-		if (bit_test(front_end_bitmap, i) &&
-		    !xstrcmp(front_end_nodes[i].name, job_ptr->batch_host)) {
-			return true;
-		}
-	}
-#endif
-	return false;
-}
-
 /* Test if the event has been triggered, change trigger state as needed */
 static void _trigger_job_event(trig_mgr_info_t *trig_in, time_t now)
 {
@@ -973,18 +902,6 @@ static void _trigger_job_event(trig_mgr_info_t *trig_in, time_t now)
 			trig_in->trig_time = now;
 			log_flag(TRIGGERS, "trigger[%u] for job %u time",
 				 trig_in->trig_id, trig_in->job_id);
-			return;
-		}
-	}
-
-	if (trig_in->trig_type & TRIGGER_TYPE_DOWN) {
-		if (_front_end_job_test(trigger_down_front_end_bitmap,
-					job_ptr)) {
-			log_flag(TRIGGERS, "trigger[%u] for job %u down",
-				 trig_in->trig_id, trig_in->job_id);
-			trig_in->state = 1;
-			trig_in->trig_time = now +
-					    (trig_in->trig_time - 0x8000);
 			return;
 		}
 	}
@@ -1026,50 +943,6 @@ static void _trigger_job_event(trig_mgr_info_t *trig_in, time_t now)
 				 trig_in->trig_id, trig_in->job_id);
 			return;
 		}
-	}
-}
-
-
-static void _trigger_front_end_event(trig_mgr_info_t *trig_in, time_t now)
-{
-	int i;
-
-	xassert(verify_lock(NODE_LOCK, READ_LOCK));
-
-	if ((trig_in->trig_type & TRIGGER_TYPE_DOWN) &&
-	    (trigger_down_front_end_bitmap != NULL) &&
-	    ((i = bit_ffs(trigger_down_front_end_bitmap)) != -1)) {
-		xfree(trig_in->res_id);
-		for (i = 0; i < front_end_node_cnt; i++) {
-			if (!bit_test(trigger_down_front_end_bitmap, i))
-				continue;
-			if (trig_in->res_id != NULL)
-				xstrcat(trig_in->res_id, ",");
-			xstrcat(trig_in->res_id, front_end_nodes[i].name);
-		}
-		trig_in->state = 1;
-		trig_in->trig_time = now + (trig_in->trig_time - 0x8000);
-		log_flag(TRIGGERS, "trigger[%u] for node %s down",
-			 trig_in->trig_id, trig_in->res_id);
-		return;
-	}
-
-	if ((trig_in->trig_type & TRIGGER_TYPE_UP) &&
-	    (trigger_up_front_end_bitmap != NULL) &&
-	    ((i = bit_ffs(trigger_up_front_end_bitmap)) != -1)) {
-		xfree(trig_in->res_id);
-		for (i = 0; i < front_end_node_cnt; i++) {
-			if (!bit_test(trigger_up_front_end_bitmap, i))
-				continue;
-			if (trig_in->res_id != NULL)
-				xstrcat(trig_in->res_id, ",");
-			xstrcat(trig_in->res_id, front_end_nodes[i].name);
-		}
-		trig_in->state = 1;
-		trig_in->trig_time = now + (trig_in->trig_time - 0x8000);
-		log_flag(TRIGGERS, "trigger[%u] for node %s up",
-			 trig_in->trig_id, trig_in->res_id);
-		return;
 	}
 }
 
@@ -1494,10 +1367,6 @@ static void _trigger_run_program(trig_mgr_info_t *trig_in)
 
 static void _clear_event_triggers(void)
 {
-	if (trigger_down_front_end_bitmap)
-		bit_clear_all(trigger_down_front_end_bitmap);
-	if (trigger_up_front_end_bitmap)
-		bit_clear_all(trigger_up_front_end_bitmap);
 	if (trigger_down_nodes_bitmap)
 		bit_clear_all(trigger_down_nodes_bitmap);
 	if (trigger_drained_nodes_bitmap)
@@ -1523,7 +1392,7 @@ static void _clear_event_triggers(void)
 	trigger_pri_db_res_op = false;
 }
 
-/* Make a copy of a trigger and pre-pend it on our list */
+/* Make a copy of a trigger and prepend it on our list */
 static void _trigger_clone(trig_mgr_info_t *trig_in)
 {
 	trig_mgr_info_t *trig_add;
@@ -1581,9 +1450,6 @@ extern void trigger_process(void)
 			else if (trig_in->res_type ==
 				 TRIGGER_RES_TYPE_DATABASE)
 			 	_trigger_database_event(trig_in, now);
-			else if (trig_in->res_type ==
-				 TRIGGER_RES_TYPE_FRONT_END)
-			 	_trigger_front_end_event(trig_in, now);
 		}
 		if ((trig_in->state == 1) &&
 		    (trig_in->trig_time <= now)) {
@@ -1626,7 +1492,7 @@ extern void trigger_process(void)
 				state_change = true;
 			}
 		} else if (trig_in->state == 2) {
-			/* Elimiate zombie processes right away.
+			/* Eliminate zombie processes right away.
 			 * Purge trigger entry above MAX_PROG_TIME later */
 			rc = waitpid(trig_in->child_pid, &prog_stat, WNOHANG);
 			if ((rc > 0) && prog_stat) {
@@ -1653,8 +1519,6 @@ extern void trigger_process(void)
 extern void trigger_fini(void)
 {
 	FREE_NULL_LIST(trigger_list);
-	FREE_NULL_BITMAP(trigger_down_front_end_bitmap);
-	FREE_NULL_BITMAP(trigger_up_front_end_bitmap);
 	FREE_NULL_BITMAP(trigger_down_nodes_bitmap);
 	FREE_NULL_BITMAP(trigger_drained_nodes_bitmap);
 	FREE_NULL_BITMAP(trigger_fail_nodes_bitmap);

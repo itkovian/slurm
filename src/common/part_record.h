@@ -64,7 +64,7 @@ typedef struct part_record {
 	int allow_uids_cnt;	/* count of allowed user IDs */
 	char *allow_qos;	/* comma delimited list of qos,
 				 * NULL indicates all */
-	bitstr_t *allow_qos_bitstr; /* (DON'T PACK) assocaited with
+	bitstr_t *allow_qos_bitstr; /* (DON'T PACK) associated with
 				 * char *allow_qos but used internally */
 	char *alternate; 	/* name of alternate partition */
 	double *billing_weights;    /* array of TRES billing weights */
@@ -121,6 +121,8 @@ typedef struct part_record {
 	uint32_t max_cpu_cnt;	/* max # of cpus on a node in the partition */
 	uint32_t max_core_cnt;	/* max # of cores on a node in the partition */
 	uint16_t cr_type;	/* Custom CR values for partition (if supported by select plugin) */
+	int topology_idx; /* index of topology context */
+	char *topology_name;
 	uint64_t *tres_cnt;	/* array of total TRES in partition. NO_PACK */
 	char     *tres_fmt_str;	/* str of configured TRES in partition */
 	bf_part_data_t *bf_data;/* backfill data, NO PACK */

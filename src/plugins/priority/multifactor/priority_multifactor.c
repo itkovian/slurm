@@ -303,18 +303,13 @@ static void _read_last_decay_ran(time_t *last_ran, time_t *last_reset)
 	(*last_reset) = 0;
 
 	/* read the file */
-	state_file = xstrdup(slurm_conf.state_save_location);
-	xstrcat(state_file, "/priority_last_decay_ran");
-	lock_state_files();
-
-	if (!(buffer = create_mmap_buf(state_file))) {
+	buffer = state_save_open("priority_last_decay_ran", &state_file);
+	if (!buffer) {
 		info("No last decay (%s) to recover", state_file);
 		xfree(state_file);
-		unlock_state_files();
 		return;
 	}
 	xfree(state_file);
-	unlock_state_files();
 
 	safe_unpack_time(last_ran, buffer);
 	safe_unpack_time(last_reset, buffer);
@@ -1465,14 +1460,17 @@ static void *_decay_thread(void *no_data)
 
 		running_decay = 0;
 
-		/* Sleep until the next time. */
-		abs.tv_sec += slurm_conf.priority_calc_period;
-		slurm_cond_timedwait(&decay_cond, &decay_lock, &abs);
+		if (!plugin_shutdown) {
+			/* Sleep until the next time. */
+			abs.tv_sec += slurm_conf.priority_calc_period;
+			slurm_cond_timedwait(&decay_cond, &decay_lock, &abs);
+			start_time = time(NULL);
+			/* repeat ;) */
+		}
 		slurm_mutex_unlock(&decay_lock);
 
-		start_time = time(NULL);
-		/* repeat ;) */
 	}
+
 	return NULL;
 }
 
@@ -1583,7 +1581,7 @@ static void _internal_setup(void)
 }
 
 
-/* Reursively call assoc_mgr_normalize_assoc_shares from assoc_mgr.c on
+/* Recursively call assoc_mgr_normalize_assoc_shares from assoc_mgr.c on
  * children of an assoc
  */
 static void _set_norm_shares(list_t *children_list)
@@ -1624,7 +1622,7 @@ static void _init_decay_vars()
 	* To ease the computation, the notion of decay_factor
 	* is introduced and corresponds to the decay factor
 	* required for a slice of 1 second. Thus, for any given
-	* slice ot time of n seconds, decay_factor_slice will be
+	* slice of time of n seconds, decay_factor_slice will be
 	* defined as : df_slice = pow(df,n)
 	*
 	* For a slice corresponding to the defined half life 'decay_hl' and

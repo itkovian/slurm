@@ -354,7 +354,7 @@ Allocate resources for a job request.  This call will block until the allocation
 =item * IN $pending_callbacks: If the allocation cannot be granted immediately, the controller will put the job in the PENDING state.  If
 pending callback is given, it will be called with the job id of the pending job as the sole parameter.
 
-=item * RET: allcation response, with structure of C<resource_allocation_response_msg_t>. On failure C<undef> is returned, with errno set.
+=item * RET: allocation response, with structure of C<resource_allocation_response_msg_t>. On failure C<undef> is returned, with errno set.
 
 =back
 
@@ -440,7 +440,7 @@ Retrieve info for an existing resource allocation including a credential needed 
 
 =item * IN $jobid: job allocation identifier.
 
-=item * RET: job allocation information includeing a credential for sbcast, with structure of C<job_sbcast_cred_msg_t>. On failure C<undef> is returned with errno set.
+=item * RET: job allocation information including a credential for sbcast, with structure of C<job_sbcast_cred_msg_t>. On failure C<undef> is returned with errno set.
 
 =back
 
@@ -668,7 +668,7 @@ Update the time limit of a job step.
 
 =over 2
 
-=item * IN $step_msg: step update messasge descriptor, with structure of C<step_update_request_msg_t>.
+=item * IN $step_msg: step update message descriptor, with structure of C<step_update_request_msg_t>.
 
 =item * RET: 0 or -1 on error.
 
@@ -1051,78 +1051,6 @@ Issue RPC to modify a node's configuration per request, only usable by user root
 =item * RET: 0 on success, -1 on failure with errno set.
 
 =back
-
-
-
-
-=head2 SLURM SWITCH TOPOLOGY CONFIGURATION READ/PRINT FUNCTIONS
-
-=head3 $resp = $slurm->load_topo();
-
-Issue RPC to get all switch topology configuration information.
-
-=over 2
-
-=item * RET: response hash reference with structure of C<topo_info_response_msg_t>. On failure C<undef> is returned with errno set.
-
-=back
-
-=head3 $slurm->print_topo_info_msg($out, $topo_info_msg, $one_liner=0);
-
-Output information about all switch topology configuration information based upon message as loaded using C<load_topo()>.
-
-=over 2
-
-=item * IN $out: FILE handle to write to.
-
-=item * IN $topo_info_msg: swith topology information message, with structure of C<topo_info_response_msg_t>.
-
-=item * IN $one_liner: print as a single line if not zero.
-
-=back
-
-=head3 $slurm->print_topo_record($out, $topo_info, $one_liner);
-
-Output information about a specific Slurm topology record based upon message as loaded using C<load_topo()>.
-
-=over 2
-
-=item * IN $out: FILE handle to write to.
-
-=item * IN $topo_info: an individual switch information record, with structure of C<topo_info_t>.
-
-=item * IN $one_liner: print as a single line if not zero.
-
-=back
-
-
-
-
-=head2 SLURM SELECT READ/PRINT/UPDATE FUNCTIONS
-
-=head3 $rc = $slurm->get_select_nodeinfo($nodeinfo, $data_type, $state, $data);
-
-Get data from a select node credential.
-
-
-=over 2
-
-=item * IN $nodeinfo: select node credential to get data from.
-
-=item * IN $data_type: type of data to get.
-
-=over 2
-
-=item * TODO: enumerate data type and returned value.
-
-=back
-
-=item * IN $state: state of node query.
-
-=item * OUT $data: the data got.
-
-=back
-
 
 
 

@@ -81,7 +81,7 @@ list_t *registered_clusters;
 
 list_t *as_mysql_cluster_list = NULL;
 /* This total list is only used for converting things, so no
-   need to keep it upto date even though it lives until the
+   need to keep it up to date even though it lives until the
    end of the life of the slurmdbd.
 */
 list_t *as_mysql_total_cluster_list = NULL;
@@ -165,17 +165,11 @@ char *resv_ext_view = "resv_ext_view";
 char *step_view = "step_view";
 char *step_ext_view = "step_ext_view";
 
+list_t *g_user_coords_list = NULL;
+
 bool backup_dbd = 0;
 
 static char *default_qos_str = NULL;
-
-enum {
-	JASSOC_JOB,
-	JASSOC_ACCT,
-	JASSOC_USER,
-	JASSOC_PART,
-	JASSOC_COUNT
-};
 
 extern int acct_storage_p_close_connection(mysql_conn_t **mysql_conn);
 
@@ -249,12 +243,13 @@ static int _set_qos_cnt(mysql_conn_t *mysql_conn)
  * Check to ensure that we do not remove a user's default account unless we are
  * removing all of the user's accounts.
  */
-static int _check_is_def_acct_before_remove(mysql_conn_t *mysql_conn,
-					    char *cluster_name,
-					    char *assoc_char,
-					    list_t *ret_list,
-					    bool *default_account)
+static int _check_is_def_acct_before_remove(remove_common_args_t *args)
 {
+	char *assoc_char = args->assoc_char;
+	char *cluster_name = args->cluster_name;
+	mysql_conn_t *mysql_conn = args->mysql_conn;
+	list_t *ret_list = args->ret_list;
+
 	char *query, *tmp_char = NULL, *as_statement = "";
 	MYSQL_RES *result = NULL;
 	MYSQL_ROW row;
@@ -271,8 +266,6 @@ static int _check_is_def_acct_before_remove(mysql_conn_t *mysql_conn,
 		DASSOC_COUNT
 	};
 
-	xassert(default_account);
-
 	xstrcat(tmp_char, dassoc_inx[0]);
 	for (i = 1; i < DASSOC_COUNT; i++)
 		xstrfmtcat(tmp_char, ", %s", dassoc_inx[i]);
@@ -284,16 +277,17 @@ static int _check_is_def_acct_before_remove(mysql_conn_t *mysql_conn,
 	 * and we are not deleting all accounts of that user.
 	 */
 	query = xstrdup_printf(
-		"select user, acct from \"%s_%s\" "
-		"where is_def=1 and deleted=0 and user in "
-		"(select user as myuser "
-		"from \"%s_%s\" %s where deleted=0 and user!='' and (%s) "
+		"select %s from \"%s_%s\" "
+		"join (select user as myuser from \"%s_%s\" %s "
+		"where deleted=0 AND user!='' and (%s) "
 		"group by user "
 		"having max(is_def)=1 " /* Is default account is selected */
 		"and not count(*)=" /* Is this all of that user's assocs? */
 		"(select count(*) FROM \"%s_%s\" "
-		"where deleted=0 AND user=myuser))",
-		cluster_name, assoc_table, cluster_name, assoc_table,
+		"where deleted=0 AND user=myuser)) "
+		"as t3 ON user=myuser "
+		"where is_def=1 AND deleted=0",
+		tmp_char, cluster_name, assoc_table, cluster_name, assoc_table,
 		as_statement, assoc_char, cluster_name, assoc_table);
 
 	xfree(tmp_char);
@@ -303,14 +297,14 @@ static int _check_is_def_acct_before_remove(mysql_conn_t *mysql_conn,
 	xfree(query);
 
 	if (!result)
-		return *default_account;
+		return args->default_account;
 
 	if (!mysql_num_rows(result)) {
 		mysql_free_result(result);
-		return *default_account;
+		return args->default_account;
 	}
 
-	*default_account = true;
+	args->default_account = true;
 	list_flush(ret_list);
 	reset_mysql_conn(mysql_conn);
 
@@ -326,80 +320,84 @@ static int _check_is_def_acct_before_remove(mysql_conn_t *mysql_conn,
 	}
 
 	mysql_free_result(result);
-	return *default_account;
+	return args->default_account;
 }
 
-static void _process_running_jobs_result(char *cluster_name,
-					 MYSQL_RES *result, list_t *ret_list)
+static int _cluster_check_def_acct(void *x, void *arg)
 {
-	MYSQL_ROW row;
-	char *object;
+	remove_common_args_t *args = arg;
+	args->cluster_name = x;
 
-	while ((row = mysql_fetch_row(result))) {
-		if (!row[JASSOC_USER][0]) {
-			/* This should never happen */
-			error("How did we get a job running on an association "
-			      "that isn't a user association job %s cluster "
-			      "'%s' acct '%s'?", row[JASSOC_JOB],
-			      cluster_name, row[JASSOC_ACCT]);
-			continue;
-		}
-		object = xstrdup_printf(
-			"JobID = %-10s C = %-10s A = %-10s U = %-9s",
-			row[JASSOC_JOB], cluster_name, row[JASSOC_ACCT],
-			row[JASSOC_USER]);
-		if (row[JASSOC_PART][0])
-			// see if there is a partition name
-			xstrfmtcat(object, " P = %s", row[JASSOC_PART]);
-		list_append(ret_list, object);
-	}
+	/* Stop as soon as we find a cluster w/ default account */
+	if (_check_is_def_acct_before_remove(args))
+		return -1;
+	else
+		return 0;
 }
 
 /* this function is here to see if any of what we are trying to remove
  * has jobs that are not completed.  If we have jobs and the object is less
  * than a day old we don't want to delete it, only set the deleted flag.
  */
-static bool _check_jobs_before_remove(mysql_conn_t *mysql_conn,
-				      char *cluster_name,
-				      char *assoc_char,
-				      list_t *ret_list,
-				      bool *already_flushed)
+static bool _check_jobs_before_remove(remove_common_args_t *args)
 {
-	char *query = NULL, *object = NULL;
+	char *assoc_char;
+	char *cluster_name = args->cluster_name;
+	mysql_conn_t *mysql_conn = args->mysql_conn;
+	list_t *ret_list = args->ret_list;
+
+	char *query = NULL, *object = NULL, *pos = NULL;
 	bool rc = 0;
-	int i;
 	MYSQL_RES *result = NULL;
 
-	/* if this changes you will need to edit the corresponding
-	 * enum above in the global settings */
-	static char *jassoc_req_inx[] = {
-		"t0.id_job",
+	/* Keep this enum in sync with the char *jassoc_req_inx below */
+	enum {
+		JASSOC_JOB,
+		JASSOC_ACCT,
+		JASSOC_USER,
+		JASSOC_PART,
+		JASSOC_QOS,
+		JASSOC_WCKEY,
+		JASSOC_COUNT
+	};
+	/*
+	 * 't2' is what comes from the assoc_char in most of the parts here. It
+	 * needs to remain that way.
+	 */
+	char *jassoc_req_inx[] = {
+		"t1.id_job",
 		"t2.acct",
 		"t2.user",
-		"t2.partition"
+		"t2.partition",
+		"t1.id_qos",
+		"t1.id_wckey",
 	};
-	if (ret_list) {
-		xstrcat(object, jassoc_req_inx[0]);
-		for(i=1; i<JASSOC_COUNT; i++)
-			xstrfmtcat(object, ", %s", jassoc_req_inx[i]);
 
-		query = xstrdup_printf(
-			"select distinct %s "
-			"from \"%s_%s\" as t0, "
-			"\"%s_%s\" as t2 "
-			"where (%s) "
-			"and t0.id_assoc=t2.id_assoc "
-			"and t0.time_end=0 && t0.state<%d;",
-			object, cluster_name, job_table,
-			cluster_name, assoc_table,
-			assoc_char, JOB_COMPLETE);
-		xfree(object);
-	} else {
-		query = xstrdup_printf(
-			"select t0.id_assoc from \"%s_%s\" as t2 STRAIGHT_JOIN \"%s_%s\" as t0 where (%s) and t0.id_assoc=t2.id_assoc limit 1;",
-			cluster_name, assoc_table,
-			cluster_name, job_table,
-			assoc_char);
+	if (args->table == assoc_table)
+		assoc_char = args->name_char;
+	else
+		assoc_char = args->assoc_char;
+
+	xstrcatat(object, &pos, jassoc_req_inx[0]);
+	for (int i = 1; i < JASSOC_COUNT; i++)
+		xstrfmtcatat(object, &pos, ", %s", jassoc_req_inx[i]);
+
+	pos = NULL;
+	/* Check for any jobs */
+	xstrfmtcatat(
+		query, &pos,
+		"select distinct %s from \"%s_%s\" as t1, \"%s_%s\" as t2 "
+		"where (%s) and t1.id_assoc=t2.id_assoc",
+		object, cluster_name, job_table,
+		cluster_name, assoc_table,
+		assoc_char);
+	xfree(object);
+
+	if (ret_list) {
+		/* Check for only running jobs */
+		xstrfmtcatat(query, &pos,
+			     " and t1.time_end=0 && t1.state<%d limit 1",
+			     JOB_COMPLETE);
 	}
 
 	DB_DEBUG(DB_ASSOC, mysql_conn->conn, "query\n%s", query);
@@ -412,119 +410,96 @@ static bool _check_jobs_before_remove(mysql_conn_t *mysql_conn,
 	if (mysql_num_rows(result)) {
 		debug4("We have jobs for this combo");
 		rc = true;
-		if (ret_list && !(*already_flushed)) {
+		if (ret_list && !args->jobs_running) {
 			list_flush(ret_list);
-			(*already_flushed) = 1;
+			args->jobs_running = 1;
 			reset_mysql_conn(mysql_conn);
 		}
-		if (ret_list)
-			_process_running_jobs_result(cluster_name, result,
-						     ret_list);
+	} else {
+		mysql_free_result(result);
+		return false;
 	}
-
-	mysql_free_result(result);
-	return rc;
-}
-
-/* Same as above but for associations instead of other tables */
-static bool _check_jobs_before_remove_assoc(mysql_conn_t *mysql_conn,
-					    char *cluster_name,
-					    char *assoc_char,
-					    list_t *ret_list,
-					    bool *already_flushed)
-{
-	char *query = NULL, *object = NULL;
-	bool rc = 0;
-	int i;
-	MYSQL_RES *result = NULL;
-
-	/* if this changes you will need to edit the corresponding
-	 * enum above in the global settings */
-	static char *jassoc_req_inx[] = {
-		"t1.id_job",
-		"t2.acct",
-		"t2.user",
-		"t2.partition"
-	};
 
 	if (ret_list) {
-		xstrcat(object, jassoc_req_inx[0]);
-		for(i=1; i<JASSOC_COUNT; i++)
-			xstrfmtcat(object, ", %s", jassoc_req_inx[i]);
+		MYSQL_ROW row;
+		char *object;
+		assoc_mgr_lock_t locks = {
+			.qos = READ_LOCK,
+			.wckey = READ_LOCK,
+		};
 
-		query = xstrdup_printf("select %s "
-				       "from \"%s_%s\" as t1, \"%s_%s\" as t2 "
-				       "where (%s) and t1.id_assoc=t2.id_assoc "
-				       "and t1.time_end=0 && t1.state<%d;",
-				       object, cluster_name, job_table,
-				       cluster_name, assoc_table,
-				       assoc_char, JOB_COMPLETE);
-		xfree(object);
-	} else {
-		query = xstrdup_printf(
-			"select t1.id_assoc from \"%s_%s\" as t1, "
-			"\"%s_%s\" as t2 where (%s) "
-			"and t1.id_assoc=t2.id_assoc limit 1;",
-			cluster_name, job_table,
-			cluster_name, assoc_table,
-			assoc_char);
-	}
+		assoc_mgr_lock(&locks);
 
-	DB_DEBUG(DB_ASSOC, mysql_conn->conn, "query\n%s", query);
+		while ((row = mysql_fetch_row(result))) {
+			slurmdb_qos_rec_t qos_req = {
+				.id = slurm_atoul(row[JASSOC_QOS]),
+			};
+			slurmdb_wckey_rec_t wckey_req = {
+				.cluster = cluster_name,
+				.id = slurm_atoul(row[JASSOC_WCKEY]),
+			};
 
-	if (!(result = mysql_db_query_ret(
-		      mysql_conn, query, 0))) {
-		xfree(query);
-		return rc;
-	}
-	xfree(query);
+			if (!row[JASSOC_USER][0]) {
+				/* This should never happen */
+				error("How did we get a job running on an association that isn't a user association job %s cluster '%s' acct '%s'?",
+				      row[JASSOC_JOB],
+				      cluster_name,
+				      row[JASSOC_ACCT]);
+				continue;
+			}
 
-	if (mysql_num_rows(result)) {
-		debug4("We have jobs for this combo");
-		rc = true;
-		if (ret_list && !(*already_flushed)) {
-			list_flush(ret_list);
-			(*already_flushed) = 1;
-			reset_mysql_conn(mysql_conn);
+			if (qos_req.id)
+				assoc_mgr_fill_in_qos(
+					mysql_conn, &qos_req,
+					ACCOUNTING_ENFORCE_QOS,
+					NULL, true);
+			if (wckey_req.id)
+				assoc_mgr_fill_in_wckey(
+					mysql_conn, &wckey_req,
+					ACCOUNTING_ENFORCE_WCKEYS,
+					NULL, true);
+
+			object = xstrdup_printf(
+				"JobID = %-10s C = %-10s A = %-10s U = %-9s",
+				row[JASSOC_JOB], cluster_name, row[JASSOC_ACCT],
+				row[JASSOC_USER]);
+			if (row[JASSOC_PART][0])
+				// see if there is a partition name
+				xstrfmtcat(object, " P = %s", row[JASSOC_PART]);
+			if (qos_req.id)
+				xstrfmtcat(object, " Q = %-9s", qos_req.name);
+			if (wckey_req.id)
+				xstrfmtcat(object, " W = %-9s", wckey_req.name);
+
+			list_append(ret_list, object);
 		}
+		assoc_mgr_unlock(&locks);
 	}
-
-	if (ret_list)
-		_process_running_jobs_result(cluster_name, result, ret_list);
-
 	mysql_free_result(result);
 	return rc;
 }
 
-/* Same as above but for things having nothing to do with associations
- * like qos or wckey */
-static bool _check_jobs_before_remove_without_assoctable(
-	mysql_conn_t *mysql_conn, char *cluster_name, char *where_char)
+static int _cluster_check_running_jobs(void *x, void *arg)
 {
-	char *query = NULL;
-	bool rc = 0;
-	MYSQL_RES *result = NULL;
+	remove_common_args_t *args = arg;
+	args->cluster_name = x;
 
-	query = xstrdup_printf("select id_assoc from \"%s_%s\" "
-			       "where (%s) limit 1;",
-			       cluster_name, job_table, where_char);
+	/* Check for every cluster to fill ret_list */
+	(void) _check_jobs_before_remove(args);
 
-	DB_DEBUG(DB_ASSOC, mysql_conn->conn, "query\n%s", query);
+	return 0;
+}
 
-	if (!(result = mysql_db_query_ret(
-		      mysql_conn, query, 0))) {
-		xfree(query);
-		return rc;
-	}
-	xfree(query);
+static int _cluster_check_any_jobs(void *x, void *arg)
+{
+	remove_common_args_t *args = arg;
+	args->cluster_name = x;
 
-	if (mysql_num_rows(result)) {
-		debug4("We have jobs for this combo");
-		rc = true;
-	}
-
-	mysql_free_result(result);
-	return rc;
+	/* Return as soon as we find a cluster that has matching jobs */
+	if (_check_jobs_before_remove(args))
+		return -1;
+	else
+		return 0;
 }
 
 /* static int _add_remove_tres_limit(char *tres_limit_str, char *name, */
@@ -802,46 +777,11 @@ static int _as_mysql_acct_check_tables(mysql_conn_t *mysql_conn)
 		"@def_qos_id, @qos, @delta_qos, @prio;"
 		"END;";
 	/*
-	 * 2 versions after 23.11 we can remove [get|set]_lineage, it is only
-	 * used in converting.  Don't forget to drop procedure for 2 versions
-	 * after 24.05.
+	 * When 25.05 is no longer supported we can remove get_lineage, it is
+	 * only used in dropping the old procedure.
 	 */
 	char *get_lineage =
-		"drop procedure if exists get_lineage;"
-		"create procedure get_lineage(in acct_in tinytext, in my_table tinytext, out path text) "
-		"begin "
-		"set @acct = '';"
-		"set max_sp_recursion_depth = 100;"
-		"set @s = concat('select @acct := parent_acct from ', my_table, ' where user=\\\'\\\' and acct=\\\'', acct_in, '\\\';');"
-		"prepare query from @s;"
-		"execute query;"
-		"deallocate prepare query;"
-		"if @acct!='' and @acct!='root' then "
-		"call get_lineage(@acct, my_table, path);"
-		"else "
-		"set path = '/';"
-		"end if;"
-		"if acct_in!='root' then "
-		"set path = CONCAT(path, acct_in, '/');"
-		"end if;"
-
-		"end;"
-		"drop procedure if exists set_lineage;"
-		"create procedure set_lineage(in assoc_id_in int unsigned, in acct_in tinytext, in user_in tinytext, in part_in tinytext, in my_table tinytext) "
-		"begin "
-		"set @lineage = '';"
-		"call get_lineage(acct_in, my_table, @lineage);"
-		"if user_in is not null && user_in!='' then "
-		"set @lineage = CONCAT(@lineage, '0-', user_in, '/');"
-		"if part_in is not null && part_in!='' then "
-		"set @lineage = CONCAT(@lineage, part_in, '/');"
-		"end if;"
-		"end if;"
-		"set @s = concat('update ', my_table, ' set mod_time=NOW(), lineage=@lineage where id_assoc=', assoc_id_in, ';');"
-		"prepare query from @s;"
-		"execute query;"
-		"select @lineage;"
-		"end;";
+		"drop procedure if exists get_lineage;";
 
 	char *query = NULL;
 	time_t now = time(NULL);
@@ -876,6 +816,7 @@ static int _as_mysql_acct_check_tables(mysql_conn_t *mysql_conn)
 	*/
 	if (mysql_db_create_table(mysql_conn, txn_table, txn_table_fields,
 				  ", primary key (id), "
+				  "key archive_delete (deleted), "
 				  "key archive_purge (timestamp, cluster(42)))")
 
 	    == SLURM_ERROR)
@@ -947,7 +888,7 @@ static int _as_mysql_acct_check_tables(mysql_conn_t *mysql_conn)
 	}
 
 	/* This total list is only used for converting things, so no
-	   need to keep it upto date even though it lives until the
+	   need to keep it up to date even though it lives until the
 	   end of the life of the slurmdbd.
 	*/
 	if (!(as_mysql_total_cluster_list =
@@ -1225,8 +1166,6 @@ extern int create_cluster_assoc_table(
 		{ "parent_acct", "tinytext not null default ''" },
 		{ "id_parent", "int unsigned not null" },
 		{ "lineage", "text" },
-		{ "lft", "int not null default 0" },
-		{ "rgt", "int not null default 0" },
 		{ "shares", "int default 1 not null" },
 		{ "max_jobs", "int default NULL" },
 		{ "max_jobs_accrue", "int default NULL" },
@@ -1259,8 +1198,7 @@ extern int create_cluster_assoc_table(
 				  assoc_table_fields,
 				  ", primary key (id_assoc), "
 				  "unique index udex (user(42), acct(42), "
-				  "`partition`(42)), "
-				  "key lft (lft), key account (acct(42)))")
+				  "`partition`(42)))")
 	    == SLURM_ERROR)
 		return SLURM_ERROR;
 
@@ -1357,6 +1295,7 @@ extern int create_cluster_tables(mysql_conn_t *mysql_conn, char *cluster_name)
 		{ "priority", "int unsigned not null" },
 		{ "qos_req", "text" },
 		{ "restart_cnt", "smallint unsigned default 0" },
+		{ "resv_req", "text" },
 		{ "script_hash_inx", "bigint unsigned default 0 not null" },
 		{ "state", "int unsigned not null" },
 		{ "timelimit", "int unsigned default 0 not null" },
@@ -1368,6 +1307,7 @@ extern int create_cluster_tables(mysql_conn_t *mysql_conn, char *cluster_name)
 		{ "gres_used", "text not null default ''" },
 		{ "wckey", "tinytext not null default ''" },
 		{ "work_dir", "text not null default ''" },
+		{ "segment_size", "smallint unsigned default 0 not null" },
 		{ "std_err", "text not null default ''" },
 		{ "std_in", "text not null default ''" },
 		{ "std_out", "text not null default ''" },
@@ -1413,6 +1353,7 @@ extern int create_cluster_tables(mysql_conn_t *mysql_conn, char *cluster_name)
 		{ "resv_name", "text not null" },
 		{ "time_start", "bigint unsigned default 0 not null"},
 		{ "time_end", "bigint unsigned default 0 not null" },
+		{ "time_force", "bigint unsigned default 0 not null" },
 		{ "tres", "text not null default ''" },
 		{ "unused_wall", "double unsigned default 0.0 not null" },
 		{ "comment", "text" },
@@ -1436,6 +1377,7 @@ extern int create_cluster_tables(mysql_conn_t *mysql_conn, char *cluster_name)
 		{ "time_start", "bigint unsigned default 0 not null" },
 		{ "time_end", "bigint unsigned default 0 not null" },
 		{ "time_suspended", "bigint unsigned default 0 not null" },
+		{ "timelimit", "int unsigned default 0 not null" },
 		{ "user_sec", "bigint unsigned default 0 not null" },
 		{ "user_usec", "int unsigned default 0 not null" },
 		{ "sys_sec", "bigint unsigned default 0 not null" },
@@ -1446,6 +1388,10 @@ extern int create_cluster_tables(mysql_conn_t *mysql_conn, char *cluster_name)
 		{ "req_cpufreq_min", "int unsigned default 0 not null" },
 		{ "req_cpufreq", "int unsigned default 0 not null" }, /* max */
 		{ "req_cpufreq_gov", "int unsigned default 0 not null" },
+		{ "cwd", "text not null default ''" },
+		{ "std_err", "text not null default ''" },
+		{ "std_in", "text not null default ''" },
+		{ "std_out", "text not null default ''" },
 		{ "submit_line", "longtext" },
 		{ "tres_alloc", "text not null default ''" },
 		{ "tres_usage_in_ave", "text not null default ''" },
@@ -1499,6 +1445,7 @@ extern int create_cluster_tables(mysql_conn_t *mysql_conn, char *cluster_name)
 	if (mysql_db_create_table(mysql_conn, table_name,
 				  id_usage_table_fields,
 				  ", primary key (id, id_tres, time_start), "
+				  "key archive_delete (deleted), "
 				  "key archive_purge (mod_time))")
 	    == SLURM_ERROR)
 		return SLURM_ERROR;
@@ -1509,6 +1456,7 @@ extern int create_cluster_tables(mysql_conn_t *mysql_conn, char *cluster_name)
 	if (mysql_db_create_table(mysql_conn, table_name,
 				  id_usage_table_fields,
 				  ", primary key (id, id_tres, time_start), "
+				  "key archive_delete (deleted), "
 				  "key archive_purge (mod_time))")
 	    == SLURM_ERROR)
 		return SLURM_ERROR;
@@ -1519,6 +1467,7 @@ extern int create_cluster_tables(mysql_conn_t *mysql_conn, char *cluster_name)
 	if (mysql_db_create_table(mysql_conn, table_name,
 				  id_usage_table_fields,
 				  ", primary key (id, id_tres, time_start), "
+				  "key archive_delete (deleted), "
 				  "key archive_purge (mod_time))")
 	    == SLURM_ERROR)
 		return SLURM_ERROR;
@@ -1529,6 +1478,7 @@ extern int create_cluster_tables(mysql_conn_t *mysql_conn, char *cluster_name)
 	if (mysql_db_create_table(mysql_conn, table_name,
 				  cluster_usage_table_fields,
 				  ", primary key (id_tres, time_start), "
+				  "key archive_delete (deleted), "
 				  "key archive_purge (mod_time))")
 	    == SLURM_ERROR)
 		return SLURM_ERROR;
@@ -1539,6 +1489,7 @@ extern int create_cluster_tables(mysql_conn_t *mysql_conn, char *cluster_name)
 	if (mysql_db_create_table(mysql_conn, table_name,
 				  cluster_usage_table_fields,
 				  ", primary key (id_tres, time_start), "
+				  "key archive_delete (deleted), "
 				  "key archive_purge (mod_time))")
 	    == SLURM_ERROR)
 		return SLURM_ERROR;
@@ -1549,6 +1500,7 @@ extern int create_cluster_tables(mysql_conn_t *mysql_conn, char *cluster_name)
 	if (mysql_db_create_table(mysql_conn, table_name,
 				  cluster_usage_table_fields,
 				  ", primary key (id_tres, time_start), "
+				  "key archive_delete (deleted), "
 				  "key archive_purge (mod_time))")
 	    == SLURM_ERROR)
 		return SLURM_ERROR;
@@ -1560,6 +1512,7 @@ extern int create_cluster_tables(mysql_conn_t *mysql_conn, char *cluster_name)
 				  event_table_fields,
 				  ", primary key (node_name(42), time_start), "
 				  "key rollup (time_start, time_end, state), "
+				  "key archive_delete (deleted), "
 				  "key archive_purge (time_end))")
 	    == SLURM_ERROR)
 		return SLURM_ERROR;
@@ -1591,6 +1544,7 @@ extern int create_cluster_tables(mysql_conn_t *mysql_conn, char *cluster_name)
 				  "time_eligible), "
 				  "key env_hash_inx (env_hash_inx), "
 				  "key script_hash_inx (script_hash_inx), "
+				  "key archive_delete (deleted), "
 				  "key archive_purge (time_end))")
 	    == SLURM_ERROR)
 		return SLURM_ERROR;
@@ -1601,7 +1555,8 @@ extern int create_cluster_tables(mysql_conn_t *mysql_conn, char *cluster_name)
 				  job_env_table_fields,
 				  ", primary key (hash_inx), "
 				  "unique index env_hash_inx "
-				  "(env_hash(66)))")
+				  "(env_hash(66)), "
+				  "key archive_delete (deleted))")
 	    == SLURM_ERROR)
 		return SLURM_ERROR;
 
@@ -1611,7 +1566,8 @@ extern int create_cluster_tables(mysql_conn_t *mysql_conn, char *cluster_name)
 				  job_script_table_fields,
 				  ", primary key (hash_inx), "
 				  "unique index script_hash_inx "
-				  "(script_hash(66)))")
+				  "(script_hash(66)), "
+				  "key archive_delete (deleted))")
 	    == SLURM_ERROR)
 		return SLURM_ERROR;
 
@@ -1631,6 +1587,7 @@ extern int create_cluster_tables(mysql_conn_t *mysql_conn, char *cluster_name)
 				  id_usage_table_fields,
 				  ", primary key (id, id_alt, "
 				  "id_tres, time_start), "
+				  "key archive_delete (deleted), "
 				  "key archive_purge (mod_time))")
 	    == SLURM_ERROR)
 		return SLURM_ERROR;
@@ -1642,6 +1599,7 @@ extern int create_cluster_tables(mysql_conn_t *mysql_conn, char *cluster_name)
 				  id_usage_table_fields,
 				  ", primary key (id, id_alt, "
 				  "id_tres, time_start), "
+				  "key archive_delete (deleted), "
 				  "key archive_purge (mod_time))")
 	    == SLURM_ERROR)
 		return SLURM_ERROR;
@@ -1653,6 +1611,7 @@ extern int create_cluster_tables(mysql_conn_t *mysql_conn, char *cluster_name)
 				  id_usage_table_fields,
 				  ", primary key (id, id_alt, "
 				  "id_tres, time_start), "
+				  "key archive_delete (deleted), "
 				  "key archive_purge (mod_time))")
 	    == SLURM_ERROR)
 		return SLURM_ERROR;
@@ -1662,6 +1621,7 @@ extern int create_cluster_tables(mysql_conn_t *mysql_conn, char *cluster_name)
 	if (mysql_db_create_table(mysql_conn, table_name,
 				  resv_table_fields,
 				  ", primary key (id_resv, time_start), "
+				  "key archive_delete (deleted), "
 				  "key archive_purge (time_end))")
 	    == SLURM_ERROR)
 		return SLURM_ERROR;
@@ -1672,6 +1632,7 @@ extern int create_cluster_tables(mysql_conn_t *mysql_conn, char *cluster_name)
 				  step_table_fields,
 				  ", primary key (job_db_inx, id_step, "
 				  "step_het_comp), "
+				  "key archive_delete (deleted), "
 				  "key archive_purge (time_end))")
 	    == SLURM_ERROR)
 		return SLURM_ERROR;
@@ -1681,6 +1642,7 @@ extern int create_cluster_tables(mysql_conn_t *mysql_conn, char *cluster_name)
 	if (mysql_db_create_table(mysql_conn, table_name,
 				  suspend_table_fields,
 				  ", primary key (job_db_inx, time_start), "
+				  "key archive_delete (deleted), "
 				  "key archive_purge (time_end))")
 	    == SLURM_ERROR)
 		return SLURM_ERROR;
@@ -1701,6 +1663,7 @@ extern int create_cluster_tables(mysql_conn_t *mysql_conn, char *cluster_name)
 	if (mysql_db_create_table(mysql_conn, table_name,
 				  id_usage_table_fields,
 				  ", primary key (id, id_tres, time_start), "
+				  "key archive_delete (deleted), "
 				  "key archive_purge (mod_time))")
 	    == SLURM_ERROR)
 		return SLURM_ERROR;
@@ -1711,6 +1674,7 @@ extern int create_cluster_tables(mysql_conn_t *mysql_conn, char *cluster_name)
 	if (mysql_db_create_table(mysql_conn, table_name,
 				  id_usage_table_fields,
 				  ", primary key (id, id_tres, time_start), "
+				  "key archive_delete (deleted), "
 				  "key archive_purge (mod_time))")
 	    == SLURM_ERROR)
 		return SLURM_ERROR;
@@ -1721,6 +1685,7 @@ extern int create_cluster_tables(mysql_conn_t *mysql_conn, char *cluster_name)
 	if (mysql_db_create_table(mysql_conn, table_name,
 				  id_usage_table_fields,
 				  ", primary key (id, id_tres, time_start), "
+				  "key archive_delete (deleted), "
 				  "key archive_purge (mod_time))")
 	    == SLURM_ERROR)
 		return SLURM_ERROR;
@@ -2291,214 +2256,21 @@ extern int modify_common(mysql_conn_t *mysql_conn,
 	return SLURM_SUCCESS;
 }
 
-/* Every option in assoc_char should have a 't1.' infront of it. */
-extern int remove_common(mysql_conn_t *mysql_conn,
-			 uint16_t type,
-			 time_t now,
-			 char *user_name,
-			 char *table,
-			 char *name_char,
-			 char *assoc_char,
-			 char *cluster_name,
-			 list_t *ret_list,
-			 bool *jobs_running,
-			 bool *default_account)
+static int _remove_from_assoc_table(remove_common_args_t *args)
 {
-	int rc = SLURM_SUCCESS;
-	char *query = NULL;
+	char *assoc_char = args->assoc_char;
+	char *cluster_name = args->cluster_name;
+	time_t day_old = args->day_old;
+	bool has_jobs = args->has_jobs;
+	mysql_conn_t *mysql_conn = args->mysql_conn;
+	time_t now = args->now;
+	char *table = args->table;
+
+	int rc;
+	char *query;
 	char *loc_assoc_char = NULL;
 	MYSQL_RES *result = NULL;
 	MYSQL_ROW row;
-	time_t day_old = now - DELETE_SEC_BACK;
-	bool has_jobs = false;
-	char *tmp_name_char = NULL;
-	bool cluster_centric = true;
-	uint32_t rpc_version;
-	uint32_t smallest_lft = 0xFFFFFFFF;
-
-	/* figure out which tables we need to append the cluster name to */
-	if ((table == cluster_table) || (table == acct_coord_table)
-	    || (table == acct_table) || (table == qos_table)
-	    || (table == txn_table) || (table == user_table)
-	    || (table == res_table) || (table == clus_res_table)
-	    || (table == federation_table))
-		cluster_centric = false;
-
-	if (((table == assoc_table) || (table == acct_table))) {
-		if (_check_is_def_acct_before_remove(mysql_conn,
-						     cluster_name,
-						     assoc_char,
-						     ret_list,
-						     default_account))
-			return SLURM_SUCCESS;
-	}
-
-	/* If we have jobs associated with this we do not want to
-	 * really delete it for accounting purposes.  This is for
-	 * corner cases most of the time this won't matter.
-	 */
-	if ((table == acct_coord_table) || (table == res_table)
-	    || (table == clus_res_table) || (table == federation_table)) {
-		/* This doesn't apply for these tables since we are
-		 * only looking for association type tables.
-		 */
-	} else if ((table == qos_table) || (table == wckey_table)) {
-		if (cluster_name)
-			has_jobs = _check_jobs_before_remove_without_assoctable(
-				mysql_conn, cluster_name, assoc_char);
-	} else if (table != assoc_table) {
-		/* first check to see if we are running jobs now */
-		if (_check_jobs_before_remove(
-			    mysql_conn, cluster_name, assoc_char,
-			    ret_list, jobs_running) || (*jobs_running))
-			return SLURM_SUCCESS;
-
-		has_jobs = _check_jobs_before_remove(
-			mysql_conn, cluster_name, assoc_char, NULL, NULL);
-
-		if (!has_jobs && (table == cluster_table)) {
-			char *reg_check = xstrdup_printf(
-				"select control_host from %s where name='%s'",
-				table, cluster_name);
-
-			/* Don't delete cluster row if it has registered */
-			DB_DEBUG(DB_ASSOC, mysql_conn->conn, "query\n%s",
-				 reg_check);
-			result = mysql_db_query_ret(mysql_conn, reg_check, 0);
-			xfree(reg_check);
-			if (!result) {
-				if (mysql_conn->flags & DB_CONN_FLAG_ROLLBACK)
-					mysql_db_rollback(mysql_conn);
-				list_flush(mysql_conn->update_list);
-				return SLURM_ERROR;
-			}
-			if ((row = mysql_fetch_row(result))) {
-				if (row[0] && row[0][0])
-					has_jobs = true;
-			}
-			mysql_free_result(result);
-		}
-	} else {
-		/* first check to see if we are running jobs now */
-		if (_check_jobs_before_remove_assoc(
-			    mysql_conn, cluster_name, name_char,
-			    ret_list, jobs_running) || (*jobs_running))
-			return SLURM_SUCCESS;
-
-		/* now check to see if any jobs were ever run. */
-		has_jobs = _check_jobs_before_remove_assoc(
-			mysql_conn, cluster_name, name_char,
-			NULL, NULL);
-	}
-	/* we want to remove completely all that is less than a day old */
-	if (!has_jobs && table != assoc_table) {
-		if (cluster_centric) {
-			query = xstrdup_printf("delete from \"%s_%s\" where "
-					       "creation_time>%ld && (%s);",
-					       cluster_name, table, day_old,
-					       name_char);
-		} else {
-			query = xstrdup_printf("delete from %s where "
-					       "creation_time>%ld && (%s);",
-					       table, day_old, name_char);
-		}
-	}
-
-	if (table != assoc_table) {
-		if (cluster_centric) {
-			xstrfmtcat(query,
-				   "update \"%s_%s\" set mod_time=%ld, "
-				   "deleted=1 where deleted=0 && (%s);",
-				   cluster_name, table, now, name_char);
-		} else if (table == federation_table) {
-			xstrfmtcat(query,
-				   "update %s set "
-				   "mod_time=%ld, deleted=1, "
-				   "flags=DEFAULT "
-				   "where deleted=0 && (%s);",
-				   federation_table, now,
-				   name_char);
-		} else if (table == qos_table) {
-			xstrfmtcat(query,
-				   "update %s set "
-				   "mod_time=%ld, deleted=1, "
-				   "grace_time=DEFAULT, "
-				   "max_jobs_pa=DEFAULT, "
-				   "max_jobs_per_user=DEFAULT, "
-				   "max_jobs_accrue_pa=DEFAULT, "
-				   "max_jobs_accrue_pu=DEFAULT, "
-				   "min_prio_thresh=DEFAULT, "
-				   "max_submit_jobs_pa=DEFAULT, "
-				   "max_submit_jobs_per_user=DEFAULT, "
-				   "max_tres_pa=DEFAULT, "
-				   "max_tres_pj=DEFAULT, "
-				   "max_tres_pn=DEFAULT, "
-				   "max_tres_pu=DEFAULT, "
-				   "max_tres_mins_pj=DEFAULT, "
-				   "max_tres_run_mins_pa=DEFAULT, "
-				   "max_tres_run_mins_pu=DEFAULT, "
-				   "min_tres_pj=DEFAULT, "
-				   "max_wall_duration_per_job=DEFAULT, "
-				   "grp_jobs=DEFAULT, grp_submit_jobs=DEFAULT, "
-				   "grp_jobs_accrue=DEFAULT, grp_tres=DEFAULT, "
-				   "grp_tres_mins=DEFAULT, "
-				   "grp_tres_run_mins=DEFAULT, "
-				   "grp_wall=DEFAULT, "
-				   "preempt=DEFAULT, "
-				   "preempt_exempt_time=DEFAULT, "
-				   "priority=DEFAULT, "
-				   "usage_factor=DEFAULT, "
-				   "usage_thres=DEFAULT, "
-				   "limit_factor=DEFAULT "
-				   "where deleted=0 && (%s);",
-				   qos_table, now, name_char);
-		} else {
-			xstrfmtcat(query,
-				   "update %s set mod_time=%ld, deleted=1 "
-				   "where deleted=0 && (%s);",
-				   table, now, name_char);
-		}
-	}
-
-	/* If we are removing assocs use the assoc_char since the
-	   name_char has lft between statements that can change over
-	   time.  The assoc_char has the actual ids of the assocs
-	   which never change.
-	*/
-	if (type == DBD_REMOVE_ASSOCS && assoc_char)
-		tmp_name_char = slurm_add_slash_to_quotes(assoc_char);
-	else
-		tmp_name_char = slurm_add_slash_to_quotes(name_char);
-
-	if (cluster_centric)
-		xstrfmtcat(query,
-			   "insert into %s (timestamp, action, name, "
-			   "actor, cluster) values "
-			   "(%ld, %d, '%s', '%s', '%s');",
-			   txn_table,
-			   now, type, tmp_name_char, user_name, cluster_name);
-	else
-		xstrfmtcat(query,
-			   "insert into %s (timestamp, action, name, actor) "
-			   "values (%ld, %d, '%s', '%s');",
-			   txn_table,
-			   now, type, tmp_name_char, user_name);
-
-	xfree(tmp_name_char);
-
-	DB_DEBUG(DB_ASSOC, mysql_conn->conn, "query\n%s", query);
-	rc = mysql_db_query(mysql_conn, query);
-	xfree(query);
-	if (rc != SLURM_SUCCESS) {
-		reset_mysql_conn(mysql_conn);
-		return SLURM_ERROR;
-	} else if ((table == acct_coord_table)
-		   || (table == wckey_table)
-		   || (table == clus_res_table)
-		   || (table == res_table)
-		   || (table == federation_table)
-		   || (table == qos_table))
-		return SLURM_SUCCESS;
 
 	/* mark deleted=1 or remove completely the accounting tables
 	 */
@@ -2515,9 +2287,12 @@ extern int remove_common(mysql_conn_t *mysql_conn,
 		/*
 		 * If we are doing this on an assoc_table we have
 		 * already done this, so don't
+		 *
+		 * Order by lineage so we push on the update list child ->
+		 * parent (which will happen in addto_update_list()).
 		 */
 		query = xstrdup_printf(
-			"select distinct t2.id_assoc from \"%s_%s\" as t2 where %s && t2.deleted=0;",
+			"select distinct t2.id_assoc from \"%s_%s\" as t2 where %s && t2.deleted=0 order by t2.lineage;",
 			cluster_name, assoc_table, assoc_char);
 
 		DB_DEBUG(DB_ASSOC, mysql_conn->conn, "query\n%s", query);
@@ -2563,92 +2338,13 @@ extern int remove_common(mysql_conn_t *mysql_conn,
 	if (has_jobs)
 		goto just_update;
 
-	/*
-	 * Remove completely all the associations for this added in the last
-	 * day, since they are most likely nothing we really wanted in
-	 * the first place.
-	 */
-	rpc_version = get_cluster_version(mysql_conn, cluster_name);
-	if (rpc_version < SLURM_23_11_PROTOCOL_VERSION) {
-		query = xstrdup_printf("select id_assoc from \"%s_%s\" as t1 where "
-				       "creation_time>%ld && (%s);",
-				       cluster_name, assoc_table,
-				       day_old, loc_assoc_char);
+	query = xstrdup_printf("delete quick from \"%s_%s\" where creation_time>%ld && (%s);",
+			       cluster_name, assoc_table,
+			       day_old, loc_assoc_char);
 
-		DB_DEBUG(DB_ASSOC, mysql_conn->conn, "query\n%s", query);
-		if (!(result = mysql_db_query_ret(
-			      mysql_conn, query, 0))) {
-			xfree(query);
-			reset_mysql_conn(mysql_conn);
-			return SLURM_ERROR;
-		}
-		xfree(query);
-
-		while ((row = mysql_fetch_row(result))) {
-			MYSQL_RES *result2 = NULL;
-			MYSQL_ROW row2;
-			uint32_t lft;
-
-			/* we have to do this one at a time since the lft's and rgt's
-			   change. If you think you need to remove this make
-			   sure your new way can handle changing lft and rgt's
-			   in the association. */
-			xstrfmtcat(query,
-				   "SELECT lft, rgt, (rgt - lft + 1) "
-				   "FROM \"%s_%s\" WHERE id_assoc = %s;",
-				   cluster_name, assoc_table, row[0]);
-			DB_DEBUG(DB_ASSOC, mysql_conn->conn,
-				 "query\n%s", query);
-			if (!(result2 = mysql_db_query_ret(
-				      mysql_conn, query, 0))) {
-				xfree(query);
-				rc = SLURM_ERROR;
-				break;
-			}
-			xfree(query);
-			if (!(row2 = mysql_fetch_row(result2))) {
-				mysql_free_result(result2);
-				continue;
-			}
-
-			xstrfmtcat(query,
-				   "delete quick from \"%s_%s\" where "
-				   "lft between %s AND %s;",
-				   cluster_name, assoc_table, row2[0], row2[1]);
-
-			xstrfmtcat(query,
-				   "UPDATE \"%s_%s\" SET rgt = rgt - %s WHERE rgt > %s;"
-				   "UPDATE \"%s_%s\" SET "
-				   "lft = lft - %s WHERE lft > %s;",
-				   cluster_name, assoc_table, row2[2], row2[1],
-				   cluster_name, assoc_table, row2[2], row2[1]);
-
-			lft = slurm_atoul(row2[0]);
-			if (lft < smallest_lft)
-				smallest_lft = lft;
-
-			mysql_free_result(result2);
-
-			DB_DEBUG(DB_ASSOC, mysql_conn->conn,
-				 "query\n%s", query);
-			rc = mysql_db_query(mysql_conn, query);
-			xfree(query);
-			if (rc != SLURM_SUCCESS) {
-				error("couldn't remove assoc");
-				break;
-			}
-		}
-		mysql_free_result(result);
-
-	} else {
-		query = xstrdup_printf("delete quick from \"%s_%s\" where creation_time>%ld && (%s);",
-				       cluster_name, assoc_table,
-				       day_old, loc_assoc_char);
-
-		DB_DEBUG(DB_ASSOC, mysql_conn->conn, "query\n%s", query);
-		rc = mysql_db_query(mysql_conn, query);
-		xfree(query);
-	}
+	DB_DEBUG(DB_ASSOC, mysql_conn->conn, "query\n%s", query);
+	rc = mysql_db_query(mysql_conn, query);
+	xfree(query);
 
 	if (rc == SLURM_ERROR) {
 		reset_mysql_conn(mysql_conn);
@@ -2694,17 +2390,241 @@ just_update:
 		reset_mysql_conn(mysql_conn);
 	}
 
-	/* This already happened before, but we need to run it again
-	   since the first time we ran it we didn't know if we were
-	   going to remove the above associations.
-	*/
-	if ((rc == SLURM_SUCCESS) && (smallest_lft != 0xFFFFFFFF)) {
-		rc = as_mysql_get_modified_lfts(mysql_conn,
-						cluster_name,
-						smallest_lft);
-		if (rc != SLURM_SUCCESS) {
-			reset_mysql_conn(mysql_conn);
+	return rc;
+}
+
+static int _cluster_remove_from_assoc(void *x, void *arg)
+{
+	remove_common_args_t *args = arg;
+	args->cluster_name = x;
+
+	if ((*(args->rc_ptr) = _remove_from_assoc_table(args)))
+		return -1;
+	else
+		return 0;
+}
+
+/* Every option in assoc_char should have a 't1.' in front of it. */
+extern int remove_common(remove_common_args_t *args)
+{
+	xassert(args);
+	char *assoc_char = args->assoc_char;
+	char *cluster_name = args->cluster_name;
+	mysql_conn_t *mysql_conn = args->mysql_conn;
+	char *name_char = args->name_char;
+	time_t now = args->now;
+	char *table = args->table;
+	uint16_t type = args->type;
+	list_t *use_cluster_list = args->use_cluster_list;
+	char *user_name = args->user_name;
+
+	int rc = SLURM_SUCCESS;
+	char *query = NULL;
+	char *pos = NULL;
+	MYSQL_RES *result = NULL;
+	MYSQL_ROW row;
+	time_t day_old = now - DELETE_SEC_BACK;
+	bool has_jobs = false;
+	char *tmp_name_char = NULL;
+	bool cluster_centric = false;
+
+	/* figure out which tables we need to append the cluster name to */
+	if ((table == wckey_table) || (table == assoc_table))
+		cluster_centric = true;
+
+	if (((table == assoc_table) || (table == acct_table))) {
+		if (cluster_name) {
+			if (_check_is_def_acct_before_remove(args))
+				return SLURM_SUCCESS;
+		} else {
+			if (list_find_first(use_cluster_list,
+					    _cluster_check_def_acct, args))
+				return SLURM_SUCCESS;
 		}
+	}
+
+	/* If we have jobs associated with this we do not want to
+	 * really delete it for accounting purposes.  This is for
+	 * corner cases most of the time this won't matter.
+	 */
+	if ((table == acct_coord_table) || (table == res_table)
+	    || (table == clus_res_table) || (table == federation_table)) {
+		/* This doesn't apply for these tables since we are
+		 * only looking for association type tables.
+		 */
+	} else if (cluster_name) {
+		list_t *tmp_ret_list = args->ret_list;
+
+		/*
+		 * Only check for running/completed jobs in the relevant cluster
+		 */
+		/* first check to see if we are running jobs now */
+		if (_check_jobs_before_remove(args) || args->jobs_running)
+			return SLURM_SUCCESS;
+
+		/* now check to see if any jobs were ever run. */
+		args->ret_list = NULL;
+		has_jobs = _check_jobs_before_remove(args);
+		args->ret_list = tmp_ret_list;
+	} else {
+		list_t *tmp_ret_list = args->ret_list;
+		/* Check for running/completed jobs in any cluster */
+
+		/* Check for running jobs first */
+		list_for_each(use_cluster_list, _cluster_check_running_jobs,
+			      args);
+		if (args->jobs_running)
+			return SLURM_SUCCESS;
+
+		/* Check for any jobs now */
+		args->ret_list = NULL;
+
+		if (list_find_first(use_cluster_list, _cluster_check_any_jobs,
+				    args))
+			has_jobs = true;
+		args->ret_list = tmp_ret_list;
+	}
+
+	/* Don't delete cluster row if it has registered */
+	if (!has_jobs && (table == cluster_table)) {
+		char *reg_check = xstrdup_printf(
+			"select control_host from %s where name='%s'", table,
+			cluster_name);
+
+		DB_DEBUG(DB_ASSOC, mysql_conn->conn, "query\n%s", reg_check);
+		result = mysql_db_query_ret(mysql_conn, reg_check, 0);
+		xfree(reg_check);
+		if (!result) {
+			if (mysql_conn->flags & DB_CONN_FLAG_ROLLBACK)
+				mysql_db_rollback(mysql_conn);
+			list_flush(mysql_conn->update_list);
+			return SLURM_ERROR;
+		}
+		if ((row = mysql_fetch_row(result))) {
+			if (row[0] && row[0][0])
+				has_jobs = true;
+		}
+		mysql_free_result(result);
+	}
+
+	if (table != assoc_table) {
+		/* Completely remove all that is less than a day old */
+		if (!has_jobs) {
+			if (cluster_centric) {
+				query = xstrdup_printf(
+					"delete from \"%s_%s\" where "
+					"creation_time>%ld && (%s);",
+					cluster_name, table, day_old,
+					name_char);
+			} else {
+				query = xstrdup_printf(
+					"delete from %s where "
+					"creation_time>%ld && (%s);",
+					table, day_old, name_char);
+			}
+		}
+
+		if (cluster_centric) {
+			xstrfmtcatat(query, &pos,
+				     "update \"%s_%s\" set mod_time=%ld, "
+				     "deleted=1 where deleted=0 && (%s);",
+				     cluster_name, table, now, name_char);
+		} else if (table == federation_table) {
+			xstrfmtcatat(query, &pos,
+				     "update %s set "
+				     "mod_time=%ld, deleted=1, "
+				     "flags=DEFAULT "
+				     "where deleted=0 && (%s);",
+				     federation_table, now, name_char);
+		} else if (table == qos_table) {
+			xstrfmtcatat(
+				query, &pos,
+				"update %s set "
+				"mod_time=%ld, deleted=1, "
+				"grace_time=DEFAULT, "
+				"max_jobs_pa=DEFAULT, "
+				"max_jobs_per_user=DEFAULT, "
+				"max_jobs_accrue_pa=DEFAULT, "
+				"max_jobs_accrue_pu=DEFAULT, "
+				"min_prio_thresh=DEFAULT, "
+				"max_submit_jobs_pa=DEFAULT, "
+				"max_submit_jobs_per_user=DEFAULT, "
+				"max_tres_pa=DEFAULT, "
+				"max_tres_pj=DEFAULT, "
+				"max_tres_pn=DEFAULT, "
+				"max_tres_pu=DEFAULT, "
+				"max_tres_mins_pj=DEFAULT, "
+				"max_tres_run_mins_pa=DEFAULT, "
+				"max_tres_run_mins_pu=DEFAULT, "
+				"min_tres_pj=DEFAULT, "
+				"max_wall_duration_per_job=DEFAULT, "
+				"grp_jobs=DEFAULT, grp_submit_jobs=DEFAULT, "
+				"grp_jobs_accrue=DEFAULT, grp_tres=DEFAULT, "
+				"grp_tres_mins=DEFAULT, "
+				"grp_tres_run_mins=DEFAULT, "
+				"grp_wall=DEFAULT, "
+				"preempt=DEFAULT, "
+				"preempt_exempt_time=DEFAULT, "
+				"priority=DEFAULT, "
+				"usage_factor=DEFAULT, "
+				"usage_thres=DEFAULT, "
+				"limit_factor=DEFAULT "
+				"where deleted=0 && (%s);",
+				qos_table, now, name_char);
+		} else {
+			xstrfmtcatat(query, &pos,
+				     "update %s set mod_time=%ld, deleted=1 "
+				     "where deleted=0 && (%s);",
+				     table, now, name_char);
+		}
+	}
+
+	/*
+	 * If we are removing assocs use the assoc_char.
+	 * The assoc_char has the actual ids of the assocs which never change.
+	 */
+	if (type == DBD_REMOVE_ASSOCS && assoc_char)
+		tmp_name_char = slurm_add_slash_to_quotes(assoc_char);
+	else
+		tmp_name_char = slurm_add_slash_to_quotes(name_char);
+
+	if (cluster_centric)
+		xstrfmtcatat(query, &pos,
+			     "insert into %s (timestamp, action, name, "
+			     "actor, cluster) values "
+			     "(%ld, %d, '%s', '%s', '%s');",
+			     txn_table, now, type, tmp_name_char, user_name,
+			     cluster_name);
+	else
+		xstrfmtcatat(query, &pos,
+			     "insert into %s (timestamp, action, name, actor) "
+			     "values (%ld, %d, '%s', '%s');",
+			     txn_table, now, type, tmp_name_char, user_name);
+
+	xfree(tmp_name_char);
+
+	DB_DEBUG(DB_ASSOC, mysql_conn->conn, "query\n%s", query);
+	rc = mysql_db_query(mysql_conn, query);
+	xfree(query);
+	if (rc != SLURM_SUCCESS) {
+		reset_mysql_conn(mysql_conn);
+		return SLURM_ERROR;
+	}
+	if ((table != acct_table) &&
+	    (table != assoc_table) &&
+	    (table != cluster_table) &&
+	    (table != user_table))
+		return SLURM_SUCCESS;
+
+	args->day_old = day_old;
+	args->has_jobs = has_jobs;
+	args->rc_ptr = &rc;
+
+	if (cluster_name) {
+		rc = _remove_from_assoc_table(args);
+	} else {
+		(void) list_find_first(use_cluster_list,
+				       _cluster_remove_from_assoc, args);
 	}
 
 	return rc;
@@ -2765,7 +2685,7 @@ extern void mod_tres_str(char **out, char *mod, char *cur,
  * MySQL version 5.6.48 and 5.7.30 introduced a regression in the
  * implementation of CONCAT() that will lead to incorrect NULL values.
  *
- * We cannot safely work around this mistake without restructing our stored
+ * We cannot safely work around this mistake without restructuring our stored
  * procedures, and thus fatal() here to avoid a segfault.
  *
  * Test that concat() is working as expected, rather than trying to enumerate
@@ -2789,6 +2709,34 @@ static void _check_mysql_concat_is_sane(mysql_conn_t *mysql_conn)
 
 	if (!(row = mysql_fetch_row(result)) || !row[0])
 		fatal("MySQL concat() function is defective. Please upgrade to a fixed version. See https://bugs.mysql.com/bug.php?id=99485.");
+
+	mysql_free_result(result);
+}
+
+/*
+ * REGEXP_REPLACE() was not added to MySQL until version 8.0.4 and
+ * not added to MariaDB until version 10.0.5.
+ *
+ * Since this is required for certain queries, we need to pre-check
+ * with a test query.
+ *
+ */
+static void _check_regexp_replace(mysql_conn_t *mysql_conn)
+{
+	MYSQL_RES *result = NULL;
+	MYSQL_ROW row = NULL;
+	char *query = "SELECT REGEXP_REPLACE('abc123', '[0-9]+', 'X');";
+
+	/* Run a sanity query to confirm REGEXP_REPLACE actually works */
+	result = mysql_db_query_ret(mysql_conn, query, 0);
+	if (!result)
+		fatal("%s: null result from query `%s`", __func__, query);
+
+	if (mysql_num_rows(result) != 1)
+		fatal("%s: invalid results from query `%s`", __func__, query);
+
+	if (!(row = mysql_fetch_row(result)) || !row[0])
+		fatal("%s: REGEXP_REPLACE() appears defective on this server. Please upgrade to MariaDB >= 10.0.5 or MySQL >= 8.0.4.", __func__);
 
 	mysql_free_result(result);
 }
@@ -2870,6 +2818,51 @@ error:
 	return SLURM_ERROR;
 }
 
+/*
+ * Case-insensitive collations are assumed for the database. Not having them
+ * may lead to unexpected things happening including problems when removing
+ * users when PreserveCaseUser has been set.
+ *
+ * For now log exceptions to guide admins to the documentation and to aid in
+ * debugging collation issues. Future versions should enforce the assumption.
+ */
+static void _check_database_collations(mysql_conn_t *mysql_conn)
+{
+	/* suffix for case-insensitive collation names */
+	char *collation_ci_suffix = "_ci";
+	char *query = NULL;
+	MYSQL_RES *result = NULL;
+	MYSQL_ROW row = NULL;
+
+	/* check database default collation */
+	query = xstrdup_printf("select default_collation_name from information_schema.schemata where schema_name=database() and default_collation_name not like '%%%s'",
+			       collation_ci_suffix);
+
+	if (!(result = mysql_db_query_ret(mysql_conn, query, 0)))
+		fatal("%s: null result from query `%s`", __func__, query);
+	xfree(query);
+
+	if ((row = mysql_fetch_row(result)) && row[0]) {
+		error("Database has a case-sensitive default collation '%s'. Case-sensitive collations are not supported. Please refer to the Slurm accounting documentation for more details.",
+		      row[0]);
+	}
+	mysql_free_result(result);
+
+	/* check column collations */
+	query = xstrdup_printf("select count(*) from information_schema.columns where table_schema=database() and collation_name not like '%%%s'",
+			       collation_ci_suffix);
+
+	if (!(result = mysql_db_query_ret(mysql_conn, query, 0)))
+		fatal("%s: null result from query `%s`", __func__, query);
+	xfree(query);
+
+	if ((row = mysql_fetch_row(result)) && xstrcmp(row[0], "0")) {
+		error("Database tables have a total of %s columns with a case-sensitive collation. Case-sensitive collations are not supported. Please refer to the Slurm accounting documentation for more details.",
+		      row[0]);
+	}
+	mysql_free_result(result);
+}
+
 static int _send_ctld_update(void *x, void *arg)
 {
 	slurmdbd_conn_t *db_conn = x;
@@ -2933,6 +2926,7 @@ extern int init(void)
 		exit(as_mysql_print_dbver(mysql_conn));
 
 	_check_mysql_concat_is_sane(mysql_conn);
+	_check_regexp_replace(mysql_conn);
 	_check_database_variables(mysql_conn);
 
 	rc = _as_mysql_acct_check_tables(mysql_conn);
@@ -2949,6 +2943,13 @@ extern int init(void)
 			error("rollback failed");
 	}
 
+	_check_database_collations(mysql_conn);
+
+	/*
+	 * Build the list for the first time after _as_mysql_acct_check_tables()
+	 */
+	as_mysql_user_create_user_coords_list(mysql_conn);
+
 	/* If streaming replication was changed, restore to initial values */
 	mysql_db_restore_streaming_replication(mysql_conn);
 
@@ -2962,6 +2963,7 @@ extern int fini ( void )
 	slurm_rwlock_wrlock(&as_mysql_cluster_list_lock);
 	FREE_NULL_LIST(as_mysql_cluster_list);
 	FREE_NULL_LIST(as_mysql_total_cluster_list);
+	FREE_NULL_LIST(g_user_coords_list);
 	slurm_rwlock_unlock(&as_mysql_cluster_list_lock);
 	slurm_rwlock_destroy(&as_mysql_cluster_list_lock);
 	destroy_mysql_db_info(mysql_db_info);
@@ -3011,31 +3013,6 @@ extern int get_cluster_dims(mysql_conn_t *mysql_conn, char *cluster_name,
 	mysql_free_result(result);
 
 	return SLURM_SUCCESS;
-}
-
-extern uint32_t get_cluster_version(mysql_conn_t *mysql_conn,
-				    char *cluster_name)
-{
-	MYSQL_RES *result = NULL;
-	MYSQL_ROW row;
-	uint32_t rpc_version = 0;
-
-	char *query = xstrdup_printf(
-		"select rpc_version from %s where name='%s' && deleted=0",
-		cluster_table, cluster_name);
-
-	result = mysql_db_query_ret(mysql_conn, query, 0);
-	xfree(query);
-
-	if (!result)
-		return rpc_version;
-
-	if ((row = mysql_fetch_row(result)))
-		rpc_version = slurm_atoul(row[0]);
-
-	mysql_free_result(result);
-
-	return rpc_version;
 }
 
 extern void *acct_storage_p_get_connection(
@@ -3810,15 +3787,6 @@ extern int acct_storage_p_flush_jobs_on_cluster(
 extern int acct_storage_p_reconfig(mysql_conn_t *mysql_conn, bool dbd)
 {
 	return SLURM_SUCCESS;
-}
-
-extern int acct_storage_p_reset_lft_rgt(mysql_conn_t *mysql_conn, uid_t uid,
-					list_t *cluster_list)
-{
-	if (check_connection(mysql_conn) != SLURM_SUCCESS)
-		return ESLURM_DB_CONNECTION;
-
-	return as_mysql_reset_lft_rgt(mysql_conn, uid, cluster_list);
 }
 
 extern int acct_storage_p_get_stats(void *db_conn, bool dbd)

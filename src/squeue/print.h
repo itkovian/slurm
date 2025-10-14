@@ -124,6 +124,8 @@ int _print_job_name(job_info_t * job, int width, bool right_justify,
 			char* suffix);
 int _print_job_licenses(job_info_t * job, int width, bool right_justify,
 			char* suffix);
+int _print_job_licenses_alloc(job_info_t *job, int width, bool right,
+			      char *suffix);
 int _print_job_wckey(job_info_t * job, int width, bool right_justify,
 			char* suffix);
 int _print_job_user_id(job_info_t * job, int width, bool right_justify,
@@ -241,6 +243,8 @@ int _print_job_cpus_per_task(job_info_t * job, int width, bool right_justify,
 			     char* suffix);
 int _print_job_cpus_per_task(job_info_t * job, int width, bool right_justify,
 			     char* suffix);
+int _print_job_cron_flag(job_info_t *job, int width, bool right_justify,
+			 char *suffix);
 int _print_job_derived_ec(job_info_t * job, int width, bool right_justify,
 			  char* suffix);
 int _print_job_eligible_time(job_info_t * job, int width, bool right_justify,
@@ -289,6 +293,8 @@ int _print_job_resize_time(job_info_t * job, int width,
 			   bool right_justify, char* suffix);
 int _print_job_restart_cnt(job_info_t * job, int width,
 			   bool right_justify, char* suffix);
+int _print_job_segment_size(job_info_t *job, int width, bool right_justify,
+			    char *suffix);
 int _print_job_sockets_per_board(job_info_t * job, int width,
 				 bool right_justify, char* suffix);
 int _print_job_std_err(job_info_t * job, int width,
@@ -359,6 +365,12 @@ int _print_step_partition(job_step_info_t * step, int width,
 			  bool right_justify, char *suffix);
 int _print_step_prefix(job_step_info_t * step, int width,
 		       bool right_justify, char *suffix);
+int _print_step_std_err(job_step_info_t *step, int width, bool right_justify,
+			char *suffix);
+int _print_step_std_in(job_step_info_t *step, int width, bool right_justify,
+		       char *suffix);
+int _print_step_std_out(job_step_info_t *step, int width, bool right_justify,
+			char *suffix);
 int _print_step_user_id(job_step_info_t * step, int width,
 			bool right_justify, char *suffix);
 int _print_step_user_name(job_step_info_t * step, int width,

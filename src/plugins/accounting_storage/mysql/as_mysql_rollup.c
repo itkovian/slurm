@@ -404,7 +404,7 @@ static void _add_job_alloc_time_to_assoc(list_t *a_tres_list,
 	}
 }
 
-/* This will destroy the *loc_tres given after it is transfered */
+/* This will destroy the *loc_tres given after it is transferred */
 static void _transfer_loc_tres(list_t **loc_tres, local_id_usage_t *usage)
 {
 	if (!usage || !*loc_tres) {
@@ -635,7 +635,7 @@ static void _setup_cluster_tres_usage(mysql_conn_t *mysql_conn,
 	loc_tres->time_idle = loc_tres->total_time -
 		total_used - loc_tres->time_resv;
 	/* sanity check just to make sure we have a
-	 * legitimate time after we calulated
+	 * legitimate time after we calculated
 	 * idle/reserved time put extra in the over
 	 * commit field
 	 */
@@ -902,7 +902,7 @@ static local_cluster_usage_t *_setup_cluster_usage(mysql_conn_t *mysql_conn,
 	}
 
 	/* first get the events during this time.  All that is
-	 * except things with the maintainance flag set in the
+	 * except things with the maintenance flag set in the
 	 * state.  We handle those later with the reservations.
 	 */
 	query = xstrdup_printf("select %s from \"%s_%s\" where "
@@ -1127,6 +1127,7 @@ static int _setup_resv_usage(mysql_conn_t *mysql_conn,
 		"tres",
 		"time_start",
 		"time_end",
+		"time_force",
 		"unused_wall"
 	};
 	enum {
@@ -1137,6 +1138,7 @@ static int _setup_resv_usage(mysql_conn_t *mysql_conn,
 		RESV_REQ_TRES,
 		RESV_REQ_START,
 		RESV_REQ_END,
+		RESV_REQ_FORCE,
 		RESV_REQ_UNUSED,
 		RESV_REQ_COUNT
 	};
@@ -1185,6 +1187,7 @@ static int _setup_resv_usage(mysql_conn_t *mysql_conn,
 	while ((row = mysql_fetch_row(result))) {
 		time_t row_start = slurm_atoul(row[RESV_REQ_START]);
 		time_t row_end = slurm_atoul(row[RESV_REQ_END]);
+		time_t row_force = slurm_atoul(row[RESV_REQ_FORCE]);
 		int unused;
 		int resv_seconds;
 		time_t orig_start = row_start;
@@ -1199,6 +1202,9 @@ static int _setup_resv_usage(mysql_conn_t *mysql_conn,
 			unused = 0;
 		} else
 			unused = slurm_atoul(row[RESV_REQ_UNUSED]);
+
+		if (row_force > row_start)
+			row_start = row_force;
 
 		if (row_start <= curr_start)
 			row_start = curr_start;

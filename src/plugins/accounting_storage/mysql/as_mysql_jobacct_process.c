@@ -79,6 +79,7 @@ char *job_req_inx[] = {
 	"t1.restart_cnt",
 	"t1.id_resv",
 	"t3.resv_name",
+	"t1.resv_req",
 	"t1.id_user",
 	"t1.id_wckey",
 	"t1.job_db_inx",
@@ -107,13 +108,13 @@ char *job_req_inx[] = {
 	"t1.work_dir",
 	"t1.mcs_label",
 	"t4.batch_script",
+	"t1.segment_size",
 	"t1.std_err",
 	"t1.std_in",
 	"t1.std_out",
 	"t1.submit_line",
 	"t4.env_vars",
 	"t2.acct",
-	"t2.lft",
 	"t2.lineage",
 	"t2.user"
 };
@@ -145,6 +146,7 @@ enum {
 	JOB_REQ_RESTART_CNT,
 	JOB_REQ_RESVID,
 	JOB_REQ_RESV_NAME,
+	JOB_REQ_RESV_REQ,
 	JOB_REQ_UID,
 	JOB_REQ_WCKEYID,
 	JOB_REQ_DB_INX,
@@ -173,13 +175,13 @@ enum {
 	JOB_REQ_WORK_DIR,
 	JOB_REQ_MCS_LABEL,
 	JOB_REQ_SCRIPT,
+	JOB_REQ_SEGMENT_SIZE,
 	JOB_REQ_STDERR,
 	JOB_REQ_STDIN,
 	JOB_REQ_STDOUT,
 	JOB_REQ_SUBMIT_LINE,
 	JOB_REQ_ENV,
 	JOB_REQ_ACCOUNT,
-	JOB_REQ_LFT,
 	JOB_REQ_LINEAGE,
 	JOB_REQ_USER_NAME,
 	JOB_REQ_COUNT
@@ -193,6 +195,7 @@ char *step_req_inx[] = {
 	"t1.time_start",
 	"t1.time_end",
 	"t1.time_suspended",
+	"t1.timelimit",
 	"t1.step_name",
 	"t1.nodelist",
 	"t1.node_inx",
@@ -212,6 +215,10 @@ char *step_req_inx[] = {
 	"t1.req_cpufreq_min",
 	"t1.req_cpufreq",
 	"t1.req_cpufreq_gov",
+	"t1.cwd",
+	"t1.std_err",
+	"t1.std_in",
+	"t1.std_out",
 	"t1.submit_line",
 	"t1.tres_alloc",
 	"t1.tres_usage_in_max",
@@ -238,6 +245,7 @@ enum {
 	STEP_REQ_START,
 	STEP_REQ_END,
 	STEP_REQ_SUSPENDED,
+	STEP_REQ_TIMELIMIT,
 	STEP_REQ_NAME,
 	STEP_REQ_NODELIST,
 	STEP_REQ_NODE_INX,
@@ -257,6 +265,10 @@ enum {
 	STEP_REQ_REQ_CPUFREQ_MIN,
 	STEP_REQ_REQ_CPUFREQ_MAX,
 	STEP_REQ_REQ_CPUFREQ_GOV,
+	STEP_REQ_CWD,
+	STEP_REQ_STDERR,
+	STEP_REQ_STDIN,
+	STEP_REQ_STDOUT,
 	STEP_REQ_SUBMIT_LINE,
 	STEP_REQ_TRES,
 	STEP_REQ_TRES_USAGE_IN_MAX,
@@ -686,6 +698,8 @@ static int _cluster_get_jobs(mysql_conn_t *mysql_conn,
 
 		if (row[JOB_REQ_RESV_NAME] && row[JOB_REQ_RESV_NAME][0])
 			job->resv_name = xstrdup(row[JOB_REQ_RESV_NAME]);
+		if (row[JOB_REQ_RESV_REQ] && row[JOB_REQ_RESV_REQ][0])
+			job->resv_req = xstrdup(row[JOB_REQ_RESV_REQ]);
 
 		job->cluster = xstrdup(cluster_name);
 
@@ -704,9 +718,6 @@ static int _cluster_get_jobs(mysql_conn_t *mysql_conn,
 
 		if (row[JOB_REQ_UID])
 			job->uid = slurm_atoul(row[JOB_REQ_UID]);
-
-		if (row[JOB_REQ_LFT])
-			job->lft = slurm_atoul(row[JOB_REQ_LFT]);
 
 		if (row[JOB_REQ_LINEAGE])
 			job->lineage = xstrdup(row[JOB_REQ_LINEAGE]);
@@ -738,6 +749,8 @@ static int _cluster_get_jobs(mysql_conn_t *mysql_conn,
 		job->script = xstrdup(row[JOB_REQ_SCRIPT]);
 
 		job->env = xstrdup(row[JOB_REQ_ENV]);
+
+		job->segment_size = slurm_atoul(row[JOB_REQ_SEGMENT_SIZE]);
 
 		job->std_err = xstrdup(row[JOB_REQ_STDERR]);
 		job->std_in = xstrdup(row[JOB_REQ_STDIN]);
@@ -791,8 +804,7 @@ static int _cluster_get_jobs(mysql_conn_t *mysql_conn,
 				if (!(result2 = mysql_db_query_ret(
 					      mysql_conn,
 					      query, 0))) {
-					FREE_NULL_LIST(job_list);
-					job_list = NULL;
+					rc = SLURM_ERROR;
 					xfree(query);
 					break;
 				}
@@ -1056,6 +1068,9 @@ static int _cluster_get_jobs(mysql_conn_t *mysql_conn,
 			if ((int)step->elapsed < 0)
 				step->elapsed = 0;
 
+			step->timelimit =
+				slurm_atoul(step_row[STEP_REQ_TIMELIMIT]);
+
 			step->req_cpufreq_min = slurm_atoul(
 				step_row[STEP_REQ_REQ_CPUFREQ_MIN]);
 			step->req_cpufreq_max = slurm_atoul(
@@ -1070,6 +1085,11 @@ static int _cluster_get_jobs(mysql_conn_t *mysql_conn,
 			else
 				step->requid = slurm_atoul(
 					step_row[STEP_REQ_KILL_REQUID]);
+
+			step->cwd = xstrdup(step_row[STEP_REQ_CWD]);
+			step->std_err = xstrdup(step_row[STEP_REQ_STDERR]);
+			step->std_in = xstrdup(step_row[STEP_REQ_STDIN]);
+			step->std_out = xstrdup(step_row[STEP_REQ_STDOUT]);
 
 			step->submit_line =
 				xstrdup(step_row[STEP_REQ_SUBMIT_LINE]);

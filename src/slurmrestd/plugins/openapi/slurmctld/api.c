@@ -451,6 +451,19 @@ const openapi_path_binding_t openapi_paths[] = {
 				},
 				.query = DATA_PARSER_OPENAPI_RESERVATION_QUERY,
 			},
+			{
+				.method = HTTP_REQUEST_POST,
+				.tags = tags,
+				.summary = "create or update reservations",
+				.response = {
+					.type = DATA_PARSER_OPENAPI_RESERVATION_MOD_RESP,
+					.description = "reservation descriptions",
+				},
+				.body = {
+					.type = DATA_PARSER_RESERVATION_MOD_REQ,
+					.description = "reservation descriptions",
+				},
+			},
 			{0}
 		},
 		.flags = OP_FLAGS,
@@ -469,6 +482,37 @@ const openapi_path_binding_t openapi_paths[] = {
 				},
 				.parameters = DATA_PARSER_OPENAPI_RESERVATION_PARAM,
 				.query = DATA_PARSER_OPENAPI_RESERVATION_QUERY,
+			},
+			{
+				.method = HTTP_REQUEST_DELETE,
+				.tags = tags,
+				.summary = "delete a reservation",
+				.response = {
+					.type = DATA_PARSER_OPENAPI_RESP,
+					.description = "reservation delete request result",
+				},
+				.parameters = DATA_PARSER_OPENAPI_RESERVATION_PARAM,
+			},
+			{0}
+		},
+		.flags = OP_FLAGS,
+	},
+	{
+		.path = "/slurm/{data_parser}/reservation",
+		.callback = op_handler_reservation,
+		.methods = (openapi_path_binding_method_t[]) {
+			{
+				.method = HTTP_REQUEST_POST,
+				.tags = tags,
+				.summary = "create or update a reservation",
+				.response = {
+					.type = DATA_PARSER_OPENAPI_RESERVATION_MOD_RESP,
+					.description = "reservation description",
+				},
+				.body = {
+					.type = DATA_PARSER_RESERVATION_DESC_MSG,
+					.description = "reservation description",
+				},
 			},
 			{0}
 		},

@@ -51,7 +51,7 @@ typedef struct {
 	void (*post_func)();
 	slurmctld_lock_t locks;
 
-	/* Queue structual elements */
+	/* Queue structural elements */
 	const char *msg_name; /* automatically derived from msg_type */
 
 	bool skip_stale; /* skip processing if connection is stale */
@@ -59,6 +59,7 @@ typedef struct {
 	bool hard_drop; /* discard traffic if max_queued exceeded */
 	bool shutdown;
 	bool keep_msg; /* skip freeing msg and closing connection */
+	bool rl_exempt; /* ignore this rpc for rate limiting */
 
 	int yield_sleep; /* usec sleep between cycles when busy */
 	int interval; /* usec sleep after cycle if no longer busy */

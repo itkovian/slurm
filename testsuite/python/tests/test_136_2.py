@@ -3,7 +3,8 @@
 ############################################################################
 import atf
 import pytest
-import os
+
+# import os
 
 total_cores = 0
 available_cores = 0

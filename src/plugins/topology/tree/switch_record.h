@@ -63,13 +63,23 @@ typedef struct {
 
 #define SWITCH_NO_PARENT 0xffff
 
-extern switch_record_t *switch_record_table;  /* ptr to switch records */
-extern int switch_record_cnt;		/* size of switch_record_table */
-extern int switch_levels;               /* number of switch levels     */
+typedef struct {
+	switch_record_t *switch_table; /* ptr to switch records */
+	int switch_count; /* size of switch_table */
+	int switch_levels; /* number of switch levels     */
+} tree_context_t;
 
-/* Free all memory associated with switch_record_table structure */
-extern void switch_record_table_destroy(void);
+/* Free all memory associated with switch_table structure */
+extern void switch_record_table_destroy(tree_context_t *ctx);
 
-extern void switch_record_validate(void);
+extern int switch_record_validate(topology_ctx_t *tctx);
+
+extern void switch_record_update_block_config(topology_ctx_t *tctx, int idx);
+
+extern int switch_record_add_switch(topology_ctx_t *tctx, char *name,
+				    int parent);
+
+/* Return the index of a given switch name or -1 if not found */
+extern int switch_record_get_switch_inx(const char *name, tree_context_t *ctx);
 
 #endif

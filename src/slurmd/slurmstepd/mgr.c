@@ -266,24 +266,26 @@ static void _local_jobacctinfo_aggregate(
 {
 	int gpumem_pos = -1, gpuutil_pos = -1;
 
-	gpu_get_tres_pos(&gpumem_pos, &gpuutil_pos);
+	if (from->pid) {
+		gpu_get_tres_pos(&gpumem_pos, &gpuutil_pos);
 
-	/*
-	 * Here to make any sense for some variables we need to move the
-	 * Max to the total (i.e. Mem, VMem, gpumem, gpuutil) since the total
-	 * might be incorrect data, this way the total/ave will be of the Max
-	 * values.
-	 */
-	from->tres_usage_in_tot[TRES_ARRAY_MEM] =
-		from->tres_usage_in_max[TRES_ARRAY_MEM];
-	from->tres_usage_in_tot[TRES_ARRAY_VMEM] =
-		from->tres_usage_in_max[TRES_ARRAY_VMEM];
-	if (gpumem_pos != -1)
-		from->tres_usage_in_tot[gpumem_pos] =
-			from->tres_usage_in_max[gpumem_pos];
-	if (gpuutil_pos != -1)
-		from->tres_usage_in_tot[gpuutil_pos] =
-			from->tres_usage_in_max[gpuutil_pos];
+		/*
+		 * Here to make any sense for some variables we need to move the
+		 * Max to the total (i.e. Mem, VMem, gpumem, gpuutil) since the
+		 * total might be incorrect data, this way the total/ave will be
+		 * of the Max values.
+		 */
+		from->tres_usage_in_tot[TRES_ARRAY_MEM] =
+			from->tres_usage_in_max[TRES_ARRAY_MEM];
+		from->tres_usage_in_tot[TRES_ARRAY_VMEM] =
+			from->tres_usage_in_max[TRES_ARRAY_VMEM];
+		if (gpumem_pos != -1)
+			from->tres_usage_in_tot[gpumem_pos] =
+				from->tres_usage_in_max[gpumem_pos];
+		if (gpuutil_pos != -1)
+			from->tres_usage_in_tot[gpuutil_pos] =
+				from->tres_usage_in_max[gpuutil_pos];
+	}
 
 	/*
 	 * Here ave_watts stores the ave of the watts collected so store that
@@ -586,7 +588,6 @@ claim:
 static void
 _random_sleep(stepd_step_rec_t *step)
 {
-#if !defined HAVE_FRONT_END
 	long int delay = 0;
 	long int max = (slurm_conf.tcp_timeout * step->nnodes);
 
@@ -597,7 +598,6 @@ _random_sleep(stepd_step_rec_t *step)
 	debug3("delaying %ldms", delay);
 	if (poll(NULL, 0, delay) == -1)
 		error("%s: poll(): %m", __func__);
-#endif
 }
 
 /*
@@ -652,6 +652,8 @@ _send_exit_msg(stepd_step_rec_t *step, uint32_t *tid, int n, int status)
 		/* This should always be set to something else we have a bug. */
 		xassert(srun->protocol_version);
 		resp.protocol_version = srun->protocol_version;
+		resp.tls_cert = xstrdup(srun->tls_cert);
+
 		slurm_msg_set_r_uid(&resp, srun->uid);
 
 		if (_send_srun_resp_msg(&resp, step->nnodes) != SLURM_SUCCESS)
@@ -791,7 +793,7 @@ _one_step_complete_msg(stepd_step_rec_t *step, int first, int last)
 		 * On error AGAIN, send to the slurmctld instead.
 		 * This is useful if parent_rank gave up waiting for us
 		 * on stepd_wait_for_children_slurmstepd.
-		 * If it's just busy handeling our prev messages we'll need
+		 * If it's just busy handling our prev messages we'll need
 		 * to handle duplicated messages in both the parent and
 		 * slurmctld.
 		 */
@@ -961,7 +963,7 @@ static int _spank_user_child(void *arg)
 		_exit(-1);
 	}
 
-	if (spank_user(step) < 0)
+	if (spank_user(step))
 		rc = 1;
 
 	/*
@@ -986,7 +988,7 @@ static int _spank_task_post_fork_child(void *arg)
 		_exit(-1);
 	}
 
-	if (spank_task_post_fork(step, args->id) < 0)
+	if (spank_task_post_fork(step, args->id))
 		_exit(1);
 
 	_exit(0);
@@ -1002,7 +1004,7 @@ static int _spank_task_exit_child(void *arg)
 		_exit(-1);
 	}
 
-	if (spank_task_exit(step, args->id) < 0)
+	if (spank_task_exit(step, args->id))
 		_exit(1);
 
 	_exit(0);
@@ -1098,13 +1100,13 @@ fail:
 	 * fails.
 	 */
 	if ((spank_func == SPANK_STEP_TASK_EXIT) &&
-	    (spank_task_exit(step, id) < 0)) {
+	    (spank_task_exit(step, id))) {
 		rc = SLURM_ERROR;
 	} else if ((spank_func == SPANK_STEP_TASK_POST_FORK) &&
-		   (spank_task_post_fork(step, id) < 0)) {
+		   (spank_task_post_fork(step, id))) {
 		rc = SLURM_ERROR;
 	} else if ((spank_func == SPANK_STEP_USER_INIT) &&
-		   (spank_user(step) < 0)) {
+		   (spank_user(step))) {
 		rc = SLURM_ERROR;
 	}
 
@@ -1348,8 +1350,6 @@ static int _spawn_job_container(stepd_step_rec_t *step)
 	jobacctinfo_t *jobacct = NULL;
 	struct rusage rusage;
 	jobacct_id_t jobacct_id;
-	int status = 0;
-	pid_t pid;
 	int rc = SLURM_SUCCESS;
 	uint32_t jobid = step->step_id.job_id;
 
@@ -1359,11 +1359,11 @@ static int _spawn_job_container(stepd_step_rec_t *step)
 	}
 
 	debug2("%s: Before call to spank_init()", __func__);
-	if (spank_init(step) < 0) {
+	if ((rc = spank_init(step))) {
 		error("%s: Plugin stack initialization failed.", __func__);
 		/* let the slurmd know we actually are done with the setup */
-		close_slurmd_conn(SLURM_PLUGIN_NAME_INVALID);
-		return SLURM_PLUGIN_NAME_INVALID;
+		close_slurmd_conn(rc);
+		return rc;
 	}
 	debug2("%s: After call to spank_init()", __func__);
 
@@ -1400,6 +1400,7 @@ static int _spawn_job_container(stepd_step_rec_t *step)
 		 * in /tmp from inside the job.
 		 */
 		if (_need_join_container()) {
+			pid_t pid;
 			int to_parent[2] = {-1, -1};
 
 			if (pipe(to_parent) < 0) {
@@ -1444,59 +1445,11 @@ x11_fail:
 		      step->x11_xauthority);
 	}
 
-	pid = fork();
-	if (pid == 0) {
-		sigset_t sigset;
-		setpgid(0, 0);
-		setsid();
-		set_oom_adj(0);	/* the tasks may be killed by OOM */
-		acct_gather_profile_g_child_forked();
-
-		/*
-		 * Mask all signals (except SIGTERM) to prevent the sleep
-		 * process from being inadvertently killed by sbatch or salloc
-		 * --signal options. If the sleep process dies then the extern
-		 * step terminates, which would break X11, pam_slurm_adopt or
-		 * stepmgr making the job to fail.
-		 */
-		sigfillset(&sigset);
-		sigdelset(&sigset, SIGTERM);
-		sigprocmask(SIG_BLOCK, &sigset, NULL);
-
-		/*
-		 * Need to exec() something for proctrack/linuxproc to
-		 * work, it will not keep a process named "slurmstepd"
-		 */
-		execl(SLEEP_CMD, "sleep", "100000000", NULL);
-		error("execl: %m");
-		sleep(1);
-		_exit(0);
-	} else if (pid < 0) {
-		rc = errno;
-		error("fork: %m");
-		set_job_state(step, SLURMSTEPD_STEP_ENDING);
-		/* let the slurmd know we actually are done with the setup */
-		close_slurmd_conn(rc);
-		goto fail1;
-	}
-
-	step->pgid = pid;
-
-	if ((rc = proctrack_g_add(step, pid)) != SLURM_SUCCESS) {
-		error("%s: %ps unable to add pid %d to the proctrack plugin",
-		      __func__, &step->step_id, pid);
-		killpg(pid, SIGKILL);
-		kill(pid, SIGKILL);
-		/* let the slurmd know we actually are done with the setup */
-		close_slurmd_conn(rc);
-		goto fail1;
-	}
-
 	jobacct_id.nodeid = step->nodeid;
 	jobacct_id.taskid = step->nodeid; /* Treat node ID as global task ID */
 	jobacct_id.step = step;
 	jobacct_gather_set_proctrack_container_id(step->cont_id);
-	jobacct_gather_add_task(pid, &jobacct_id, 1);
+	jobacct_gather_add_task(0, &jobacct_id, 1);
 
 	set_job_state(step, SLURMSTEPD_STEP_RUNNING);
 	if (!slurm_conf.job_acct_gather_freq)
@@ -1533,17 +1486,12 @@ x11_fail:
 	 */
 	close_slurmd_conn(rc);
 
-	while ((wait4(pid, &status, 0, &rusage) < 0) && (errno == EINTR)) {
-		;	       /* Wait until above process exits from signal */
-	}
-
 	slurm_mutex_lock(&step->state_mutex);
 	while ((step->state < SLURMSTEPD_STEP_CANCELLED)) {
 		slurm_cond_wait(&step->state_cond, &step->state_mutex);
 	}
 	join_extern_threads();
 	slurm_mutex_unlock(&step->state_mutex);
-
 	/* Wait for all steps other than extern (this one) to complete */
 	if (!pause_for_job_completion(jobid, MAX(slurm_conf.kill_wait, 5),
 				      true)) {
@@ -1552,14 +1500,13 @@ x11_fail:
 
 	/* remove all tracked tasks */
 	while ((jobacct = jobacct_gather_remove_task(0))) {
-		jobacctinfo_setinfo(jobacct,
-				    JOBACCT_DATA_RUSAGE, &rusage,
-				    SLURM_PROTOCOL_VERSION);
+		if (jobacct->pid)
+			jobacctinfo_setinfo(jobacct, JOBACCT_DATA_RUSAGE,
+					    &rusage, SLURM_PROTOCOL_VERSION);
 		step->jobacct->energy.consumed_energy = 0;
 		_local_jobacctinfo_aggregate(step->jobacct, jobacct);
 		jobacctinfo_destroy(jobacct);
 	}
-	acct_gather_profile_g_task_end(pid);
 	step_complete.rank = step->nodeid;
 	acct_gather_profile_endpoll();
 	acct_gather_profile_g_node_step_end();
@@ -1608,7 +1555,7 @@ fail1:
 	conmgr_add_work_fifo(_x11_signal_handler, step);
 
 	debug2("%s: Before call to spank_fini()", __func__);
-	if (spank_fini(step) < 0)
+	if (spank_fini(step))
 		error("spank_fini failed");
 	debug2("%s: After call to spank_fini()", __func__);
 
@@ -1666,7 +1613,7 @@ job_manager(stepd_step_rec_t *step)
 
 	/*
 	 * Set oom_score_adj of this slurmstepd to -1000 to avoid OOM killing
-	 * us. If we were killed at this pont due to other steps OOMing, no
+	 * us. If we were killed at this point due to other steps OOMing, no
 	 * cleanup would happen, leaving for example cgroup stray directories if
 	 * cgroup plugins were initialized.
 	 */
@@ -1714,9 +1661,8 @@ job_manager(stepd_step_rec_t *step)
 		return _spawn_job_container(step);
 
 	debug2("Before call to spank_init()");
-	if (spank_init(step) < 0) {
+	if ((rc = spank_init(step))) {
 		error ("Plugin stack initialization failed.");
-		rc = SLURM_PLUGIN_NAME_INVALID;
 		goto fail1;
 	}
 	debug2("After call to spank_init()");
@@ -1883,6 +1829,11 @@ fail2:
 	 */
 	while (stepd_send_pending_exit_msgs(step)) {;}
 
+	debug2("Before call to spank_fini()");
+	if (spank_fini(step))
+		error("spank_fini failed");
+	debug2("After call to spank_fini()");
+
 	/*
 	 * This just cleans up all of the PAM state in case rc == 0
 	 * which means _fork_all_tasks performs well.
@@ -1891,12 +1842,6 @@ fail2:
 	 */
 	if (!rc)
 		pam_finish();
-
-	debug2("Before call to spank_fini()");
-	if (spank_fini (step)  < 0) {
-		error ("spank_fini failed");
-	}
-	debug2("After call to spank_fini()");
 
 fail1:
 	/* If interactive job startup was abnormal,
@@ -1956,7 +1901,7 @@ static int _pre_task_child_privileged(
 		setwd = 1;
 	}
 
-	if (spank_task_privileged(step, taskid) < 0)
+	if (spank_task_privileged(step, taskid))
 		return error("spank_task_init_privileged failed");
 
 	/* sp->gid_list should already be initialized */
@@ -2193,12 +2138,6 @@ _fork_all_tasks(stepd_step_rec_t *step, bool *io_initialized)
 		error("Failed to invoke task plugins: one of task_p_pre_setuid functions returned error");
 		return SLURM_ERROR;
 	}
-
-	/*
-	 * Create hwloc xml file here to avoid threading issues later.
-	 * This has to be done after task_g_pre_setuid().
-	 */
-	xcpuinfo_hwloc_topo_load(NULL, conf->hwloc_xml, false);
 
 	/*
 	 * Temporarily drop effective privileges, except for the euid.
@@ -2620,19 +2559,19 @@ _log_task_exit(unsigned long taskid, unsigned long pid, int status)
 static int
 _wait_for_any_task(stepd_step_rec_t *step, bool waitflag)
 {
-	stepd_step_task_info_t *t = NULL;
-	int rc = 0, status = 0;
 	pid_t pid;
 	int completed = 0;
-	jobacctinfo_t *jobacct = NULL;
-	struct rusage rusage;
-	char **tmp_env;
 	uint32_t task_offset = 0;
 
 	if (step->het_job_task_offset != NO_VAL)
 		task_offset = step->het_job_task_offset;
 	do {
-		pid = wait3(&status, waitflag ? 0 : WNOHANG, &rusage);
+		stepd_step_task_info_t *t = NULL;
+		int rc = 0;
+		jobacctinfo_t *jobacct = NULL;
+		char **tmp_env;
+
+		pid = proctrack_g_wait_for_any_task(step, &t, waitflag);
 		if (pid == -1) {
 			if (errno == ECHILD) {
 				debug("No child processes");
@@ -2654,7 +2593,7 @@ _wait_for_any_task(stepd_step_rec_t *step, bool waitflag)
 		jobacct = jobacct_gather_remove_task(pid);
 		if (jobacct) {
 			jobacctinfo_setinfo(jobacct,
-					    JOBACCT_DATA_RUSAGE, &rusage,
+					    JOBACCT_DATA_RUSAGE, &t->rusage,
 					    SLURM_PROTOCOL_VERSION);
 			/* Since we currently don't track energy
 			   usage per task (only per step).  We take
@@ -2674,11 +2613,12 @@ _wait_for_any_task(stepd_step_rec_t *step, bool waitflag)
 		acct_gather_profile_g_task_end(pid);
 		/*********************************************/
 
-		if ((t = job_task_info_by_pid(step, pid))) {
+		if (t) {
+			debug2("%s: found ended task with primary pid %d ",
+			       __func__, t->pid);
 			completed++;
-			_log_task_exit(t->gtid + task_offset, pid, status);
+			_log_task_exit(t->gtid + task_offset, pid, t->estatus);
 			t->exited  = true;
-			t->estatus = status;
 			step->envtp->procid = t->gtid + task_offset;
 			step->envtp->localid = t->id;
 			step->envtp->distribution = -1;
@@ -2953,13 +2893,8 @@ _send_launch_failure(launch_tasks_request_msg_t *msg, slurm_addr_t *cli, int rc,
 		return;
 	}
 
-#ifndef HAVE_FRONT_END
 	nodeid = nodelist_find(msg->complete_nodelist, conf->node_name);
 	name = xstrdup(conf->node_name);
-#else
-	nodeid = 0;
-	name = xstrdup(msg->complete_nodelist);
-#endif
 
 	/* Need to fetch the step uid to restrict the response appropriately */
 	cred = slurm_cred_get_args(msg->cred);
@@ -2975,6 +2910,7 @@ _send_launch_failure(launch_tasks_request_msg_t *msg, slurm_addr_t *cli, int rc,
 	resp_msg.data = &resp;
 	resp_msg.msg_type = RESPONSE_LAUNCH_TASKS;
 	resp_msg.protocol_version = protocol_version;
+	resp_msg.tls_cert = xstrdup(msg->alloc_tls_cert);
 	slurm_msg_set_r_uid(&resp_msg, launch_uid);
 
 	memcpy(&resp.step_id, &msg->step_id, sizeof(resp.step_id));
@@ -3008,6 +2944,7 @@ _send_launch_resp(stepd_step_rec_t *step, int rc)
 	resp_msg.protocol_version = srun->protocol_version;
 	resp_msg.data		= &resp;
 	resp_msg.msg_type	= RESPONSE_LAUNCH_TASKS;
+	resp_msg.tls_cert = xstrdup(srun->tls_cert);
 
 	memcpy(&resp.step_id, &step->step_id, sizeof(resp.step_id));
 
@@ -3212,7 +3149,7 @@ _become_user(stepd_step_rec_t *step, struct priv_state *ps)
  *
  * name IN: class of program (task prolog, task epilog, etc.),
  * path IN: pathname of program to run
- * job IN: slurd job structue, used to get uid, gid, and groups
+ * job IN: slurd job structure, used to get uid, gid, and groups
  * max_wait IN: maximum time to wait in seconds, -1 for no limit
  * env IN: environment variables to use on exec, sets minimal environment
  *	if NULL

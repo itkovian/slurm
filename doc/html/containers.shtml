@@ -267,11 +267,11 @@ namespace support</a> instead.</p>
 <pre>
 EnvExclude="^(SLURM_CONF|SLURM_CONF_SERVER)="
 RunTimeEnvExclude="^(SLURM_CONF|SLURM_CONF_SERVER)="
-OCIRunTimeQuery="sudo singularity oci state %n.%u.%j.%s.%t"
-OCIRunTimeCreate="sudo singularity oci create --bundle %b %n.%u.%j.%s.%t"
-OCIRunTimeStart="sudo singularity oci start %n.%u.%j.%s.%t"
-OCIRunTimeKill="sudo singularity oci kill %n.%u.%j.%s.%t"
-OCIRunTimeDelete="sudo singularity oci delete %n.%u.%j.%s.%t
+RunTimeQuery="sudo singularity oci state %n.%u.%j.%s.%t"
+RunTimeCreate="sudo singularity oci create --bundle %b %n.%u.%j.%s.%t"
+RunTimeStart="sudo singularity oci start %n.%u.%j.%s.%t"
+RunTimeKill="sudo singularity oci kill %n.%u.%j.%s.%t"
+RunTimeDelete="sudo singularity oci delete %n.%u.%j.%s.%t
 </pre>
 </p>
 
@@ -468,6 +468,14 @@ sbatch --wrap 'srun bash -c "--container $ABS_PATH_TO_BUNDLE cat /etc/*rel*"'
 </pre></li>
 </ul>
 
+<p><b>NOTE</b>: Commands run with the <code>--container</code> flag are resolved
+through PATH <i>before</i> they are sent to the container. If the container has
+a unique file structure, it may be necessary to give the full path to the
+command or specify <code>--export=NONE</code> to have the container define the
+PATH to be used:
+<pre>srun --container $ABS_PATH_TO_BUNDLE --export=NONE bash -c "cat /etc/*rel*"
+</pre></p>
+
 <h2 id="docker-scrun">Integration with Rootless Docker (Docker Engine v20.10+ & Slurm-23.02+)
 <a class="slurm_link" href="#docker-scrun"></a>
 </h2>
@@ -488,7 +496,7 @@ must be configured for site storage configuration.</li>
 	</a></li>
 <li><a href="scrun.html#SECTION_Example-%3CB%3Escrun.lua%3C/B%3E-scripts">
 	scrun.lua</a> must be present on any node where scrun may be run. The
-	example should be sufficent for most environments but paths should be
+	example should be sufficient for most environments but paths should be
 	modified to match available local storage.</li>
 <li><a href="oci.conf.html">oci.conf</a> must be present on any node where any
 	container job may be run. Example configurations for
@@ -581,7 +589,7 @@ driver</a>:
   "exec-root": "/path/to/shared/filesystem/user_name/exec/",
 }</pre>
 Any node expected to be able to run containers from Docker must have ability to
-atleast read the filesystem used. Full write privileges are suggested and will
+at least read the filesystem used. Full write privileges are suggested and will
 be required if changes to the container filesystem are desired.</li>
 
 <li>Configure dockerd to not setup network namespace, which will break scrun's
@@ -629,7 +637,7 @@ authentication.<pre>AuthType=auth/munge</pre></li>
 configuration.</li>
 <li><a href="scrun.html#SECTION_Example-%3CB%3Escrun.lua%3C/B%3E-scripts">
 	scrun.lua</a> must be present on any node where scrun may be run. The
-	example should be sufficent for most environments but paths should be
+	example should be sufficient for most environments but paths should be
 	modified to match available local storage.</li>
 <li><a href="oci.conf.html">oci.conf</a>
 	must be present on any node where any container job may be run.
@@ -739,7 +747,7 @@ pull_options = {use_hard_links = "true", enable_partial_images = "true"}
 [storage.options.vfs]
 ignore_chown_errors = "true"</pre>
 Any node expected to be able to run containers from Podman must have ability to
-atleast read the filesystem used. Full write privileges are suggested and will
+at least read the filesystem used. Full write privileges are suggested and will
 be required if changes to the container filesystem are desired.</li>
 <li> Verify Podman is using scrun:
 <pre>podman run hello-world
@@ -763,7 +771,7 @@ Error: allocating lock for new container: allocation failed; exceeded num_locks 
 </pre>
 <ol>
 	<li>Try renumbering:<pre>podman system renumber</pre></li>
-	<li>Try reseting all storage:<pre>podman system reset</pre></li>
+	<li>Try resetting all storage:<pre>podman system reset</pre></li>
 </ol>
 </li>
 </ul>
@@ -946,7 +954,5 @@ Overview slides of Sarus are
 </p>
 
 <hr size=4 width="100%">
-
-<p style="text-align:center;">Last modified 27 November 2024</p>
 
 <!--#include virtual="footer.txt"-->

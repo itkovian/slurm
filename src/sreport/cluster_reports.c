@@ -195,6 +195,15 @@ static int _set_assoc_cond(int *start, int argc, char **argv,
 	if (cluster_flag)
 		slurm_addto_char_list(assoc_cond->cluster_list, cluster_flag);
 
+	/*
+	 * Each user association totals up all partition based association usage
+	 * by default. Requesting only non-partition based associations will
+	 * eliminate duplicate results.
+	 */
+	if (!assoc_cond->partition_list)
+		assoc_cond->partition_list = list_create(xfree_ptr);
+	list_append(assoc_cond->partition_list, xstrdup(""));
+
 	for (i = (*start); i < argc; i++) {
 		end = parse_option_end(argv[i]);
 		if (!end)
@@ -687,7 +696,7 @@ static list_t *_get_cluster_list(int argc, char **argv, uint32_t *total_time,
 		       "----------------------------------------\n");
 	}
 
-	/* Mutliply the time range by fed_cluster_count since the federation
+	/* Multiply the time range by fed_cluster_count since the federation
 	 * represents time for all clusters in the federation and not just one
 	 * cluster. This gives correct reported time for a federated utilization
 	 * report. */
@@ -1667,10 +1676,10 @@ extern int cluster_utilization(int argc, char **argv)
 	if (!list_count(format_list)) {
 		if (tres_str) {
 			slurm_addto_char_list(format_list,
-					      "Cl,TresName,al,d,planned,i,res,rep");
+					      "Cl,TresName,al,d,PLNDDown,i,res,rep");
 		} else {
 			slurm_addto_char_list(format_list,
-					      "Cl,al,d,planned,i,res,rep");
+					      "Cl,al,d,PLNDDown,i,res,rep");
 		}
 	}
 

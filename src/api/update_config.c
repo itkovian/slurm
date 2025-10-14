@@ -50,18 +50,6 @@
 static int _slurm_update (void * data, slurm_msg_type_t msg_type);
 
 /*
- * slurm_update_front_end - issue RPC to a front_end node's configuration per
- *	request, only usable by user root
- * IN front_end_msg - description of front_end node updates
- * RET SLURM_SUCCESS on success, otherwise return SLURM_ERROR with errno set
- */
-int
-slurm_update_front_end (update_front_end_msg_t * front_end_msg)
-{
-	return _slurm_update ((void *) front_end_msg, REQUEST_UPDATE_FRONT_END);
-}
-
-/*
  * slurm_update_job - issue RPC to a job's configuration per request,
  *	only usable by user root or (for some parameters) the job's owner
  * IN job_msg - description of job updates
@@ -107,7 +95,7 @@ tryagain:
 	{
 		reroute_msg_t *rr_msg = (reroute_msg_t *)resp_msg.data;
 
-		/* Don't expect mutliple hops but in the case it does
+		/* Don't expect multiple hops but in the case it does
 		 * happen, free the previous rr cluster_rec. */
 		if (working_cluster_rec &&
 		    working_cluster_rec != save_working_cluster_rec)

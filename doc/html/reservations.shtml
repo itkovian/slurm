@@ -74,7 +74,7 @@ started when that resource is unavailable.
 One could create a reservation for all of those licenses in order to perform
 maintenance on that resource.
 In the example below, we create a reservation for 1000 licenses with the name
-of "lustre". 
+of "lustre".
 If there are a total of 1000 lustre licenses configured in this cluster,
 this reservation will prevent any job specifying the need for a lustre
 license from being scheduled on this cluster during this reservation.</p>
@@ -223,6 +223,12 @@ ReservationName=test StartTime=2020-08-28T11:07:09
    MaxStartDelay=(null)
 </pre>
 
+<p>Prior to version 25.05, if a reservation used user- or group-based access
+controls and slurmctld ever failed to validate the user(s) or group(s), it would
+delete the reservation. With the release of 25.05 this behavior was changed to
+leave the reservation in place and wait for the users/groups to be able to be
+validated again, making reservations resilient to temporary validation outages.</p>
+
 <h2 id="use">Reservation Use<a class="slurm_link" href="#use"></a></h2>
 
 <p>The reservation create response includes the reservation's name.
@@ -241,7 +247,7 @@ sbatch: Submitted batch job 65540
 
 <p>Note that use of a reservation does not alter a job's priority, but it
 does act as an enhancement to the job's priority.
-Any job with a reservation is considered for scheduling to resources 
+Any job with a reservation is considered for scheduling to resources
 before any other job in the same Slurm partition (queue) not associated
 with a reservation.</p>
 
@@ -529,7 +535,4 @@ considering the initiation of jobs.
 This will prevent the initiation of some jobs which would complete execution
 before a reservation given fewer jobs to time-slice with.</p>
 
-<p style="text-align: center;">Last modified 02 August 2024</p>
-
 <!--#include virtual="footer.txt"-->
-

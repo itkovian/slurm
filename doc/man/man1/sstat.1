@@ -1,4 +1,4 @@
-.TH sstat "1" "Slurm Commands" "September 2024" "Slurm Commands"
+.TH sstat "1" "Slurm Commands" "Slurm 25.05" "Slurm Commands"
 
 .SH "NAME"
 sstat \- Display the status information of a running job/step.
@@ -125,6 +125,11 @@ and MaxRSSTask shows which task it is.
 .RS
 
 .TP
+\f3AllocTRES\fP
+Allocated TRES of all tasks in job.
+.IP
+
+.TP
 \f3AveCPU\fP
 Average (system + user) CPU time of all tasks in job.
 .IP
@@ -162,8 +167,8 @@ Average Virtual Memory size of all tasks in job.
 .TP
 \f3ConsumedEnergy\fP
 Total energy consumed by all tasks in job, in joules.
-Note: Only in case of exclusive job allocation this value 
-reflects the jobs' real energy consumption. 
+Note: Only in case of exclusive job allocation this value
+reflects the jobs' real energy consumption.
 .IP
 
 .TP

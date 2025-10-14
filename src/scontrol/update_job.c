@@ -1053,7 +1053,7 @@ extern int scontrol_update_job(int argc, char **argv)
 			update_cnt++;
 		} else if (!xstrncasecmp(tag, "UserID", MAX(taglen, 3))) {
 			uid_t user_id = SLURM_AUTH_NOBODY;
-			if (uid_from_string(val, &user_id) < 0) {
+			if (uid_from_string(val, &user_id) != SLURM_SUCCESS) {
 				exit_code = 1;
 				fprintf (stderr, "Invalid UserID: %s\n", val);
 				fprintf (stderr, "Request aborted\n");
@@ -1077,6 +1077,9 @@ extern int scontrol_update_job(int argc, char **argv)
 			update_cnt++;
 		} else if (!xstrncasecmp(tag, "MailUser", MAX(taglen, 5))) {
 			job_msg.mail_user = val;
+			update_cnt++;
+		} else if (!xstrncasecmp(tag, "MCSLabel", MAX(taglen, 4))) {
+			job_msg.mcs_label = val;
 			update_cnt++;
 		} else {
 			exit_code = 1;

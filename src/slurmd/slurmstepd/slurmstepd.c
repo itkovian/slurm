@@ -59,6 +59,7 @@
 #include "src/common/slurm_rlimits_info.h"
 #include "src/common/spank.h"
 #include "src/common/stepd_api.h"
+#include "src/common/stepd_proxy.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
 
@@ -68,6 +69,7 @@
 #include "src/interfaces/acct_gather_profile.h"
 #include "src/interfaces/auth.h"
 #include "src/interfaces/cgroup.h"
+#include "src/interfaces/conn.h"
 #include "src/interfaces/gpu.h"
 #include "src/interfaces/gres.h"
 #include "src/interfaces/hash.h"
@@ -106,9 +108,9 @@ static void _step_cleanup(stepd_step_rec_t *step, slurm_msg_t *msg, int rc);
 static void _process_cmdline(int argc, char **argv);
 
 static pthread_mutex_t cleanup_mutex = PTHREAD_MUTEX_INITIALIZER;
-static bool cleanup = false;
 
 /* global variable */
+uint32_t slurm_daemon = IS_SLURMSTEPD;
 slurmd_conf_t * conf;
 extern char  ** environ;
 
@@ -162,6 +164,7 @@ static void *_rpc_thread(void *data)
 	msg.flags = agent_arg_ptr->msg_flags;
 	msg.msg_type = agent_arg_ptr->msg_type;
 	msg.protocol_version = agent_arg_ptr->protocol_version;
+	msg.tls_cert = xstrdup(agent_arg_ptr->tls_cert);
 
 	slurm_msg_set_r_uid(&msg, agent_arg_ptr->r_uid);
 
@@ -178,7 +181,7 @@ static void *_rpc_thread(void *data)
 		msg.address = *agent_arg_ptr->addr;
 
 		if (msg.msg_type == SRUN_JOB_COMPLETE) {
-			_send_msg_maybe(&msg);
+			slurm_send_msg_maybe(&msg);
 		} else if (slurm_send_only_node_msg(&msg) && !srun_agent) {
 			error("failed to send message type %d/%s",
 			      msg.msg_type, rpc_num2string(msg.msg_type));
@@ -291,15 +294,7 @@ static void _init_stepd_stepmgr(void)
 	_setup_stepmgr_nodes();
 	node_features_build_active_list(job_step_ptr);
 
-	if (!xstrcasecmp(slurm_conf.accounting_storage_type,
-			 "accounting_storage/slurmdbd")) {
-		xfree(slurm_conf.accounting_storage_type);
-		slurm_conf.accounting_storage_type =
-			xstrdup("accounting_storage/ctld_relay");
-		acct_storage_g_init();
-	} else {
-			acct_storage_g_init();
-	}
+	acct_storage_g_init();
 
 	slurm_thread_create(&time_limit_thread_id, _step_time_limit_thread,
 			    NULL);
@@ -358,6 +353,48 @@ static void _on_sigttin(conmgr_callback_args_t conmgr_args, void *arg)
 	debug("Caught SIGTTIN. Ignoring.");
 }
 
+static void _main_thread_init()
+{
+	sigset_t mask;
+
+	/*
+	 * Block SIGCHLD so that we can create a SIGCHLD signalfd later. This
+	 * needs to be done before creating any threads so that all threads
+	 * inherit this signal mask. This ensures that no threads consume
+	 * SIGCHLD, and that a SIGCHLD signalfd can reliably catch SIGCHLD.
+	 */
+	sigemptyset(&mask);
+	sigaddset(&mask, SIGCHLD);
+	if (pthread_sigmask(SIG_BLOCK, &mask, NULL) == -1) {
+		error("pthread_sigmask() failed: %m");
+	}
+}
+
+/*
+ * Validate step record before initialization
+ */
+static int _validate_step(stepd_step_rec_t *step)
+{
+	/*
+	 * --wait-for-children is only supported by the cgroup proctrack plugin.
+	 */
+	if ((step->flags & LAUNCH_WAIT_FOR_CHILDREN)) {
+		char *cgroup_version = autodetect_cgroup_version();
+		if (!xstrstr(slurm_conf.proctrack_type, "proctrack/cgroup")) {
+			error("Failed to validate step %ps. --wait-for-children requires proctrack/cgroup plugin.",
+			      &step->step_id);
+			return SLURM_ERROR;
+		}
+		if (!xstrcmp(cgroup_version, "cgroup/v1")) {
+			error("Failed to validate step %ps. --wait-for-children is not supported in cgroup/v1. cgroup/v2 is required.",
+			      &step->step_id);
+			return SLURM_ERROR;
+		}
+	}
+
+	return SLURM_SUCCESS;
+}
+
 extern int main(int argc, char **argv)
 {
 	log_options_t lopts = LOG_OPTS_INITIALIZER;
@@ -366,6 +403,8 @@ extern int main(int argc, char **argv)
 	stepd_step_rec_t *step;
 	int rc = SLURM_SUCCESS;
 	bool only_mem = true;
+
+	_main_thread_init();
 
 	_process_cmdline(argc, argv);
 
@@ -399,9 +438,12 @@ extern int main(int argc, char **argv)
 		fatal("%s: Unable to reliably execute %s",
 		      __func__, conf->stepd_loc);
 
-	/* Create the stepd_step_rec_t, mostly from info in a
-	 * launch_tasks_request_msg_t or a batch_job_launch_msg_t */
-	if (!(step = _step_setup(cli, msg))) {
+	/*
+	 * Create the stepd_step_rec_t, mostly from info in a
+	 * launch_tasks_request_msg_t or a batch_job_launch_msg_t, and validate
+	 * the new stepd_step_rec_t before continuing
+	 */
+	if (!(step = _step_setup(cli, msg)) || _validate_step(step)) {
 		rc = SLURM_ERROR;
 		_send_fail_to_slurmd(STDOUT_FILENO, rc);
 		goto ending;
@@ -445,15 +487,17 @@ extern int main(int argc, char **argv)
 
 	only_mem = false;
 ending:
-	rc = stepd_cleanup(msg, step, cli, rc, only_mem);
+	stepd_cleanup(msg, step, cli, rc, only_mem);
 
 	conmgr_fini();
 	return rc;
 }
 
-extern int stepd_cleanup(slurm_msg_t *msg, stepd_step_rec_t *step,
-			 slurm_addr_t *cli, int rc, bool only_mem)
+extern void stepd_cleanup(slurm_msg_t *msg, stepd_step_rec_t *step,
+			  slurm_addr_t *cli, int rc, bool only_mem)
 {
+	static bool cleanup = false;
+
 	time_limit_thread_shutdown = true;
 
 	slurm_mutex_lock(&cleanup_mutex);
@@ -470,6 +514,14 @@ extern int stepd_cleanup(slurm_msg_t *msg, stepd_step_rec_t *step,
 		batch_finish(step, rc); /* sends batch complete message */
 
 	/*
+	 * We must de-register any error handlers that might call
+	 * slurm_kill_jobstep() before auth_setuid_lock(), or we could get
+	 * deadlocked with an incoming PMIx error, as PMIx_Finalize() will
+	 * wait for any thread.
+	 */
+	mpi_fini();
+
+	/*
 	 * Call auth_setuid_lock after sending the batch_finish message as in
 	 * there the auth_g_create function is called, and that function uses
 	 * the lock. The lock is needed to ensure that the privileges are not
@@ -484,16 +536,11 @@ extern int stepd_cleanup(slurm_msg_t *msg, stepd_step_rec_t *step,
 		slurm_thread_join(step->msgid);
 	}
 
-	mpi_fini();
-
 	/*
 	 * This call is only done once per step since stepd_cleanup is protected
-	 * agains multiple and concurrent calls.
+	 * against multiple and concurrent calls.
 	 */
 	proctrack_g_destroy(step->cont_id);
-
-	if (conf->hwloc_xml)
-		(void)remove(conf->hwloc_xml);
 
 	if (step->container)
 		cleanup_container(step);
@@ -534,7 +581,6 @@ extern int stepd_cleanup(slurm_msg_t *msg, stepd_step_rec_t *step,
 	xfree(conf->block_map_inv);
 	xfree(conf->conffile);
 	xfree(conf->hostname);
-	xfree(conf->hwloc_xml);
 	xfree(conf->logfile);
 	xfree(conf->node_name);
 	xfree(conf->node_topo_addr);
@@ -558,8 +604,6 @@ done:
 	}
 
 	conmgr_request_shutdown();
-
-	return rc;
 }
 
 extern void close_slurmd_conn(int rc)
@@ -744,10 +788,10 @@ static int _handle_spank_mode(int argc, char **argv)
 	      mode, jobid, uid, gid);
 
 	if (!xstrcmp(mode, "prolog")) {
-		if (spank_job_prolog(jobid, uid, gid) < 0)
+		if (spank_job_prolog(jobid, uid, gid))
 			return -1;
 	} else if (!xstrcmp(mode, "epilog")) {
-		if (spank_job_epilog(jobid, uid, gid) < 0)
+		if (spank_job_epilog(jobid, uid, gid))
 			return -1;
 	} else {
 		error("Invalid mode %s specified!", mode);
@@ -871,11 +915,6 @@ _init_from_slurmd(int sock, char **argv, slurm_addr_t **_cli,
 	/* receive conf from slurmd */
 	if (!(conf = _read_slurmd_conf_lite(sock)))
 		fatal("Failed to read conf from slurmd");
-
-	/*
-	 * Init select plugin after reading slurm.conf and before receiving step
-	 */
-	select_g_init(false);
 
 	slurm_conf.slurmd_port = conf->port;
 	slurm_conf.slurmd_syslog_debug = conf->syslog_debug;
@@ -1029,6 +1068,7 @@ _init_from_slurmd(int sock, char **argv, slurm_addr_t **_cli,
 	 * Init all plugins after receiving the slurm.conf from the slurmd.
 	 */
 	if ((auth_g_init() != SLURM_SUCCESS) ||
+	    (conn_g_init() != SLURM_SUCCESS) ||
 	    (cgroup_g_init() != SLURM_SUCCESS) ||
 	    (hash_g_init() != SLURM_SUCCESS) ||
 	    (acct_gather_conf_init() != SLURM_SUCCESS) ||
@@ -1068,16 +1108,6 @@ _init_from_slurmd(int sock, char **argv, slurm_addr_t **_cli,
 	    (mpi_conf_recv_stepd(sock) != SLURM_SUCCESS))
 		fatal("Failed to read MPI conf from slurmd");
 
-	if (!conf->hwloc_xml) {
-		conf->hwloc_xml = xstrdup_printf("%s/hwloc_topo_%u.%u",
-						 conf->spooldir,
-						 step_id.job_id,
-						 step_id.step_id);
-		if (step_id.step_het_comp != NO_VAL)
-			xstrfmtcat(conf->hwloc_xml, ".%u",
-				   step_id.step_het_comp);
-		xstrcat(conf->hwloc_xml, ".xml");
-	}
 	/*
 	 * Swap the field to the srun client version, which will eventually
 	 * end up stored as protocol_version in srun_info_t. It's a hack to
@@ -1088,6 +1118,14 @@ _init_from_slurmd(int sock, char **argv, slurm_addr_t **_cli,
 
 	*_cli = cli;
 	*_msg = msg;
+
+	/*
+	 * When using TLS, slurmstepd messages bound to other nodes are relayed
+	 * through slurmd. This caches slurmd spooldir so that slurmstepd can
+	 * get the address for slurmd's local unix socket.
+	 */
+	if (tls_enabled())
+		stepd_proxy_stepd_init(conf->spooldir);
 
 	return 1;
 
@@ -1168,7 +1206,7 @@ static stepd_step_rec_t *_step_setup(slurm_addr_t *cli, slurm_msg_t *msg)
 	}
 
 	/*
-	 * Add slurmd node topology informations to job env array
+	 * Add slurmd node topology information to job env array
 	 */
 	env_array_overwrite(&step->env,"SLURM_TOPOLOGY_ADDR",
 			    conf->node_topo_addr);

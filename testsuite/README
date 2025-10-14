@@ -45,6 +45,11 @@ SlurmBuildDir:   Slurm Build Directory (where you ran configure and make from)
 SlurmInstallDir: Slurm Installation Directory (value of --prefix configure option)
 SlurmConfigDir:  Slurm Configuration Directory (compiled-in location of slurm.conf)
 
+If you are running in local-config, if the user running the test is SlurmUser or
+AdminLevel, you better specify an unprivileged user to run the test commands as:
+
+SlurmTestUser: Linux user without AdminLevel in the local-config Slurm.
+
 Tips:
 
 * the include and exclude filters use (perl 5) regular expressions
@@ -141,7 +146,7 @@ test1.70   Validates that srun standard input and output work with binary files.
 test1.71   Validates that srun exit code matches that of a test program.
 test1.72   Validate JobAcctGatherFrequency configuration parameter is enforced.
 test1.73   Validate OverTimeLimit configuration parameter is enforced.
-test1.74   Validate MaxNode and GrpNode limit enforcment with QoS & association.
+test1.74   Validate MaxNode and GrpNode limit enforcement with QoS & association.
 test1.75   Test that --cpu-freq is enforced when using non-numeric values
 test1.76   Test that --cpu-freq sets min-max:gov
 test1.77   Test that job name specified at the command line overwrites
@@ -493,7 +498,7 @@ test17.34  Test of --core-spec option.
 test17.36  Test that the OverSubscribe option in partitions is enforced.
 test17.37  Validate that afternotok dependency is enforced.
 test17.38  Test for sbatch --signal.
-test17.39  Validate dependecy OR option.
+test17.39  Validate dependency OR option.
 test17.40  Test of --thread-spec option.
 test17.41  Validate that sbatch, srun, salloc return partition error message.
 test17.42  Test of sbatch --wait option.
@@ -699,7 +704,6 @@ test36.4   bsub wrapper test
 
 test37.#   Testing of federations.
 ==================================
-test37.1   sacctmgr operations on clusters and federations.
 test37.2   Validate federated clusters return federated job ids.
 test37.3   scontrol show federations
 test37.4   federated job submission
@@ -733,7 +737,7 @@ test38.10  Test of scontrol update job for heterogeneous jobs.
 test38.11  Validate sbcast for a hetjob allocation.
 test38.12  Test label option with hetjob allocation.
 test38.13  Test that job arrays of hetjobs are rejected
-test38.14  Test hetjob step output file labling and different commands/args
+test38.14  Test hetjob step output file labeling and different commands/args
 test38.15  Test for proper handling of different rank end times
 test38.16  Test environment variables needed by MPI
 test38.17  Test for multiple, out of order srun --het-group options
@@ -791,6 +795,8 @@ test_102_2   /commands/sacctmgr/test_--usage.py
 test_102_3   /commands/sacctmgr/test_--json.py
 test_102_4   /commands/sacctmgr/test_ping.py
 test_102_5   sacctmgr create qos/account job and then delete account/qos
+test_102_6   Test sacctmgr remove account
+test_102_8   Test sacctmgr remove multiple qos
 
 test_103_#   Testing of salloc options.
 =======================================
@@ -851,6 +857,7 @@ test_112_1   /commands/slurmrestd/test_options.py
 test_112_40  Test slurmrestd v0.0.40 requests
 test_112_41  Test slurmrestd v0.0.41 requests
 test_112_42  Test slurmrestd v0.0.42 requests
+test_112_43  Test slurmrestd v0.0.43 requests
 
 test_113_#   Testing of sprio options.
 ======================================
@@ -1053,6 +1060,7 @@ test_146_1   Test MaxCPUsPerNode and MaxCPUsPerSocket
 test_147_#   Testing SPANK.
 ===========================
 test_147_1   Test SPANK contained when SlurmdParameters=contain_spank
+test_147_2   Test SPANK remote spank init failure modes
 
 test_149_#   Testing AcctGatherProfileType.
 ===========================================

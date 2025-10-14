@@ -66,6 +66,7 @@
 #include "src/interfaces/burst_buffer.h"
 #include "src/interfaces/priority.h"
 #include "src/interfaces/select.h"
+#include "src/interfaces/topology.h"
 
 #include "src/slurmctld/gang.h"
 #include "src/slurmctld/groups.h"
@@ -101,7 +102,6 @@ uint16_t part_max_priority = DEF_PART_MAX_PRIORITY;
 static int    _dump_part_state(void *x, void *arg);
 static void   _list_delete_part(void *part_entry);
 static int    _match_part_ptr(void *part_ptr, void *key);
-static buf_t *_open_part_state_file(char **state_file);
 static void   _unlink_free_nodes(bitstr_t *old_bitmap, part_record_t *part_ptr);
 
 static int _calc_part_tres(void *x, void *arg)
@@ -411,29 +411,6 @@ static int _dump_part_state(void *x, void *arg)
 	return 0;
 }
 
-/* Open the partition state save file, or backup if necessary.
- * state_file IN - the name of the state save file used
- * RET the file description to read from or error code
- */
-static buf_t *_open_part_state_file(char **state_file)
-{
-	buf_t *buf;
-
-	*state_file = xstrdup(slurm_conf.state_save_location);
-	xstrcat(*state_file, "/part_state");
-	buf = create_mmap_buf(*state_file);
-	if (!buf) {
-		error("Could not open partition state file %s: %m",
-		      *state_file);
-	} else 	/* Success */
-		return buf;
-
-	error("NOTE: Trying backup partition state save file. Information may be lost!");
-	xstrcat(*state_file, ".old");
-	buf = create_mmap_buf(*state_file);
-	return buf;
-}
-
 /*
  * load_all_part_state - load the partition state from file, recover on
  *	slurmctld restart. execute this after loading the configuration
@@ -460,17 +437,14 @@ extern int load_all_part_state(uint16_t reconfig_flags)
 	}
 
 	/* read the file */
-	lock_state_files();
-	buffer = _open_part_state_file(&state_file);
+	buffer = state_save_open("part_state", &state_file);
 	if (!buffer) {
 		info("No partition state file (%s) to recover",
 		     state_file);
 		xfree(state_file);
-		unlock_state_files();
 		return ENOENT;
 	}
 	xfree(state_file);
-	unlock_state_files();
 
 	safe_unpackstr(&ver_str, buffer);
 	debug3("Version string in part_state header is %s", ver_str);
@@ -639,6 +613,10 @@ extern int load_all_part_state(uint16_t reconfig_flags)
 		xfree(part_ptr->orig_nodes);
 		part_ptr->orig_nodes = part_rec_state->nodes;
 		part_rec_state->nodes = NULL;
+
+		xfree(part_ptr->topology_name);
+		part_ptr->topology_name = part_rec_state->topology_name;
+		part_rec_state->topology_name = NULL;
 
 		part_record_delete(part_rec_state);
 	}
@@ -998,7 +976,56 @@ extern buf_t *pack_all_part(uint16_t show_flags, uid_t uid,
  */
 void pack_part(part_record_t *part_ptr, buf_t *buffer, uint16_t protocol_version)
 {
-	if (protocol_version >= SLURM_24_05_PROTOCOL_VERSION) {
+	if (protocol_version >= SLURM_25_05_PROTOCOL_VERSION) {
+		if (default_part_loc == part_ptr)
+			part_ptr->flags |= PART_FLAG_DEFAULT;
+		else
+			part_ptr->flags &= (~PART_FLAG_DEFAULT);
+
+		packstr(part_ptr->name, buffer);
+		pack32(part_ptr->cpu_bind, buffer);
+		pack32(part_ptr->grace_time, buffer);
+		pack32(part_ptr->max_time, buffer);
+		pack32(part_ptr->default_time, buffer);
+		pack32(part_ptr->max_nodes_orig, buffer);
+		pack32(part_ptr->min_nodes_orig, buffer);
+		pack32(part_ptr->total_nodes, buffer);
+		pack32(part_ptr->total_cpus, buffer);
+		pack64(part_ptr->def_mem_per_cpu, buffer);
+		pack32(part_ptr->max_cpus_per_node, buffer);
+		pack32(part_ptr->max_cpus_per_socket, buffer);
+		pack64(part_ptr->max_mem_per_cpu, buffer);
+
+		pack32(part_ptr->flags, buffer);
+		pack16(part_ptr->max_share, buffer);
+		pack16(part_ptr->over_time_limit, buffer);
+		pack16(part_ptr->preempt_mode, buffer);
+		pack16(part_ptr->priority_job_factor, buffer);
+		pack16(part_ptr->priority_tier, buffer);
+		pack16(part_ptr->state_up, buffer);
+		pack16(part_ptr->cr_type, buffer);
+		pack16(part_ptr->resume_timeout, buffer);
+		pack16(part_ptr->suspend_timeout, buffer);
+		pack32(part_ptr->suspend_time, buffer);
+
+		packstr(part_ptr->allow_accounts, buffer);
+		packstr(part_ptr->allow_groups, buffer);
+		packstr(part_ptr->allow_alloc_nodes, buffer);
+		packstr(part_ptr->allow_qos, buffer);
+		packstr(part_ptr->qos_char, buffer);
+		packstr(part_ptr->alternate, buffer);
+		packstr(part_ptr->deny_accounts, buffer);
+		packstr(part_ptr->deny_qos, buffer);
+		packstr(part_ptr->nodes, buffer);
+		packstr(part_ptr->nodesets, buffer);
+		pack_bit_str_hex(part_ptr->node_bitmap, buffer);
+		packstr(part_ptr->billing_weights_str, buffer);
+		packstr(part_ptr->topology_name, buffer);
+		packstr(part_ptr->tres_fmt_str, buffer);
+		(void) slurm_pack_list(part_ptr->job_defaults_list,
+				       job_defaults_pack, buffer,
+				       protocol_version);
+	} else if (protocol_version >= SLURM_24_05_PROTOCOL_VERSION) {
 		if (default_part_loc == part_ptr)
 			part_ptr->flags |= PART_FLAG_DEFAULT;
 		else
@@ -1309,27 +1336,6 @@ extern int update_part(update_part_msg_t * part_desc, bool create_flag)
 		info("%s: clearing exclusive_topo for partition %s", __func__,
 		     part_desc->name);
 		part_ptr->flags &= (~PART_FLAG_EXCLUSIVE_TOPO);
-	}
-
-	if (part_desc->flags & PART_FLAG_DEFAULT) {
-		if (default_part_name == NULL) {
-			info("%s: setting default partition to %s", __func__,
-			     part_desc->name);
-		} else if (xstrcmp(default_part_name, part_desc->name) != 0) {
-			info("%s: changing default partition from %s to %s",
-			     __func__, default_part_name, part_desc->name);
-		}
-		xfree(default_part_name);
-		default_part_name = xstrdup(part_desc->name);
-		default_part_loc = part_ptr;
-		part_ptr->flags |= PART_FLAG_DEFAULT;
-	} else if ((part_desc->flags & PART_FLAG_DEFAULT_CLR) &&
-		   (default_part_loc == part_ptr)) {
-		info("%s: clearing default partition from %s", __func__,
-		     part_desc->name);
-		xfree(default_part_name);
-		default_part_loc = NULL;
-		part_ptr->flags &= (~PART_FLAG_DEFAULT);
 	}
 
 	if (part_desc->flags & PART_FLAG_LLN) {
@@ -1803,8 +1809,56 @@ extern int update_part(update_part_msg_t * part_desc, bool create_flag)
 		part_ptr->node_bitmap = bit_alloc(node_record_count);
 	}
 
+	if (part_desc->topology_name) {
+		char *old_topo_name = part_ptr->topology_name;
+
+		info("%s: Setting Topology to %s for partition %s",
+		      __func__, part_desc->topology_name, part_desc->name);
+
+		if (part_desc->topology_name[0] == '\0') {
+			part_ptr->topology_name = NULL;
+			part_ptr->topology_idx = 0;
+			xfree(old_topo_name);
+		} else {
+			part_ptr->topology_name = part_desc->topology_name;
+
+			if (set_part_topology_idx(part_ptr, NULL)) {
+				error("Failed to set part %s's topology to %s",
+				      part_ptr->name, part_ptr->topology_name);
+				part_ptr->topology_name = old_topo_name;
+				error_code = ESLURM_REQUESTED_TOPO_CONFIG_UNAVAILABLE;
+			} else {
+				part_desc->topology_name = NULL;
+				xfree(old_topo_name);
+			}
+		}
+	}
+
 fini:
 	if (error_code == SLURM_SUCCESS) {
+		if (part_desc->flags & PART_FLAG_DEFAULT) {
+			if (default_part_name == NULL) {
+				info("%s: setting default partition to %s",
+				     __func__, part_desc->name);
+			} else if (xstrcmp(default_part_name,
+					   part_desc->name) != 0) {
+				info("%s: changing default partition from %s to %s",
+				     __func__, default_part_name,
+				     part_desc->name);
+			}
+			xfree(default_part_name);
+			default_part_name = xstrdup(part_desc->name);
+			default_part_loc = part_ptr;
+			part_ptr->flags |= PART_FLAG_DEFAULT;
+		} else if ((part_desc->flags & PART_FLAG_DEFAULT_CLR) &&
+			   (default_part_loc == part_ptr)) {
+			info("%s: clearing default partition from %s", __func__,
+			     part_desc->name);
+			xfree(default_part_name);
+			default_part_loc = NULL;
+			part_ptr->flags &= (~PART_FLAG_DEFAULT);
+		}
+
 		gs_reconfig();
 		select_g_reconfigure();		/* notify select plugin too */
 	} else if (create_flag) {
@@ -2256,4 +2310,17 @@ extern char *part_list_to_xstr(list_t *list)
 	list_for_each(list, _foreach_part_name_to_xstr, &part_names);
 
 	return part_names.names;
+}
+
+extern int set_part_topology_idx(void *x, void *arg)
+{
+	part_record_t *part_ptr = x;
+
+	if (!part_ptr->topology_name)
+		part_ptr->topology_idx = 0;
+	else if (topology_g_get(TOPO_DATA_TCTX_IDX, part_ptr->topology_name,
+				&(part_ptr->topology_idx)))
+		return -1;
+
+	return 0;
 }

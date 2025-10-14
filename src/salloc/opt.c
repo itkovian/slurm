@@ -225,6 +225,7 @@ env_vars_t env_vars[] = {
   { "SALLOC_QOS", 'q' },
   { "SALLOC_REQ_SWITCH", LONG_OPT_SWITCH_REQ },
   { "SALLOC_RESERVATION", LONG_OPT_RESERVATION },
+  { "SALLOC_SEGMENT_SIZE", LONG_OPT_SEGMENT_SIZE },
   { "SALLOC_SIGNAL", LONG_OPT_SIGNAL },
   { "SALLOC_SPREAD_JOB", LONG_OPT_SPREAD_JOB },
   { "SALLOC_THREAD_SPEC", LONG_OPT_THREAD_SPEC },
@@ -824,7 +825,7 @@ static void _help(void)
 "                              this deadline (start > (deadline - time[-min]))\n"
 "  -D, --chdir=path            change working directory\n"
 "      --get-user-env          used by Moab.  See srun man page.\n"
-"      --gres=list             required generic resources\n"
+"      --gres=list             required generic resources per node\n"
 "      --gres-flags=opts       flags related to GRES management\n"
 "  -H, --hold                  submit job in held state\n"
 "  -I, --immediate[=secs]      exit if resources not available in \"secs\"\n"

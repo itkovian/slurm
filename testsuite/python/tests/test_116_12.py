@@ -5,7 +5,8 @@ import atf
 import pytest
 import re
 import os
-from pathlib import Path
+
+# from pathlib import Path
 
 ERROR_TYPE = "error"
 OUTPUT_TYPE = "output"
@@ -125,7 +126,7 @@ def test_output_error_formatting(tmp_path):
     fpc.remove_file(file_err)
 
     # Test %u puts the user name in the file name
-    user_name = atf.get_user_name()
+    user_name = atf.properties["test-user"]
     file_out = fpc.create_file_path("u")
     atf.run_job(f"--output={file_out} -N1 -O id")
     file_out = fpc.get_tmp_file()
@@ -174,7 +175,6 @@ do
     srun -O --output={file_out} true
 done""",
     )
-    os.chmod(file_in, 0o0777)
     job_id = atf.submit_job_sbatch(f"-N{node_count} --output /dev/null {str(file_in)}")
     atf.wait_for_job_state(job_id, "DONE")
     tmp_dir_list = os.listdir(tmp_path)
@@ -191,7 +191,6 @@ do
     srun -O --error={file_err} true
 done""",
     )
-    os.chmod(file_in, 0o0777)
     job_id = atf.submit_job_sbatch(f"-N{node_count} --output /dev/null {str(file_in)}")
     atf.wait_for_job_state(job_id, "DONE")
     tmp_dir_list = os.listdir(tmp_path)
@@ -287,8 +286,8 @@ done""",
 
     # Test %a puts the Job array ID in the file name
     array_size = 2
-    file_out = fpc.create_file_path(f"A.%a")
-    file_err = fpc.create_file_path(f"A.%a", ERROR_TYPE)
+    file_out = fpc.create_file_path("A.%a")
+    file_err = fpc.create_file_path("A.%a", ERROR_TYPE)
     file_in = tmp_path / "file_in.A.a.input"
     atf.make_bash_script(file_in, f"""srun -O --output={file_out} hostname""")
     os.chmod(file_in, 0o0777)

@@ -402,7 +402,8 @@ spawn_resp_send_to_fd(spawn_resp_t *resp, int fd)
 /* 	cmd = TREE_CMD_SPAWN_RESP; */
 /* 	pack16(cmd, buf); */
 	spawn_resp_pack(resp, buf);
-	rc = slurm_msg_sendto(fd, get_buf_data(buf), get_buf_offset(buf));
+	rc = slurm_msg_sendto_socket(fd, get_buf_data(buf),
+				     get_buf_offset(buf));
 	FREE_NULL_BUFFER(buf);
 
 	return rc;
@@ -708,7 +709,7 @@ spawn_job_wait(void)
 	for (i = 1; i < spawn_seq; i ++) {
 		if (!spawned_srun_pids[i])
 			continue;
-		/* terminte it */
+		/* terminate it */
 		kill(spawned_srun_pids[i], SIGTERM);
 	}
 }

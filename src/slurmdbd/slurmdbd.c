@@ -59,6 +59,7 @@
 #include "src/common/log.h"
 #include "src/common/proc_args.h"
 #include "src/common/read_config.h"
+#include "src/common/run_in_daemon.h"
 #include "src/common/sluid.h"
 #include "src/common/slurm_rlimits_info.h"
 #include "src/common/slurm_time.h"
@@ -70,19 +71,21 @@
 
 #include "src/interfaces/accounting_storage.h"
 #include "src/interfaces/auth.h"
+#include "src/interfaces/conn.h"
 #include "src/interfaces/hash.h"
-#include "src/interfaces/tls.h"
 
 #include "src/slurmdbd/backup.h"
 #include "src/slurmdbd/proc_req.h"
 #include "src/slurmdbd/read_config.h"
 #include "src/slurmdbd/rpc_mgr.h"
 
+uint32_t slurm_daemon = IS_SLURMDBD;
+
 /* Global variables */
 time_t shutdown_time = 0;		/* when shutdown request arrived */
 list_t *registered_clusters = NULL;
 pthread_mutex_t rpc_mutex = PTHREAD_MUTEX_INITIALIZER;
-slurmdb_stats_rec_t rpc_stats;
+slurmdb_stats_rec_t *rpc_stats = NULL;
 pthread_mutex_t registered_lock = PTHREAD_MUTEX_INITIALIZER;
 
 /* Local variables */
@@ -92,18 +95,14 @@ static int    setwd = 0;		/* change working directory -s  */
 static log_options_t log_opts = 	/* Log to stderr & syslog */
 	LOG_OPTS_INITIALIZER;
 static int	 new_nice = 0;
-static pthread_t rpc_handler_thread = 0; /* thread ID for RPC hander */
-static pthread_t rollup_handler_thread = 0; /* thread ID for rollup hander */
-static pthread_t commit_handler_thread = 0; /* thread ID for commit hander */
+static pthread_t rpc_handler_thread = 0; /* thread ID for RPC handler */
+static pthread_t rollup_handler_thread = 0; /* thread ID for rollup handler */
+static pthread_t commit_handler_thread = 0; /* thread ID for commit handler */
+static pthread_cond_t rollup_handler_cond = PTHREAD_COND_INITIALIZER;
 static pthread_mutex_t rollup_lock = PTHREAD_MUTEX_INITIALIZER;
-static bool running_rollup = 0;
-static bool running_commit = 0;
 static bool restart_backup = false;
-static bool reset_lft_rgt = 0;
-static list_t *lft_rgt_list = NULL;
 
 /* Local functions */
-static void  _commit_handler_cancel(void);
 static void *_commit_handler(void *no_data);
 static void  _daemonize(void);
 static void  _init_config(void);
@@ -112,7 +111,6 @@ static void  _kill_old_slurmdbd(void);
 static void  _parse_commandline(int argc, char **argv);
 static void  _restart_self(int argc, char **argv);
 static void  _request_registrations(void *db_conn);
-static void  _rollup_handler_cancel(void);
 static void *_rollup_handler(void *no_data);
 static int   _find_rollup_stats_in_list(void *x, void *key);
 static int   _send_slurmctld_register_req(slurmdb_cluster_rec_t *cluster_rec);
@@ -135,18 +133,13 @@ static void _on_sigterm(conmgr_callback_args_t conmgr_args, void *arg)
 
 static void _on_sigchld(conmgr_callback_args_t conmgr_args, void *arg)
 {
-	info("Caught SIGCHLD. Ignoring");
+	debug5("Caught SIGCHLD. Ignoring");
 }
 
 static void _on_sigquit(conmgr_callback_args_t conmgr_args, void *arg)
 {
 	info("Terminate signal SIGQUIT received");
 	shutdown_threads();
-}
-
-static void _on_sigtstp(conmgr_callback_args_t conmgr_args, void *arg)
-{
-	info("Caught SIGTSTP. Ignoring");
 }
 
 static void _on_sighup(conmgr_callback_args_t conmgr_args, void *arg)
@@ -157,7 +150,7 @@ static void _on_sighup(conmgr_callback_args_t conmgr_args, void *arg)
 
 static void _on_sigusr1(conmgr_callback_args_t conmgr_args, void *arg)
 {
-	debug("Caught SIGUSR1. Ignoring.");
+	debug5("Caught SIGUSR1. Ignoring.");
 }
 
 static void _on_sigusr2(conmgr_callback_args_t conmgr_args, void *arg)
@@ -168,12 +161,17 @@ static void _on_sigusr2(conmgr_callback_args_t conmgr_args, void *arg)
 
 static void _on_sigpipe(conmgr_callback_args_t conmgr_args, void *arg)
 {
-	info("Caught SIGPIPE. Ignoring.");
+	debug5("Caught SIGPIPE. Ignoring.");
 }
 
 static void _on_sigxcpu(conmgr_callback_args_t conmgr_args, void *arg)
 {
-	debug("Caught SIGXCPU. Ignoring.");
+	debug5("Caught SIGXCPU. Ignoring.");
+}
+
+static void _on_sigalrm(conmgr_callback_args_t conmgr_args, void *arg)
+{
+	debug5("Caught SIGALRM. Ignoring");
 }
 
 static void _on_sigalrm(conmgr_callback_args_t conmgr_args, void *arg)
@@ -187,7 +185,6 @@ static void _register_signal_handlers(void)
 	conmgr_add_work_signal(SIGTERM, _on_sigterm, NULL);
 	conmgr_add_work_signal(SIGCHLD, _on_sigchld, NULL);
 	conmgr_add_work_signal(SIGQUIT, _on_sigquit, NULL);
-	conmgr_add_work_signal(SIGTSTP, _on_sigtstp, NULL);
 	conmgr_add_work_signal(SIGHUP, _on_sighup, NULL);
 	conmgr_add_work_signal(SIGUSR1, _on_sigusr1, NULL);
 	conmgr_add_work_signal(SIGUSR2, _on_sigusr2, NULL);
@@ -249,7 +246,7 @@ int main(int argc, char **argv)
 	if (hash_g_init() != SLURM_SUCCESS) {
 		fatal("failed to initialize hash plugin");
 	}
-	if (tls_g_init() != SLURM_SUCCESS) {
+	if (conn_g_init() != SLURM_SUCCESS) {
 		fatal("Failed to initialize tls plugin");
 	}
 	if (acct_storage_g_init() != SLURM_SUCCESS) {
@@ -289,19 +286,6 @@ int main(int argc, char **argv)
 		error("Problem getting cache of data");
 		acct_storage_g_close_connection(&db_conn);
 		goto end_it;
-	}
-
-	if (reset_lft_rgt) {
-		int rc;
-		if ((rc = acct_storage_g_reset_lft_rgt(db_conn,
-		                                       slurm_conf.slurm_user_id,
-		                                       lft_rgt_list))
-		    != SLURM_SUCCESS)
-			fatal("Error when trying to reset lft and rgt's");
-
-		if (acct_storage_g_commit(db_conn, 1))
-			fatal("commit failed, meaning reset failed");
-		FREE_NULL_LIST(lft_rgt_list);
 	}
 
 	if (gethostname(node_name_long, sizeof(node_name_long)))
@@ -401,10 +385,11 @@ end_it:
 	acct_storage_g_fini();
 	auth_g_fini();
 	hash_g_fini();
-	tls_g_fini();
+	conn_g_fini();
 	free_slurmdbd_conf();
 	slurm_mutex_lock(&rpc_mutex);
-	slurmdb_free_stats_rec_members(&rpc_stats);
+	slurmdb_destroy_stats_rec(rpc_stats);
+	rpc_stats = NULL;
 	slurm_mutex_unlock(&rpc_mutex);
 
 	conmgr_fini();
@@ -417,7 +402,7 @@ extern void *reconfig(void *arg)
 	conmgr_quiesce(__func__);
 
 	read_slurmdbd_conf();
-	assoc_mgr_set_missing_uids();
+	assoc_mgr_set_missing_uids(NULL);
 	acct_storage_g_reconfig(NULL, 0);
 	_update_logging(false);
 
@@ -435,7 +420,12 @@ extern void handle_rollup_stats(list_t *rollup_stats_list,
 	xassert(type < DBD_ROLLUP_COUNT);
 
 	slurm_mutex_lock(&rpc_mutex);
-	rollup_stats = rpc_stats.dbd_rollup_stats;
+	if (!rpc_stats) {
+		slurm_mutex_unlock(&rpc_mutex);
+		return;
+	}
+
+	rollup_stats = rpc_stats->dbd_rollup_stats;
 
 	/*
 	 * This is stats for the last DBD rollup.  Here we use 'type' as 0 for
@@ -457,10 +447,10 @@ extern void handle_rollup_stats(list_t *rollup_stats_list,
 	itr = list_iterator_create(rollup_stats_list);
 	while ((rollup_stats = list_next(itr))) {
 		if (!(rpc_rollup_stats =
-		      list_find_first(rpc_stats.rollup_stats,
-				      _find_rollup_stats_in_list,
-				      rollup_stats))) {
-			list_append(rpc_stats.rollup_stats, rollup_stats);
+			      list_find_first(rpc_stats->rollup_stats,
+					      _find_rollup_stats_in_list,
+					      rollup_stats))) {
+			list_append(rpc_stats->rollup_stats, rollup_stats);
 			(void) list_remove(itr);
 			continue;
 		}
@@ -487,14 +477,66 @@ extern void handle_rollup_stats(list_t *rollup_stats_list,
 
 extern void shutdown_threads(void)
 {
-	shutdown_time = time(NULL);
-	/* End commit before rpc_mgr_wake.  It will do the final
-	   commit on the connection.
-	*/
-	_commit_handler_cancel();
-	rpc_mgr_wake();
-	_rollup_handler_cancel();
+	static pthread_mutex_t shutdown_mutex = PTHREAD_MUTEX_INITIALIZER;
 
+	/* Only one thread ever gets here. */
+	slurm_mutex_lock(&shutdown_mutex);
+	if (shutdown_time) {
+		debug("There is already a shutdown operation in progress.");
+		slurm_mutex_unlock(&shutdown_mutex);
+		return;
+	}
+	shutdown_time = time(NULL);
+	slurm_mutex_unlock(&shutdown_mutex);
+
+	/*
+	 * Terminate the commit_handler_thread. Do it before rpc_mgr_wake, it
+	 * will do the final commit on the connection.
+	 */
+	if (commit_handler_thread) {
+		if (pthread_mutex_trylock(&registered_lock) == EBUSY) {
+			debug("Waiting for commit thread to finish.");
+			slurm_mutex_lock(&registered_lock);
+		}
+		pthread_cancel(commit_handler_thread);
+		slurm_mutex_unlock(&registered_lock);
+	}
+
+	/* Wake up the RPC manager so it can exit */
+	rpc_mgr_wake();
+
+	/* Terminate the rollup_handler_thread */
+	if (rollup_handler_thread) {
+		if (pthread_mutex_trylock(&rollup_lock) == EBUSY) {
+			if (backup && primary_resumed) {
+				/*
+				 * Canceling this is ok we are running in a
+				 * transaction so it will just get thrown away.
+				 */
+				debug("Hard cancelling rollup thread");
+				restart_backup = true;
+				/*
+				 * Not locking rollup_lock here on purpose. We
+				 * want to cancel the thread no matter what.
+				 */
+			} else {
+				debug("Waiting for rollup thread to finish.");
+				slurm_mutex_lock(&rollup_lock);
+			}
+		}
+		if (backup && primary_resumed) {
+			/*
+			 * Force cancel the thread. Unsafe but we want it to
+			 * terminate immediately.
+			 */
+			pthread_cancel(rollup_handler_thread);
+		} else {
+			slurm_cond_signal(&rollup_handler_cond);
+		}
+		slurm_mutex_unlock(&rollup_lock);
+	}
+
+	/* Terminate conmgr. */
 	conmgr_request_shutdown();
 }
 
@@ -503,18 +545,28 @@ extern void shutdown_threads(void)
 extern void init_dbd_stats(void)
 {
 	slurm_mutex_lock(&rpc_mutex);
-	slurmdb_free_stats_rec_members(&rpc_stats);
-	memset(&rpc_stats, 0, sizeof(rpc_stats));
 
-	rpc_stats.dbd_rollup_stats = xmalloc(sizeof(slurmdb_rollup_stats_t));
+	/*
+	 * DBD_CLEAR_STATS can trigger this function while shutdown is already
+	 * ongoing.
+	 */
+	if (!rpc_stats && shutdown_time) {
+		slurm_mutex_unlock(&rpc_mutex);
+		return;
+	}
 
-	rpc_stats.rollup_stats = list_create(slurmdb_destroy_rollup_stats);
+	slurmdb_destroy_stats_rec(rpc_stats);
+	rpc_stats = xmalloc(sizeof(*rpc_stats));
 
-	rpc_stats.rpc_list = list_create(slurmdb_destroy_rpc_obj);
+	rpc_stats->dbd_rollup_stats = xmalloc(sizeof(slurmdb_rollup_stats_t));
 
-	rpc_stats.time_start = time(NULL);
+	rpc_stats->rollup_stats = list_create(slurmdb_destroy_rollup_stats);
 
-	rpc_stats.user_list = list_create(slurmdb_destroy_rpc_obj);
+	rpc_stats->rpc_list = list_create(slurmdb_destroy_rpc_obj);
+
+	rpc_stats->time_start = time(NULL);
+
+	rpc_stats->user_list = list_create(slurmdb_destroy_rpc_obj);
 
 	slurm_mutex_unlock(&rpc_mutex);
 }
@@ -575,11 +627,7 @@ static void _parse_commandline(int argc, char **argv)
 			}
 			break;
 		case 'R':
-			reset_lft_rgt = 1;
-			if (optarg) {
-				lft_rgt_list = list_create(xfree_ptr);
-				slurm_addto_char_list(lft_rgt_list, optarg);
-			}
+			warning("-R is no longer a valid option. lft/rgt logic was removed from Slurm in 23.11.");
 			break;
 		case 's':
 			setwd = 1;
@@ -611,12 +659,6 @@ static void _usage(char *prog_name)
 		"Print this help message.\n");
 	fprintf(stderr, "  -n value   \t"
 		"Run the daemon at the specified nice value.\n");
-	fprintf(stderr, "  -R [Names] \t"
-		"Reset the lft and rgt values of the associations "
-		"\n\t\tin the given cluster list. "
-		"\n\t\tLft and rgt values are used to distinguish "
-		"\n\t\thierarical groups in the slurm accounting database.  "
-		"\n\t\tThis option should be very rarely used.\n");
 	fprintf(stderr, "  -s         \t"
 		"Change working directory to LogFile dirname or /var/tmp/.\n");
 	fprintf(stderr, "  -v         \t"
@@ -788,27 +830,6 @@ static void _request_registrations(void *db_conn)
 	FREE_NULL_LIST(cluster_list);
 }
 
-static void _rollup_handler_cancel(void)
-{
-	slurm_mutex_lock(&rollup_lock);
-	if (running_rollup) {
-		if (backup && running_rollup && primary_resumed)
-			debug("Hard cancelling rollup thread");
-		else
-			debug("Waiting for rollup thread to finish.");
-	}
-
-	if (rollup_handler_thread) {
-		if (backup && running_rollup && primary_resumed) {
-			pthread_cancel(rollup_handler_thread);
-			restart_backup = true;
-		} else {
-			pthread_cancel(rollup_handler_thread);
-		}
-	}
-	slurm_mutex_unlock(&rollup_lock);
-}
-
 static int _find_rollup_stats_in_list(void *x, void *key)
 {
 	slurmdb_rollup_stats_t *rollup_stats_a = (slurmdb_rollup_stats_t *)x;
@@ -823,76 +844,68 @@ static int _find_rollup_stats_in_list(void *x, void *key)
 /* _rollup_handler - Process rollup duties */
 static void *_rollup_handler(void *db_conn)
 {
-	time_t start_time = time(NULL);
-	time_t next_time;
-/* 	int sigarray[] = {SIGUSR1, 0}; */
+	struct timespec abs = { 0 };
+	struct timeval start_time = { 0 };
 	struct tm tm;
 	list_t *rollup_stats_list = NULL;
 	DEF_TIMERS;
 
+	/*
+	 * Need these as the backup controller can still be forcefully
+	 * cancelled.
+	 */
 	(void) pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
 	(void) pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
 
-	if (!localtime_r(&start_time, &tm)) {
-		fatal("Couldn't get localtime for rollup handler %ld",
-		      (long)start_time);
-		return NULL;
-	}
-
-	while (1) {
+	while (!shutdown_time) {
 		if (!db_conn)
 			break;
+
+		if (start_time.tv_sec) {
+			/*
+			 * Just in case some new uids were added to the system
+			 * pick them up here. Only run this if we ran before.
+			 */
+			assoc_mgr_set_missing_uids(NULL);
+		}
+
 		/* run the roll up */
+
+		/* get time before lock so we know exactly when we started. */
+		gettimeofday(&start_time, NULL);
+
+		if (!localtime_r(&start_time.tv_sec, &tm)) {
+			fatal("Couldn't get localtime for rollup handler %ld",
+			      (long) start_time.tv_sec);
+			return NULL;
+		}
+
 		slurm_mutex_lock(&rollup_lock);
-		running_rollup = 1;
-		debug2("running rollup at %s", slurm_ctime2(&start_time));
+		debug2("running rollup");
 		START_TIMER;
 		acct_storage_g_roll_usage(db_conn, 0, 0, 1, &rollup_stats_list);
 		END_TIMER;
 		acct_storage_g_commit(db_conn, 1);
-		running_rollup = 0;
-
 		handle_rollup_stats(rollup_stats_list, DELTA_TIMER, 0);
 		FREE_NULL_LIST(rollup_stats_list);
+
+		if (!shutdown_time) {
+			/* Set time to be the beginning of the next hour */
+			tm.tm_sec = 0;
+			tm.tm_min = 0;
+			tm.tm_hour++;
+			abs.tv_sec = slurm_mktime(&tm);
+
+			/* Sleep until then or until signaled to shutdown. */
+			slurm_cond_timedwait(&rollup_handler_cond, &rollup_lock,
+					     &abs);
+		}
 		slurm_mutex_unlock(&rollup_lock);
 
-		/* get the time now we have rolled usage */
-		start_time = time(NULL);
-
-		if (!localtime_r(&start_time, &tm)) {
-			fatal("Couldn't get localtime for rollup handler %ld",
-			      (long)start_time);
-			return NULL;
-		}
-
-		/* sleep until the next hour */
-		tm.tm_sec = 0;
-		tm.tm_min = 0;
-		tm.tm_hour++;
-		next_time = slurm_mktime(&tm);
-
-		sleep((next_time - start_time));
-
-		start_time = next_time;
-
-		/* Just in case some new uids were added to the system
-		   pick them up here. */
-		assoc_mgr_set_missing_uids();
 		/* repeat ;) */
-
 	}
 
 	return NULL;
-}
-
-static void _commit_handler_cancel()
-{
-	if (running_commit)
-		debug("Waiting for commit thread to finish.");
-	slurm_mutex_lock(&registered_lock);
-	if (commit_handler_thread)
-		pthread_cancel(commit_handler_thread);
-	slurm_mutex_unlock(&registered_lock);
 }
 
 /* _commit_handler - Process commit's of registered clusters */
@@ -908,7 +921,6 @@ static void *_commit_handler(void *db_conn)
 		/* Commit each slurmctld's info */
 		if (slurmdbd_conf->commit_delay) {
 			slurm_mutex_lock(&registered_lock);
-			running_commit = 1;
 			itr = list_iterator_create(registered_clusters);
 			while ((slurmdbd_conn = list_next(itr))) {
 				debug4("running commit for %s",
@@ -917,12 +929,13 @@ static void *_commit_handler(void *db_conn)
 					slurmdbd_conn->db_conn, 1);
 			}
 			list_iterator_destroy(itr);
-			running_commit = 0;
 			slurm_mutex_unlock(&registered_lock);
 		}
 
-		/* This really doesn't need to be synconized so just
-		 * sleep for a bit and do it again.
+		/*
+		 * This really doesn't need to be synchronized so just
+		 * sleep for a bit and do it again. This is a thread
+		 * cancellation point.
 		 */
 		sleep(slurmdbd_conf->commit_delay ?
 		      slurmdbd_conf->commit_delay : 5);
@@ -940,33 +953,31 @@ static void *_commit_handler(void *db_conn)
  */
 static int _send_slurmctld_register_req(slurmdb_cluster_rec_t *cluster_rec)
 {
-	slurm_addr_t ctld_address;
-	int fd;
-	int rc = SLURM_SUCCESS;
+	slurm_msg_t req_msg;
+	void *tls_conn = NULL;
 
-	memset(&ctld_address, 0, sizeof(ctld_address));
-	slurm_set_addr(&ctld_address, cluster_rec->control_port,
+	slurm_msg_t_init(&req_msg);
+
+	slurm_set_addr(&req_msg.address, cluster_rec->control_port,
 		       cluster_rec->control_host);
-	fd = slurm_open_msg_conn(&ctld_address);
-	if (fd < 0) {
+
+	if (!(tls_conn = slurm_open_msg_conn(&req_msg.address, NULL))) {
 		log_flag(NET, "%s: slurm_open_msg_conn(%pA): %m",
-			 __func__, &ctld_address);
-		rc = SLURM_ERROR;
-	} else {
-		slurm_msg_t out_msg;
-		slurm_msg_t_init(&out_msg);
-		slurm_msg_set_r_uid(&out_msg, SLURM_AUTH_UID_ANY);
-		out_msg.msg_type = ACCOUNTING_REGISTER_CTLD;
-		out_msg.flags = SLURM_GLOBAL_AUTH_KEY;
-		out_msg.protocol_version = cluster_rec->rpc_version;
-		slurm_send_node_msg(fd, &out_msg);
-		/* We probably need to add matching recv_msg function
-		 * for an arbitrary fd or should these be fire
-		 * and forget?  For this, that we can probably
-		 * forget about it */
-		close(fd);
+			 __func__, &req_msg.address);
+		return SLURM_ERROR;
 	}
-	return rc;
+
+	slurm_msg_set_r_uid(&req_msg, SLURM_AUTH_UID_ANY);
+	req_msg.msg_type = ACCOUNTING_REGISTER_CTLD;
+	req_msg.flags = SLURM_GLOBAL_AUTH_KEY;
+	req_msg.protocol_version = cluster_rec->rpc_version;
+	slurm_send_node_msg(tls_conn, &req_msg);
+
+	/* response is ignored */
+
+	conn_g_destroy(tls_conn, true);
+
+	return SLURM_SUCCESS;
 }
 
 static void _restart_self(int argc, char **argv)

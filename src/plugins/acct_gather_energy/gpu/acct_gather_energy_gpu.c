@@ -103,15 +103,9 @@ static uint64_t *start_current_energies = NULL;
 static int dataset_id = -1; // id of the dataset for profile data
 
 static bool flag_energy_accounting_shutdown = false;
-static bool flag_thread_started = false;
 static pthread_mutex_t gpu_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t gpu_cond = PTHREAD_COND_INITIALIZER;
-static pthread_mutex_t launch_mutex = PTHREAD_MUTEX_INITIALIZER;
-static pthread_cond_t launch_cond = PTHREAD_COND_INITIALIZER;
-
 static stepd_step_rec_t *step = NULL;
-
-pthread_t thread_gpu_id_launcher = 0;
 pthread_t thread_gpu_id_run = 0;
 
 /*
@@ -260,21 +254,6 @@ static int _thread_update_node_energy(void)
 }
 
 /*
- * _thread_init initializes values and conf for the gpu thread
- */
-static int _thread_init(void)
-{
-
-	if (gpus_len && gpus) {
-		log_flag(ENERGY, "%s thread init", plugin_name);
-		return SLURM_SUCCESS;
-	} else {
-		error("%s thread init failed, no GPU available", plugin_name);
-		return SLURM_ERROR;
-	}
-}
-
-/*
  * _thread_gpu_run is the thread calling gpu periodically
  * and read the energy values from the AMD GPUs
  */
@@ -284,90 +263,38 @@ static void *_thread_gpu_run(void *no_data)
 	struct timespec abs;
 
 	flag_energy_accounting_shutdown = false;
-	log_flag(ENERGY, "gpu-thread: launched");
-
-	(void) pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
-	(void) pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
 
 	slurm_mutex_lock(&gpu_mutex);
-	if (_thread_init() != SLURM_SUCCESS) {
+	if (gpus_len && gpus) {
+		log_flag(ENERGY, "%s thread init", plugin_name);
+	} else {
+		error("%s thread init failed, no GPU available", plugin_name);
 		log_flag(ENERGY, "gpu-thread: aborted");
 		slurm_mutex_unlock(&gpu_mutex);
-
-		slurm_mutex_lock(&launch_mutex);
-		slurm_cond_signal(&launch_cond);
-		slurm_mutex_unlock(&launch_mutex);
-
 		return NULL;
 	}
-
-	(void) pthread_setcanceltype(PTHREAD_CANCEL_DEFERRED, NULL);
-
 	slurm_mutex_unlock(&gpu_mutex);
-	flag_thread_started = true;
 
-	slurm_mutex_lock(&launch_mutex);
-	slurm_cond_signal(&launch_cond);
-	slurm_mutex_unlock(&launch_mutex);
-
-	/* setup timer */
+	/*
+	 * Setup timer - We will update energy every DEFAULT_GPU_FREQ from this
+	 * moment, always after _thread_update_node_energy lets us continue.
+	 */
 	gettimeofday(&tvnow, NULL);
 	abs.tv_sec = tvnow.tv_sec;
 	abs.tv_nsec = tvnow.tv_usec * 1000;
 
-	//loop until slurm stop
+	/* Loop until this plugin exits with fini(). */
 	slurm_mutex_lock(&gpu_mutex);
 	while (!flag_energy_accounting_shutdown) {
 		_thread_update_node_energy();
-
-		/* Sleep until the next time. */
-		abs.tv_sec += DEFAULT_GPU_FREQ;
-		slurm_cond_timedwait(&gpu_cond, &gpu_mutex, &abs);
+		if (!flag_energy_accounting_shutdown) {
+			abs.tv_sec += DEFAULT_GPU_FREQ;
+			slurm_cond_timedwait(&gpu_cond, &gpu_mutex, &abs);
+		}
 	}
 	slurm_mutex_unlock(&gpu_mutex);
 
 	log_flag(ENERGY, "gpu-thread: ended");
-
-	return NULL;
-}
-
-/*
- * _thread_launcher is the thread that launches gpu thread
- */
-static void *_thread_launcher(void *no_data)
-{
-	struct timeval tvnow;
-	struct timespec abs;
-
-	slurm_thread_create(&thread_gpu_id_run, _thread_gpu_run, NULL);
-
-	/* setup timer */
-	gettimeofday(&tvnow, NULL);
-	abs.tv_sec = tvnow.tv_sec + DEFAULT_GPU_TIMEOUT;
-	abs.tv_nsec = tvnow.tv_usec * 1000;
-
-	slurm_mutex_lock(&launch_mutex);
-	slurm_cond_timedwait(&launch_cond, &launch_mutex, &abs);
-	slurm_mutex_unlock(&launch_mutex);
-
-	if (!flag_thread_started) {
-		error("%s threads failed to start in a timely manner",
-		      plugin_name);
-
-		flag_energy_accounting_shutdown = true;
-
-		/*
-		 * It is a known thing we can hang up on GPU calls cancel if
-		 * we must.
-		 */
-		pthread_cancel(thread_gpu_id_run);
-
-		/*
-		 * Unlock just to make sure since we could have canceled the
-		 * thread while in the lock.
-		 */
-		slurm_mutex_unlock(&gpu_mutex);
-	}
 
 	return NULL;
 }
@@ -534,7 +461,7 @@ static int _get_joules_task(uint16_t delta)
 			}
 		} else {
 			/*
-			 * This is just for the step, so take all the pervious
+			 * This is just for the step, so take all the previous
 			 * consumption out of the mix.
 			 */
 			start_current_energies[i] =
@@ -581,13 +508,6 @@ extern int fini(void)
 
 	flag_energy_accounting_shutdown = true;
 
-	slurm_mutex_lock(&launch_mutex);
-	/* clean up the launch thread */
-	slurm_cond_signal(&launch_cond);
-	slurm_mutex_unlock(&launch_mutex);
-
-	slurm_thread_join(thread_gpu_id_launcher);
-
 	slurm_mutex_lock(&gpu_mutex);
 	/* clean up the run thread */
 	slurm_cond_signal(&gpu_cond);
@@ -595,15 +515,9 @@ extern int fini(void)
 
 	slurm_thread_join(thread_gpu_id_run);
 
-	/*
-	 * We don't really want to destroy the the state, so those values
-	 * persist a reconfig. And if the process dies, this will be lost
-	 * anyway. So not freeing these variables is not really a leak.
-	 *
-	 * xfree(gpus);
-	 * xfree(start_current_energies);
-	 * saved_usable_gpus = NULL;
-	 */
+	xfree(gpus);
+	xfree(start_current_energies);
+	saved_usable_gpus = NULL;
 
 	return SLURM_SUCCESS;
 }
@@ -626,58 +540,45 @@ extern int acct_gather_energy_p_get_data(enum acct_energy_type data_type,
 	uint16_t *gpu_cnt = (uint16_t *)data;
 
 	xassert(running_in_slurmd_stepd());
+	slurm_mutex_lock(&gpu_mutex);
 	switch (data_type) {
 	case ENERGY_DATA_NODE_ENERGY_UP:
 		if (running_in_slurmd()) {
 			/* Signal the thread to update node energy */
 			slurm_cond_signal(&gpu_cond);
-			slurm_mutex_lock(&gpu_mutex);
 			_get_node_energy(energy);
 		} else {
-			slurm_mutex_lock(&gpu_mutex);
 			_get_joules_task(10);
 			_get_node_energy_up(energy);
 		}
-		slurm_mutex_unlock(&gpu_mutex);
 		break;
 	case ENERGY_DATA_NODE_ENERGY:
-		slurm_mutex_lock(&gpu_mutex);
 		_get_node_energy(energy);
-		slurm_mutex_unlock(&gpu_mutex);
 		break;
 	case ENERGY_DATA_LAST_POLL:
-		slurm_mutex_lock(&gpu_mutex);
 		if (gpus)
 			*last_poll = gpus[gpus_len-1].last_update_time;
 		else
 			*last_poll = 0;
-		slurm_mutex_unlock(&gpu_mutex);
 		break;
 	case ENERGY_DATA_SENSOR_CNT:
-		slurm_mutex_lock(&gpu_mutex);
 		*gpu_cnt = gpus_len;
-		slurm_mutex_unlock(&gpu_mutex);
 		break;
 	case ENERGY_DATA_STRUCT:
-		slurm_mutex_lock(&gpu_mutex);
 		for (i = 0; i < gpus_len; i++)
 			memcpy(&energy[i], &gpus[i].energy,
 			       sizeof(acct_gather_energy_t));
-		slurm_mutex_unlock(&gpu_mutex);
 		break;
 	case ENERGY_DATA_JOULES_TASK:
 		if (running_in_slurmd()) {
 			/* Signal the thread to update node energy */
 			slurm_cond_signal(&gpu_cond);
-			slurm_mutex_lock(&gpu_mutex);
 		} else {
-			slurm_mutex_lock(&gpu_mutex);
 			_get_joules_task(10);
 		}
 		for (i = 0; i < gpus_len; ++i)
 			memcpy(&energy[i], &gpus[i].energy,
 			       sizeof(acct_gather_energy_t));
-		slurm_mutex_unlock(&gpu_mutex);
 		break;
 	default:
 		error("%s: unknown enum %d",
@@ -685,6 +586,7 @@ extern int acct_gather_energy_p_get_data(enum acct_energy_type data_type,
 		rc = SLURM_ERROR;
 		break;
 	}
+	slurm_mutex_unlock(&gpu_mutex);
 	return rc;
 }
 
@@ -765,8 +667,8 @@ extern void acct_gather_energy_p_conf_set(int context_id_in,
 					(unsigned int *) &gpus_len);
 			if (gpus_len) {
 				gpus = xcalloc(sizeof(gpu_status_t), gpus_len);
-				slurm_thread_create(&thread_gpu_id_launcher,
-						    _thread_launcher, NULL);
+				slurm_thread_create(&thread_gpu_id_run,
+						    _thread_gpu_run, NULL);
 				log_flag(ENERGY, "%s thread launched",
 					 plugin_name);
 			}

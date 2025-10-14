@@ -277,7 +277,7 @@ def test_db_accounts(slurm, slurmdb, create_wckeys, admin_level):
     resp = slurmdb.slurmdb_v0042_post_accounts_with_http_info(accounts)
     assert resp.status_code == 200
 
-    # verify account matches modifiy request
+    # verify account matches modify request
     resp = slurmdb.slurmdb_v0042_get_account(account2_name)
     assert resp.accounts
     for account in resp.accounts:
@@ -1121,7 +1121,7 @@ def test_jobs(slurm, slurmdb):
         assert job.user_name == local_user_name
         assert job.job_state == ["CANCELLED"]
 
-    # Ensure that job is in the DB before quering it
+    # Ensure that job is in the DB before querying it
     atf.wait_for_job_accounted(jobid, fatal=True)
 
     resp = slurmdb.slurmdb_v0042_get_jobs()
@@ -1221,11 +1221,11 @@ def test_nodes(slurm, admin_level):
     for node in resp.nodes:
         if "IDLE" in node.state:
             node_name = node.name
-            comment = node.comment
+            # comment = node.comment
             extra = node.extra
             feat = node.features
             actfeat = node.active_features
-            state = node.state
+            # state = node.state
             reason = node.reason
             reasonuid = node.reason_set_by_user
             break

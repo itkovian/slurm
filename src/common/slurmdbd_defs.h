@@ -166,6 +166,8 @@ typedef enum {
 	DBD_GOT_INSTANCES,	/* Response to DBD_GET_INSTANCES */
 	DBD_GET_QOS_USAGE,  	/* Get qos usage information */
 	DBD_GOT_QOS_USAGE,  	/* Response to DBD_GET_QOS_USAGE */
+	DBD_GET_ASSOC_NG_USAGE, /* Get non-grouped assoc usage
+				 * (this is used for sreport user topuser) */
 	SLURM_DBD_MESSAGES_END = 2000, /* So that we don't overlap with any
 					* slurm_msg_type_t numbers. */
 	SLURM_PERSIST_INIT = 6500, /* So we don't use the
@@ -297,7 +299,9 @@ typedef struct dbd_job_start_msg {
 	uint64_t req_mem;       /* requested minimum memory */
 	uint16_t restart_cnt;   /* How many times the job has been restarted */
 	uint32_t resv_id;	/* reservation id */
+	char *resv_req;		/* original requested reservations */
 	char *script_hash;      /* hash value of script */
+	uint16_t segment_size;	/* requested segment size */
 	time_t   start_time;	/* job start time */
 	uint32_t state_reason_prev; /* Last reason of blocking before job
 				     * started */
@@ -364,7 +368,7 @@ typedef struct {
 
 typedef struct dbd_node_state_msg {
 	time_t event_time;	/* time of transition */
-	char *extra;		/* arbitrary sting */
+	char *extra;		/* arbitrary string */
 	char *hostlist;		/* name of hosts */
 	char *instance_id;	/* cloud instance id */
 	char *instance_type;	/* cloud instance type */
@@ -419,9 +423,14 @@ typedef struct dbd_step_start_msg {
 	uint32_t req_cpufreq_max; /* requested maximum CPU frequency  */
 	uint32_t req_cpufreq_gov; /* requested CPU frequency governor */
 	slurm_step_id_t step_id;
+	char *cwd;              /* Current work dir of the step */
+	char *std_err;          /* The stderr file path of the step */
+	char *std_in;           /* The stdin file path of the step */
+	char *std_out;          /* The stdout file path of the step */
 	char *submit_line;      /* The command issued with all it's options in a
 				 * string */
 	uint32_t task_dist;     /* layout method of step */
+	uint32_t time_limit; /* time limit of step */
 	uint32_t total_tasks;	/* count of tasks for step */
 	char *tres_alloc_str;   /* Simple comma separated list of TRES */
 } dbd_step_start_msg_t;

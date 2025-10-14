@@ -47,15 +47,18 @@
 #include "slurm/slurm.h"
 
 #include "src/common/forward.h"
+#include "src/common/hostlist.h"
 #include "src/common/macros.h"
-#include "src/interfaces/auth.h"
-#include "src/interfaces/topology.h"
 #include "src/common/read_config.h"
 #include "src/common/slurm_protocol_defs.h"
-#include "src/common/slurm_protocol_socket.h"
 #include "src/common/slurm_protocol_pack.h"
+#include "src/common/slurm_protocol_socket.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
+
+#include "src/interfaces/auth.h"
+#include "src/interfaces/conn.h"
+#include "src/interfaces/topology.h"
 
 static slurm_node_alias_addrs_t *last_alias_addrs = NULL;
 static pthread_mutex_t alias_addrs_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -117,7 +120,7 @@ static void *_forward_thread(void *arg)
 	forward_t *fwd_ptr = &fwd_msg->header.forward;
 	buf_t *buffer = init_buf(BUF_SIZE);	/* probably enough for header */
 	list_t *ret_list = NULL;
-	int fd = -1;
+	void *tls_conn = NULL;
 	ret_data_info_t *ret_data_info = NULL;
 	char *name = NULL;
 	hostlist_t *hl = hostlist_create(fwd_ptr->nodelist);
@@ -141,7 +144,8 @@ static void *_forward_thread(void *arg)
 			}
 			goto cleanup;
 		}
-		if ((fd = slurm_open_msg_conn(&addr)) < 0) {
+
+		if (!(tls_conn = slurm_open_msg_conn(&addr, NULL))) {
 			error("%s: failed to %s (%pA): %m",
 			      __func__, name, &addr);
 
@@ -164,6 +168,7 @@ static void *_forward_thread(void *arg)
 			}
 			goto cleanup;
 		}
+
 		buf = hostlist_ranged_string_xmalloc(hl);
 
 		xfree(fwd_ptr->nodelist);
@@ -201,8 +206,7 @@ static void *_forward_thread(void *arg)
 		/*
 		 * forward message
 		 */
-		if (slurm_msg_sendto(fd,
-				     get_buf_data(buffer),
+		if (slurm_msg_sendto(tls_conn, get_buf_data(buffer),
 				     get_buf_offset(buffer)) < 0) {
 			error("%s: slurm_msg_sendto: %m", __func__);
 
@@ -214,8 +218,8 @@ static void *_forward_thread(void *arg)
 				FREE_NULL_BUFFER(buffer);
 				buffer = init_buf(fwd_struct->buf_len);
 				slurm_mutex_unlock(&fwd_struct->forward_mutex);
-				close(fd);
-				fd = -1;
+				conn_g_destroy(tls_conn, true);
+				tls_conn = NULL;
 				/* Abandon tree. This way if all the
 				 * nodes in the branch are down we
 				 * don't have to time out for each
@@ -251,8 +255,9 @@ static void *_forward_thread(void *arg)
 			goto cleanup;
 		}
 
-		ret_list = slurm_receive_resp_msgs(fd, fwd_ptr->tree_depth,
-						   fwd_ptr->timeout);
+		ret_list =
+			slurm_receive_resp_msgs(tls_conn, fwd_ptr->tree_depth,
+						fwd_ptr->timeout);
 		/* info("sent %d forwards got %d back", */
 		/*      fwd_ptr->cnt, list_count(ret_list)); */
 
@@ -266,8 +271,8 @@ static void *_forward_thread(void *arg)
 				FREE_NULL_BUFFER(buffer);
 				buffer = init_buf(fwd_struct->buf_len);
 				slurm_mutex_unlock(&fwd_struct->forward_mutex);
-				close(fd);
-				fd = -1;
+				conn_g_destroy(tls_conn, true);
+				tls_conn = NULL;
 				continue;
 			}
 			goto cleanup;
@@ -336,8 +341,7 @@ static void *_forward_thread(void *arg)
 	}
 	free(name);
 cleanup:
-	if ((fd >= 0) && close(fd) < 0)
-		error ("close(%d): %m", fd);
+	conn_g_destroy(tls_conn, true);
 	hostlist_destroy(hl);
 	fwd_ptr->alias_addrs.net_cred = NULL;
 	fwd_ptr->alias_addrs.node_addrs = NULL;
@@ -674,10 +678,22 @@ extern int forward_msg(forward_struct_t *forward_struct, header_t *header)
 	if (header->forward.tree_depth)
 		header->forward.timeout = (header->forward.timeout * depth) /
 					  header->forward.tree_depth;
-	else
-		header->forward.timeout *= 2 * depth;
+	else {
+		/*
+		 * tree_depth not packed - likely using 24.05- protocol version.
+		 * Calculate the timeout based on MessageTimeout instead.
+		 */
+		header->forward.timeout =
+			(2 * depth * slurm_conf.msg_timeout * MSEC_IN_SEC);
+		debug3("%s: original tree_depth was 0 so setting new timeout to %d",
+			__func__, header->forward.timeout);
+	}
 	header->forward.tree_depth = depth;
 	forward_struct->timeout = header->forward.timeout;
+
+	log_flag(NET, "%s: forwarding messages to %u nodes with timeout of %d",
+		 __func__, forward_struct->fwd_cnt, forward_struct->timeout);
+
 	_forward_msg_internal(NULL, sp_hl, forward_struct, header,
 			      forward_struct->timeout, hl_count);
 
@@ -822,9 +838,14 @@ extern list_t *start_msg_tree(hostlist_t *hl, slurm_msg_t *msg, int timeout)
 	_get_alias_addrs(hl, msg, &host_count);
 	_get_dynamic_addrs(hl, msg);
 
-	if ((depth = topology_g_split_hostlist(hl, &sp_hl, &hl_count,
-					       msg->forward.tree_width)) ==
-	    SLURM_ERROR) {
+	if (running_in_slurmctld())
+		depth = topology_g_split_hostlist(hl, &sp_hl, &hl_count,
+						  msg->forward.tree_width);
+	else
+		depth = hostlist_split_treewidth(hl, &sp_hl, &hl_count,
+						 msg->forward.tree_width);
+
+	if (depth == SLURM_ERROR) {
 		error("unable to split forward hostlist");
 		return NULL;
 	}

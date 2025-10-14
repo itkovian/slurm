@@ -312,15 +312,13 @@ extern void parse_command_line(int argc, char **argv)
 			params.mimetype = MIME_TYPE_JSON;
 			params.data_parser = optarg;
 			params.match_flags |= MATCH_FLAG_GRES_USED;
-			if (serializer_g_init(MIME_TYPE_JSON_PLUGIN, NULL))
-				fatal("JSON plugin load failure");
+			serializer_required(MIME_TYPE_JSON);
 			break;
 		case OPT_LONG_YAML:
 			params.mimetype = MIME_TYPE_YAML;
 			params.data_parser = optarg;
 			params.match_flags |= MATCH_FLAG_GRES_USED;
-			if (serializer_g_init(MIME_TYPE_YAML_PLUGIN, NULL))
-				fatal("YAML plugin load failure");
+			serializer_required(MIME_TYPE_YAML);
 			break;
 		case OPT_LONG_AUTOCOMP:
 			suggest_completion(long_options, optarg);
@@ -476,20 +474,26 @@ static list_t *_build_state_list(char *state_str)
 		return _build_all_states_list ();
 
 	orig = str = xstrdup (state_str);
-	state_ids = list_create (NULL);
+	state_ids = list_create(xfree_ptr);
 
-	if (xstrstr(state_str, "&"))
-	    params.state_list_and = true;
+	if ((xstrstr(state_str, "+") || xstrstr(state_str, "&")))
+		params.state_list_and = true;
 
-	state = strtok_r(state_str, ",&", &str);
+	state = strtok_r(state_str, ",&+", &str);
 	while (state) {
-		int *id = xmalloc (sizeof (*id));
-		if ((*id = _node_state_id (state)) < 0) {
+		sinfo_state_t *id = xmalloc(sizeof(*id));
+		if ((state[0] == '~') || (state[0] == '!')) {
+			id->op = SINFO_STATE_OP_NOT;
+			/* Remove one character before parsing */
+			state = state + 1;
+		}
+
+		if ((id->state = _node_state_id(state)) < 0) {
 			error ("Bad state string: \"%s\"", state);
 			return (NULL);
 		}
 		list_append (state_ids, id);
-		state = strtok_r(NULL, ",&", &str);
+		state = strtok_r(NULL, ",&+", &str);
 	}
 
 	xfree (orig);
@@ -891,7 +895,7 @@ _get_prefix( char *token )
  * OUT field - the letter code for the data type
  * OUT field_size - byte count
  * OUT right_justify - true of field to be right justified
- * OUT suffix - string containing everthing after the field specification
+ * OUT suffix - string containing everything after the field specification
  */
 static void
 _parse_token( char *token, char *field, int *field_size, bool *right_justify,

@@ -38,7 +38,6 @@ libcommon_la_SOURCES =				\
 	fetch_config.h				\
 	forward.c				\
 	forward.h				\
-	front_end.h				\
 	global_defaults.c			\
 	group_cache.c				\
 	group_cache.h				\
@@ -159,6 +158,8 @@ libcommon_la_SOURCES =				\
 	state_save.h				\
 	stepd_api.c				\
 	stepd_api.h				\
+	stepd_proxy.c				\
+	stepd_proxy.h				\
 	strlcpy.c				\
 	strlcpy.h				\
 	strnatcmp.c				\
@@ -190,8 +191,12 @@ libcommon_la_SOURCES =				\
 	xhash.h					\
 	xmalloc.c				\
 	xmalloc.h				\
+	xrandom.c				\
+	xrandom.h				\
 	xregex.c				\
 	xregex.h				\
+	xsched.c				\
+	xsched.h				\
 	xsystemd.c				\
 	xsystemd.h				\
 	xsignal.c				\

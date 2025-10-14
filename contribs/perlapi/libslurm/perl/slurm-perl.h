@@ -7,7 +7,7 @@
 
 #include <msg.h>
 
-#undef VERSION /* avoid conflicting defintion in config.h */
+#undef VERSION /* avoid conflicting definition in config.h */
 #include "src/common/slurm_xlator.h"
 #include "src/common/job_state_reason.h"
 #include "src/common/list.h"
@@ -87,12 +87,6 @@ extern int hv_to_delete_reservation_msg(HV *hv, reservation_name_msg_t *resv_nam
 extern int trigger_info_to_hv(trigger_info_t *info, HV *hv);
 extern int hv_to_trigger_info(HV *hv, trigger_info_t *info);
 extern int trigger_info_msg_to_hv(trigger_info_msg_t *msg, HV *hv);
-
-/********** topo info conversion functions **********/
-extern int topo_info_to_hv(topo_info_t *topo_info, HV *hv);
-extern int hv_to_topo_info(HV *hv, topo_info_t *topo_info);
-extern int topo_info_response_msg_to_hv(topo_info_response_msg_t *topo_info_msg, HV *hv);
-extern int hv_to_topo_info_response_msg(HV *hv, topo_info_response_msg_t *topo_info_msg);
 
 /********** step launching functions **********/
 extern int hv_to_slurm_step_launch_params(HV *hv, slurm_step_launch_params_t

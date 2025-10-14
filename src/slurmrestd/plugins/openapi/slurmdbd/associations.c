@@ -96,9 +96,11 @@ static void _diff_tres(char **dst, char *mod)
 		return;
 	}
 
-	slurmdb_tres_list_from_string(&dst_list, *dst, TRES_STR_FLAG_REPLACE);
+	slurmdb_tres_list_from_string(&dst_list, *dst, TRES_STR_FLAG_REPLACE,
+				      NULL);
 	xfree(*dst);
-	slurmdb_tres_list_from_string(&mod_list, mod, TRES_STR_FLAG_REPLACE);
+	slurmdb_tres_list_from_string(&mod_list, mod, TRES_STR_FLAG_REPLACE,
+				      NULL);
 
 	/* find all removed or tres with updated counts */
 	itr = list_iterator_create(dst_list);
@@ -193,7 +195,6 @@ static slurmdb_assoc_rec_t *_diff_assoc(slurmdb_assoc_rec_t *assoc,
 
 
 	/* skip leaf_usage */
-	/* skip lft */
 
 	assoc->max_jobs = dst->max_jobs;
 	assoc->max_jobs_accrue = dst->max_jobs_accrue;
@@ -232,8 +233,6 @@ static slurmdb_assoc_rec_t *_diff_assoc(slurmdb_assoc_rec_t *assoc,
 
 	if (dst->qos_list)
 		SWAP(assoc->qos_list, dst->qos_list);
-
-	/* skip rgt */
 
 	assoc->shares_raw = dst->shares_raw;
 

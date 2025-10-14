@@ -403,6 +403,8 @@ static void _launch_app(srun_job_t *job, list_t *srun_job_list, bool got_alloc)
 	uint16_t *tmp_task_cnt = NULL, *het_job_task_cnts = NULL;
 	uint32_t **tmp_tids = NULL, **het_job_tids = NULL;
 	uint32_t *het_job_tid_offsets = NULL;
+	uint32_t *het_job_step_task_cnts = NULL; /* task count per component */
+	int comp = 0;
 
 	if (srun_job_list) {
 		int het_job_step_cnt = list_count(srun_job_list);
@@ -414,12 +416,19 @@ static void _launch_app(srun_job_t *job, list_t *srun_job_list, bool got_alloc)
 			      __func__);
 		}
 
+		/* Record the number of tasks for each het component */
+		het_job_step_task_cnts =
+			xcalloc(het_job_step_cnt, sizeof(uint32_t));
+		comp = 0;
+
 		job_iter = list_iterator_create(srun_job_list);
 		while ((job = list_next(job_iter))) {
 			char *node_list = NULL;
 			int i, node_inx;
 			total_ntasks += job->ntasks;
 			total_nnodes += job->nhosts;
+
+			het_job_step_task_cnts[comp++] = job->ntasks;
 
 			xrealloc(het_job_task_cnts,
 				 sizeof(uint16_t)*total_nnodes);
@@ -525,8 +534,14 @@ static void _launch_app(srun_job_t *job, list_t *srun_job_list, bool got_alloc)
 				memcpy(job->het_job_tid_offsets,
 				       het_job_tid_offsets,
 				       sizeof(uint32_t) * total_ntasks);
-			}
 
+				job->het_job_step_task_cnts =
+					xcalloc(het_job_step_cnt,
+						sizeof(uint32_t));
+				memcpy(job->het_job_step_task_cnts,
+				       het_job_step_task_cnts,
+				       sizeof(uint32_t) * het_job_step_cnt);
+			}
 			opts = xmalloc(sizeof(_launch_app_data_t));
 			opts->got_alloc   = got_alloc;
 			opts->job         = job;
@@ -541,6 +556,7 @@ static void _launch_app(srun_job_t *job, list_t *srun_job_list, bool got_alloc)
 		xfree(het_job_node_list);
 		xfree(het_job_task_cnts);
 		xfree(het_job_tid_offsets);
+		xfree(het_job_step_task_cnts);
 		list_iterator_destroy(job_iter);
 		list_iterator_destroy(opt_iter);
 		slurm_mutex_lock(&step_mutex);
@@ -672,7 +688,7 @@ static void _setup_one_job_env(slurm_opt_t *opt_local, srun_job_t *job,
 	env->oom_kill_step = opt_local->oom_kill_step;
 
 	if (srun_opt->pty) {
-		int fd = STDIN_FILENO;
+		job->input_fd = STDIN_FILENO;
 
 		if (srun_opt->pty[0]) {
 			/* srun passed FD to use for pty */
@@ -681,23 +697,17 @@ static void _setup_one_job_env(slurm_opt_t *opt_local, srun_job_t *job,
 				      srun_opt->pty);
 			}
 
-			fd = atoi(srun_opt->pty);
+			job->input_fd = atoi(srun_opt->pty);
 		}
 
-		if (set_winsize(fd, job)) {
+		if (set_winsize(job->input_fd, job)) {
 			error("Not using a pseudo-terminal, disregarding --pty%s%s option",
 			      (srun_opt->pty[0] ? "=" : ""),
 			      (srun_opt->pty[0] ? srun_opt->pty : ""));
 			xfree(srun_opt->pty);
 		} else {
-			struct termios term;
-
 			/* Save terminal settings for restore */
-			tcgetattr(fd, &termdefaults);
-			tcgetattr(fd, &term);
-			/* Set raw mode on local tty */
-			cfmakeraw(&term);
-			tcsetattr(fd, TCSANOW, &term);
+			tcgetattr(job->input_fd, &termdefaults);
 			atexit(&_pty_restore);
 
 			block_sigwinch();
@@ -817,7 +827,7 @@ static void _file_bcast(slurm_opt_t *opt_local, srun_job_t *job)
 	params->flags |= BCAST_FLAG_PRESERVE;
 	params->src_fname = xstrdup(opt_local->argv[0]);
 	params->timeout = 0;
-	params->verbose = 0;
+	params->verbose = opt_local->verbose;
 
 	if (bcast_file(params) != SLURM_SUCCESS)
 		fatal("Failed to broadcast '%s'. Step launch aborted.",
@@ -853,7 +863,7 @@ static char *_uint16_array_to_str(int array_len, const uint16_t *array)
 {
 	int i;
 	int previous = 0;
-	char *sep = ",";  /* seperator */
+	char *sep = ",";  /* separator */
 	char *str = xstrdup("");
 
 	if (array == NULL)
@@ -918,8 +928,8 @@ static void _setup_env_working_cluster(void)
 
 	/*
 	 * Format is cluster_name:[address]:port:rpc in 24.11+ or
-	 * cluster_name:address:port:rpc for older versions.  Disallow older
-	 * format two versions after 24.11.
+	 * cluster_name:address:port:rpc for older versions.
+	 * When 24.11 is no longer supported this can be removed.
 	 */
 	if (!(addr_ptr = strchr(working_env,  ':')))
 		goto error;
@@ -939,7 +949,7 @@ static void _setup_env_working_cluster(void)
 	if (tmp) {
 		/*
 		 * Delay increments add_ptr till now for new format to preserve
-		 * working_env in error message if failed ealier.
+		 * working_env in error message if failed earlier.
 		 */
 		*addr_ptr++ = '\0';
 		*tmp = '\0';

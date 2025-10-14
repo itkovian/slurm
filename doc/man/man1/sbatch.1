@@ -1,4 +1,4 @@
-.TH sbatch "1" "Slurm Commands" "April 2025" "Slurm Commands"
+.TH sbatch "1" "Slurm Commands" "Slurm 25.05" "Slurm Commands"
 
 .SH "NAME"
 sbatch \- Submit a batch script to Slurm.
@@ -415,9 +415,9 @@ Unique name for OCI container.
 \fB\-\-contiguous\fR
 If set, then the allocated nodes must form a contiguous set.
 
-\fBNOTE\fR: If the SelectType is cons_tres this option won't be honored
-with the \fBtopology/tree\fR or \fBtopology/3d_torus\fR
-plugins, both of which can modify the node ordering.
+\fBNOTE\fR: This option will only work with the \fBtopology/flat\fR plugin.
+Other topology plugins modify the node ordering and prevent this option from
+taking effect.
 .IP
 
 .TP
@@ -1065,7 +1065,7 @@ was not specified) as one task per requested thread.
 .IP
 
 .TP
-\fB\-\-get\-user\-env\fR[=\fItimeout\fR][\fImode\fR]
+\fB\-\-get\-user\-env\fR
 This option will tell sbatch to retrieve the
 login environment variables for the user specified in the \fB\-\-uid\fR option.
 The environment variables are retrieved by running something of this sort
@@ -1073,16 +1073,8 @@ The environment variables are retrieved by running something of this sort
 Be aware that any environment variables already set in sbatch's environment
 will take precedence over any environment variables in the user's
 login environment. Clear any environment variables before calling sbatch
-that you do not want propagated to the spawned program.
-The optional \fItimeout\fR value is in seconds. Default value is 8 seconds.
-The optional \fImode\fR value control the "su" options.
-With a \fImode\fR value of "S", "su" is executed without the "\-" option.
-With a \fImode\fR value of "L", "su" is executed with the "\-" option,
-replicating the login environment.
-If \fImode\fR not specified, the mode established at Slurm build time
-is used.
-Example of use include "\-\-get\-user\-env", "\-\-get\-user\-env=10"
-"\-\-get\-user\-env=10L", and "\-\-get\-user\-env=S".
+that you do not want propagated to the spawned program. If the user environment
+retrieval fails or times out, the job will be aborted, requeued and held.
 
 \fBNOTE\fR: The explicit or implicit use of \fB--get-user-env\fR relies in
 the capability of being able to create PID and mount namespaces. It is very
@@ -1199,14 +1191,16 @@ requested in a comma separated list, for example:
 This option requires an explicit task count, e.g. \-n, \-\-ntasks or "\-\-gpus=X
 \-\-gpus\-per\-task=Y" rather than an ambiguous range of nodes with \-N, \-\-nodes.
 This option will implicitly set \-\-tres\-bind=gres/gpu:per_task:<gpus_per_task>,
-but that can be overridden with an explicit \-\-tres\-bind=gres/gpu
-specification.
+or if multiple gpu types are specified
+\-\-tres\-bind=gres/gpu:per_task:<gpus_per_task_type_sum>. However, that can be
+overridden with an explicit \-\-tres\-bind=gres/gpu specification.
 .br
 .IP
 
 .TP
 \fB\-\-gres\fR=<\fIlist\fR>
-Specifies a comma\-delimited list of generic consumable resources.
+Specifies a comma\-delimited list of generic consumable resources requested per
+node.
 The format for each entry in the list is "name[[:type]:count]".
 The \fIname\fR is the type of consumable resource (e.g. gpu).
 The \fItype\fR is an optional classification for the resource (e.g. a100).
@@ -1259,6 +1253,9 @@ filtering will be performed on a per\-socket basis.
 \fBNOTE\fR: This option can be set by default in \fBSelectTypeParameters\fR.
 .br
 \fBNOTE\fR: This option is specific to \fBSelectType=cons_tres\fR.
+.br
+\fBNOTE\fR: This option can give undefined results if attempting to enforce
+binding on multiple gres on multiple sockets.
 .IP
 
 .TP
@@ -1372,8 +1369,11 @@ Specification of licenses (or other resources available on all
 nodes of the cluster) which must be allocated to this job.
 License names can be followed by a colon and count
 (the default count is one).
-Multiple license names should be comma separated (e.g.
-"\-\-licenses=foo:4,bar").
+Multiple licenses can be requested. If they are separated by a comma (','
+meaning AND), then all requested licenses are required for the job. For example,
+"\-\-licenses=foo:4,bar". If they are separated by a pipe ('|' meaning OR),
+then only one of the license requests are required for the job. For example,
+"\-\-licenses=foo:4|bar". AND and OR cannot both be used.
 To submit jobs using remote licenses, those served by the slurmdbd, specify
 the name of the server providing the licenses.
 For example "\-\-license=nastran@slurmdb:12".
@@ -1381,6 +1381,16 @@ For example "\-\-license=nastran@slurmdb:12".
 \fBNOTE\fR: When submitting heterogeneous jobs, license requests
 may only be made on the first component job.
 For example "sbatch \-L ansys:2 : script.sh".
+
+\fBNOTE\fR: If licenses are tracked in AccountingStorageTres and OR is used,
+ReqTRES will display all requested tres separated by commas. AllocTRES will
+display only the license that was allocated to the job.
+
+\fBNOTE\fR: When a job requests OR'd licenses, Slurm will attempt to allocate
+the licenses in the order in which they are requested. This specified order
+will take precedence even if the rest of requested licenses could be satisfied
+on a requested reservation. This also applies to backfill planning when
+\fBSchedulerParameters=bf_licenses\fR is configured.
 .IP
 
 .TP
@@ -1413,9 +1423,10 @@ The default value is the submitting user.
 
 .TP
 \fB\-\-mcs\-label\fR=<\fImcs\fR>
-Used only when the mcs/group plugin is enabled.
-This parameter is a group among the groups of the user.
-Default value is calculated by the Plugin mcs if it's enabled.
+Used only when a compatible \fBMCSPlugin\fR is enabled. This parameter is a
+group that the user belongs to (\fBmcs/group\fR) or an arbitrary label string
+(\fBmcs/label\fR). In both cases, no label will be assigned by default. Refer to
+the MCS documentation for more details: <https://slurm.schedmd.com/mcs.html>
 .IP
 
 .TP
@@ -1659,8 +1670,7 @@ Specify a minimum number of logical cpus/processors per node.
 \fB\-\-network\fR=<\fItype\fR>
 Specify information pertaining to the switch or network.
 The interpretation of \fItype\fR is system dependent.
-This option is supported when running Slurm on a Cray natively. It is
-used to request using Network Performance Counters.
+It is used to request using Network Performance Counters.
 Only one value per request is valid.
 All options are case in\-sensitive.
 In this configuration supported values include:
@@ -1811,7 +1821,7 @@ List entries. The default is 16 per-CPU, maximum 16384 per-node.
 
 .TP
 \fBacs\fR
-Addressing contexts. The default is 4 per-CPU, maximum 1022 per-node.
+Addressing contexts. The default is 2 per-CPU, maximum 1022 per-node.
 .RE
 .IP
 
@@ -2277,8 +2287,8 @@ will be used to create the job allocation.
 No requirement would be placed on all segments for a job needing to
 be placed within the same higher-level block.
 
-\fBNOTE\fR: The segment size must always be evenly divisible by
-the requested node count.
+\fBNOTE\fR: The requested node count must always be evenly divisible by
+the requested segment size.
 
 \fBNOTE\fR: The segment size must be less than or equal to
 the planning base block size. E.g., for a system with 30 nodes as the
@@ -2544,8 +2554,9 @@ The available trackable resources are configurable by the system
 administrator.
 .br
 \fBNOTE\fR: This option with gres/gpu or gres/shard will implicitly set
-\-\-tres\-bind=per_task:(gpu or shard)<tres_per_task>; this can be overridden
-with an explicit \-\-tres\-bind specification.
+\-\-tres\-bind=gres/[gpu|shard]:per_task:<tres_per_task>, or if multiple gpu
+types are specified \-\-tres\-bind=gres/gpu:per_task:<gpus_per_task_type_sum>.
+This can be overridden with an explicit \-\-tres\-bind specification.
 .br
 \fBNOTE\fR: Invalid TRES for \-\-tres\-per\-task include
 bb,billing,energy,fs,mem,node,pages,vmem.
@@ -2659,7 +2670,8 @@ Job array ID (index) number modulo 10.
 
 .TP
 \fB%J\fR
-jobid.stepid of the running job. (e.g. "128.0")
+jobid.stepid of the running job (e.g. "128.0"). The stepid is only expanded for
+regular steps, not for special steps like "batch" or "extern".
 .IP
 
 .TP
@@ -2975,6 +2987,11 @@ Same as \fB\-\-requeue\fR
 .TP
 \fBSBATCH_RESERVATION\fR
 Same as \fB\-\-reservation\fR
+.IP
+
+.TP
+\fBSBATCH_SEGMENT_SIZE\fR
+Same as \fB\-\-segment\fR
 .IP
 
 .TP
@@ -3319,6 +3336,12 @@ Advanced reservation containing the job allocation, if any.
 .IP
 
 .TP
+\fBSLURM_JOB_SEGMENT_SIZE\fR
+The size of the segments that was used to create the job allocation.
+Only set if \-\-segment\fR is specified.
+.IP
+
+.TP
 \fBSLURM_JOB_START_TIME\fR
 The UNIX timestamp for a job's start time.
 .IP
@@ -3351,6 +3374,11 @@ Same as \fB\-\-mem\fR
 .IP
 
 .TP
+\fBSLURM_NETWORK\fR
+Set to the value of the \fB\-\-network\fR option, if specified.
+.IP
+
+.TP
 \fBSLURM_NNODES\fR
 Total number of nodes in the job's resource allocation. See
 \fBSLURM_JOB_NUM_NODES\fR. Included for backwards compatibility.
@@ -3369,17 +3397,18 @@ for backwards compatibility.
 
 .TP
 \fBSLURM_NPROCS\fR
-Set to value of the \fB\-\-ntasks\fR option, if specified. Or, if either of
-the \fB\-\-ntasks\-per\-node\fR or \fB\-\-ntasks\-per\-gpu\fR options are
-specified, set to the number of tasks in the job.
-See \fBSLURM_NTASKS\fR. Included for backwards compatibility.
+Same as \fBSLURM_NTASKS\fR. Included for backwards compatibility.
 .IP
 
 .TP
 \fBSLURM_NTASKS\fR
-Set to value of the \fB\-\-ntasks\fR option, if specified. Or, if either of
-the \fB\-\-ntasks\-per\-node\fR or \fB\-\-ntasks\-per\-gpu\fR options are
-specified, set to the number of tasks in the job.
+Set to value of the \fB\-\-ntasks\fR option, if specified. Or, if any of the
+\fB\-\-ntasks\-per\-*\fR options are specified, set to the number of tasks in
+the job.
+
+\fBNOTE\fR: This is also an input variable for srun, so if set it will
+effectively set the \fB\-\-ntasks\fR option for srun when called from the batch
+script.
 .IP
 
 .TP

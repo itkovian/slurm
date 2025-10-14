@@ -297,7 +297,7 @@ function __slurm_compreply_param() {
 	__slurm_comp "$(compgen -W "${compreply[*]}" -- "$cur")"
 }
 
-# Value completion function for (comma) delimeted items
+# Value completion function for (comma) delimited items
 #
 # $1: word list for completions
 # $2: reserved words, complete not in list (optional)
@@ -643,7 +643,7 @@ function __slurm_compinit() {
 	__slurm_log_info "$(__func__): SLURM_COMP_VALUE='${SLURM_COMP_VALUE}'"
 	__slurm_log_info "$(__func__): SLURM_COMP_HOSTLIST='${SLURM_COMP_HOSTLIST}'"
 
-	# Ensure case sensative case matching
+	# Ensure case sensitive case matching
 	shopt -u nocasematch
 
 	__slurm_init_completion || return 1
@@ -687,7 +687,7 @@ function __slurm_comp_filter() {
 # Determine if a slurmctld will respond
 function __slurm_ctld_status() {
 	local output exit_code
-	output=$(scontrol ping)
+	output=$(scontrol ping >/dev/null 2>&1)
 	exit_code=$?
 
 	if ((exit_code == 0)); then
@@ -702,7 +702,7 @@ function __slurm_ctld_status() {
 # Determine if a slurmdbd will respond
 function __slurm_dbd_status() {
 	local output exit_code
-	output=$(sacctmgr ping 2>/dev/null)
+	output=$(sacctmgr ping >/dev/null 2>&1)
 	exit_code=$?
 
 	if ((exit_code == 0)); then
@@ -1326,7 +1326,7 @@ function __slurm_comp_dependency() {
 	local prefix=""
 	local suffix=","
 	if [[ $cur == *"?"* ]] && [[ $cur != *","* ]]; then
-		# Dependency expresson can use either ',' or '?' as the
+		# Dependency expression can use either ',' or '?' as the
 		# separator, but not both in the same expression.
 		#   , = logical and (all must be satisfied)
 		#   ? = logical or (any may be satisfied)
@@ -3380,6 +3380,7 @@ function __scontrol_create_nodename() {
 		"state="
 		"threadspercore="
 		"tmpdisk="
+		"topology="
 		"weight="
 	)
 	local states=(
@@ -3523,8 +3524,7 @@ function __scontrol_power_up() {
 # completion handler for: scontrol power down *
 function __scontrol_power_down() {
 	local parameters=(
-		"asap"
-		"force"
+		"reason="
 	)
 
 	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
@@ -3532,7 +3532,8 @@ function __scontrol_power_down() {
 	__slurm_log_trace "$(__func__): parameters[*]='${parameters[*]}'"
 
 	case "${prev}" in
-	down|asap|force) __slurm_compreply_list "$(__slurm_nodes)" "ALL" "true" ;;
+	down) __slurm_compreply_list "$(__slurm_nodes)" "ALL asap force" "true" ;;
+	asap | force) __slurm_compreply_list "$(__slurm_nodes)" "ALL" "true" ;;
 	*)
 		$split && return
 		__slurm_compreply_param "${parameters[*]}"
@@ -3865,6 +3866,27 @@ function __scontrol_show_steps() {
 	__slurm_compreply "$(__slurm_jobs) $(__slurm_jobsteps)"
 }
 
+# completion handler for: scontrol show topology *
+function __scontrol_show_topology() {
+	local parameters=(
+		"block="
+		"node="
+		"unit="
+		"switch="
+	)
+
+	param="$(__slurm_find_param "${parameters[*]}")"
+
+	__slurm_log_debug "$(__func__): prev='$prev' cur='$cur'"
+	__slurm_log_debug "$(__func__): param='$param'"
+	__slurm_log_trace "$(__func__): #parameters[@]='${#parameters[@]}'"
+	__slurm_log_trace "$(__func__): parameters[*]='${parameters[*]}'"
+
+	if [[ -z $param ]]; then
+		__slurm_compreply "${parameters[*]}"
+	fi
+}
+
 # completion handler for: scontrol show *
 function __scontrol_show() {
 	local subcmds=(
@@ -3887,6 +3909,7 @@ function __scontrol_show() {
 		"reservations"
 		"slurmd"
 		"steps"
+		"topoconf"
 		"topology"
 	)
 	local subcmd
@@ -4021,6 +4044,7 @@ function __scontrol_update_jobid() {
 		"minmemorycpu="
 		"minmemorynode="
 		"mintmpdisknode="
+		"mcslabel="
 		"name="
 		"nice="
 		"nodelist="
@@ -4136,6 +4160,7 @@ function __scontrol_update_nodename() {
 		"reason="
 		"resumeafter="
 		"state="
+		"topology="
 		"weight="
 	)
 	local states=(
@@ -4216,6 +4241,7 @@ function __scontrol_update_partitionname() {
 		"reqresv="
 		"shared="
 		"state="
+		"topology="
 		"tresbillingweights="
 	)
 	local job_defaults=(
@@ -4910,6 +4936,7 @@ function __sreport_cluster() {
 
 	case "${prev}" in
 	account?(s)) __slurm_compreply_list "$(__slurm_accounts)" ;;
+	qos?(s)) __slurm_compreply_list "$(__slurm_qos)" ;;
 	user?(s)) __slurm_compreply_list "$(__slurm_users)" ;;
 	wckey?(s)) __slurm_compreply_list "$(__slurm_wckeys)" ;;
 	*)

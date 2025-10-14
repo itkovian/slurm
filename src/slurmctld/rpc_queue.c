@@ -41,6 +41,7 @@
 #include <sys/prctl.h>
 #endif
 
+#include "src/common/data.h"
 #include "src/common/list.h"
 #include "src/common/macros.h"
 #include "src/common/read_config.h"
@@ -48,6 +49,7 @@
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
 
+#include "src/interfaces/conn.h"
 #include "src/interfaces/serializer.h"
 
 #include "src/slurmctld/job_scheduler.h"
@@ -173,8 +175,8 @@ static void *_rpc_queue_worker(void *arg)
 			}
 			msg->flags |= CTLD_QUEUE_PROCESSING;
 			q->func(msg);
-			if ((msg->conn_fd >= 0) && (close(msg->conn_fd) < 0))
-				error("close(%d): %m", msg->conn_fd);
+			conn_g_destroy(msg->tls_conn, true);
+			msg->tls_conn = NULL;
 
 			END_TIMER;
 			record_rpc_stats(msg, DELTA_TIMER);
@@ -199,12 +201,19 @@ static data_t *_load_config(void)
 		return NULL;
 	}
 
+	serializer_required(MIME_TYPE_YAML);
+
 	if (serialize_g_string_to_data(&conf, buf->head, buf->size,
 				       MIME_TYPE_YAML))
 		fatal("Failed to decode %s", file);
 
 	FREE_NULL_BUFFER(buf);
 	xfree(file);
+
+	if (data_get_type(conf) != DATA_TYPE_DICT)
+		fatal("%s: Unexpected root of rpc_queue.yaml is %s when dictionary expected",
+		      __func__, data_get_type_string(conf));
+
 	return conf;
 }
 
@@ -247,6 +256,9 @@ static void _apply_config(data_t *conf, slurmctld_rpc_t *q)
 		}
 	}
 
+	if ((field = data_key_get(settings, "rl_exempt")))
+		(void) data_get_bool_converted(field, &q->rl_exempt);
+
 	if ((field = data_key_get(settings, "hard_drop")))
 		(void) data_get_bool_converted(field, &q->hard_drop);
 
@@ -285,16 +297,19 @@ extern void rpc_queue_init(void)
 	conf = _load_config();
 
 	for (slurmctld_rpc_t *q = slurmctld_rpcs; q->msg_type; q++) {
-		if (!q->queue_enabled)
-			continue;
-
+		bool was_enabled = q->queue_enabled;
 		q->msg_name = rpc_num2string(q->msg_type);
 
 		_apply_config(conf, q);
 
 		/* config may have disabled this queue, check again */
 		if (!q->queue_enabled) {
-			verbose("disabled rpc_queue for %s", q->msg_name);
+			if (was_enabled)
+				verbose("disabled rpc_queue for %s",
+					q->msg_name);
+			else if (q->rl_exempt)
+				verbose("disabled rate limiting for %s",
+					q->msg_name);
 			continue;
 		}
 

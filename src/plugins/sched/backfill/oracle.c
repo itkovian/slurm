@@ -48,7 +48,7 @@ static bf_slot_t *slots;
 int used_slots;
 
 static int _get_bitmap_from_nspace(node_space_map_t *node_space,
-				   uint32_t start_time, bitstr_t *out_bitmap,
+				   time_t start_time, bitstr_t *out_bitmap,
 				   uint32_t *fragmentation)
 {
 	int j = 0;
@@ -94,7 +94,8 @@ static void _add_slot(job_record_t *job_ptr, bitstr_t *job_bitmap,
 		COPY_BITMAP(new_slot->job_mask, job_bitmap);
 
 		if (IS_JOB_WHOLE_TOPO(job_ptr))
-			topology_g_whole_topo(new_slot->job_mask);
+			topology_g_whole_topo(new_slot->job_mask,
+					      job_ptr->part_ptr->topology_idx);
 
 		bit_not(new_slot->job_mask);
 
@@ -153,7 +154,7 @@ bool oracle(job_record_t *job_ptr, bitstr_t *job_bitmap, time_t later_start,
 	    node_space_map_t *node_space)
 {
 	/*
-	 * Alwasys if posible add a new slot to slots array
+	 * Always if possible add a new slot to slots array
 	 */
 	if (used_slots < bf_topopt_iterations)
 		_add_slot(job_ptr, job_bitmap, *time_limit, *boot_time,
@@ -180,7 +181,7 @@ bool oracle(job_record_t *job_ptr, bitstr_t *job_bitmap, time_t later_start,
 				best_slot = i;
 
 		/*
-		 * Set start_time and job_bitmap acording to the 'best' slot
+		 * Set start_time and job_bitmap according to the 'best' slot
 		 */
 		job_ptr->start_time = slots[best_slot].start;
 		bit_copybits(job_bitmap, slots[best_slot].job_bitmap);

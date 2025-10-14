@@ -61,10 +61,12 @@ typedef struct {
 	part_res_record_t *future_part;
 	list_t *future_license_list;
 	list_t *job_license_list;
+	time_t now;
 	bitstr_t *orig_map;
 	bool *qos_preemptor;
 	time_t start;
 	bitstr_t **tmp_bitmap_pptr;
+	int *topology_idx;
 } cr_job_list_args_t;
 
 typedef struct {
@@ -73,11 +75,27 @@ typedef struct {
 	uint32_t *sum_cpus;
 } gres_cpus_foreach_args_t;
 
+typedef struct {
+	licenses_id_t *id;
+	uint32_t remaining;
+	uint32_t required;
+} license_req_t;
+
+typedef struct {
+	bitstr_t *effective_nodes;
+	list_t *future_license_list;
+	uint32_t license_cnt;
+	license_req_t *needed_licenses;
+	bitstr_t *selected_nodes;
+	int *topology_idx;
+} first_relevant_job_arg_t;
+
 uint64_t def_cpu_per_gpu = 0;
 uint64_t def_mem_per_gpu = 0;
 bool preempt_strict_order = false;
 bool preempt_for_licenses = false;
 int preempt_reorder_cnt	= 1;
+bool soft_time_limit = false;
 
 /* Local functions */
 static avail_res_t *_allocate(job_record_t *job_ptr,
@@ -157,19 +175,25 @@ static void _block_by_topology(job_record_t *job_ptr,
 			       part_res_record_t *p_ptr,
 			       bitstr_t *node_bitmap)
 {
-	bitstr_t *tmp_bitmap = NULL;
 	static int enable_exclusive_topo = -1;
+	bitstr_t *tmp2_bitmap = NULL;
+	bool whole_topo;
 
 	if (enable_exclusive_topo == -1) {
 		enable_exclusive_topo = 0;
-		(void) topology_g_get(TOPO_DATA_EXCLUSIVE_TOPO,
+		(void) topology_g_get(TOPO_DATA_EXCLUSIVE_TOPO, NULL,
 				      &enable_exclusive_topo);
 	}
 
 	if (!enable_exclusive_topo)
 		return;
 
+	whole_topo = (IS_JOB_WHOLE_TOPO(job_ptr) &&
+		      topology_g_whole_topo_enabled(job_ptr->part_ptr
+							    ->topology_idx));
+
 	for (; p_ptr; p_ptr = p_ptr->next) {
+		bitstr_t *tmp_bitmap = NULL;
 		if (!p_ptr->row)
 			continue;
 		for (int i = 0; i < p_ptr->num_rows; i++) {
@@ -179,8 +203,7 @@ static void _block_by_topology(job_record_t *job_ptr,
 
 				if (!job->node_bitmap)
 					continue;
-				if (IS_JOB_WHOLE_TOPO(job_ptr) ||
-				    (job->whole_node & WHOLE_TOPO) ||
+				if ((job->whole_node & WHOLE_TOPO) ||
 				    (p_ptr->part_ptr->flags &
 				     PART_FLAG_EXCLUSIVE_TOPO)) {
 					if (tmp_bitmap)
@@ -189,16 +212,33 @@ static void _block_by_topology(job_record_t *job_ptr,
 					else
 						tmp_bitmap = bit_copy(
 							job->node_bitmap);
+				} else if (whole_topo) {
+					if (tmp2_bitmap)
+						bit_or(tmp2_bitmap,
+						       job->node_bitmap);
+					else
+						tmp2_bitmap = bit_copy(
+							job->node_bitmap);
 				}
-
 			}
 		}
+		if (tmp_bitmap) {
+			topology_g_whole_topo(tmp_bitmap,
+					      p_ptr->part_ptr->topology_idx);
+			if (tmp2_bitmap)
+				bit_or(tmp2_bitmap, tmp_bitmap);
+			else
+				tmp2_bitmap = bit_copy(tmp_bitmap);
+		}
+		FREE_NULL_BITMAP(tmp_bitmap);
 	}
 
-	if (tmp_bitmap) {
-		topology_g_whole_topo(tmp_bitmap);
-		bit_and_not(node_bitmap, tmp_bitmap);
-		FREE_NULL_BITMAP(tmp_bitmap);
+	if (tmp2_bitmap) {
+		if (whole_topo)
+			topology_g_whole_topo(tmp2_bitmap,
+					      job_ptr->part_ptr->topology_idx);
+		bit_and_not(node_bitmap, tmp2_bitmap);
+		FREE_NULL_BITMAP(tmp2_bitmap);
 	}
 
 	return;
@@ -270,14 +310,36 @@ static struct multi_core_data *_create_default_mc(void)
 	return mc_ptr;
 }
 
+static time_t _soft_job_end(job_record_t *job_ptr, time_t now)
+{
+	time_t end_time;
+
+	if (!soft_time_limit || !job_ptr->time_min)
+		return job_ptr->end_time;
+
+	end_time = job_ptr->start_time + job_ptr->time_min * 60;
+	/*
+	 * To ensure consistency with the _bf_reserve_running() function.
+	 * If over the soft limit, assume the job will use half of the
+	 * remaining time until the hard limit.
+	 */
+	if (end_time < now)
+		end_time = now + (job_ptr->end_time - now) / 2;
+
+	return end_time;
+}
+
 /* list sort function: sort by the job's expected end time */
 static int _cr_job_list_sort(void *x, void *y)
 {
 	job_record_t *job1_ptr = *(job_record_t **) x;
 	job_record_t *job2_ptr = *(job_record_t **) y;
+	time_t end_time1, end_time2;
 
-	return slurm_sort_time_list_asc(&job1_ptr->end_time,
-					&job2_ptr->end_time);
+	end_time1 = _soft_job_end(job1_ptr, 0);
+	end_time2 = _soft_job_end(job2_ptr, 0);
+
+	return slurm_sort_time_list_asc(&end_time1, &end_time2);
 }
 
 static int _find_job (void *x, void *key)
@@ -356,10 +418,20 @@ static void _set_gpu_defaults(job_record_t *job_ptr)
 	if (job_ptr->part_ptr != last_part_ptr) {
 		/* Cache data from last partition referenced */
 		last_part_ptr = job_ptr->part_ptr;
-		last_cpu_per_gpu = cons_helpers_get_def_cpu_per_gpu(
+		last_cpu_per_gpu = slurm_get_def_cpu_per_gpu(
 			last_part_ptr->job_defaults_list);
-		last_mem_per_gpu = cons_helpers_get_def_mem_per_gpu(
+		if (last_cpu_per_gpu == NO_VAL64) {
+			last_cpu_per_gpu = slurm_get_def_cpu_per_gpu(
+				slurm_conf.job_defaults_list);
+		}
+		last_mem_per_gpu = slurm_get_def_mem_per_gpu(
 			last_part_ptr->job_defaults_list);
+		/* DefMemPerGPU is mutually exclusive with DefMemPer{CPU,Node} */
+		if ((last_mem_per_gpu == NO_VAL64) &&
+		    !last_part_ptr->def_mem_per_cpu) {
+			last_mem_per_gpu = slurm_get_def_mem_per_gpu(
+				slurm_conf.job_defaults_list);
+		}
 	}
 	if ((last_cpu_per_gpu != NO_VAL64) &&
 	    (job_ptr->details->orig_cpus_per_task == NO_VAL16))
@@ -446,8 +518,7 @@ static uint32_t _socks_per_node(job_record_t *job_ptr)
 	if ((mc_ptr->ntasks_per_socket != NO_VAL16) &&
 	    (mc_ptr->ntasks_per_socket != INFINITE16)) {
 		tasks_per_node = job_ptr->details->num_tasks / min_nodes;
-		s_p_n = (tasks_per_node + mc_ptr->ntasks_per_socket - 1) /
-			mc_ptr->ntasks_per_socket;
+		s_p_n = ROUNDUP(tasks_per_node, mc_ptr->ntasks_per_socket);
 		return s_p_n;
 	}
 
@@ -498,12 +569,28 @@ static avail_res_t *_can_job_run_on_node(job_record_t *job_ptr,
 	uint64_t avail_mem = NO_VAL64, req_mem;
 	int cpu_alloc_size, i, rc;
 	node_record_t *node_ptr = node_record_table_ptr[node_i];
-	list_t *node_gres_list;
-	bitstr_t *part_core_map_ptr = NULL, *req_sock_map = NULL;
+	bitstr_t *part_core_map_ptr = NULL;
 	avail_res_t *avail_res = NULL;
 	list_t *sock_gres_list = NULL;
-	bool enforce_binding = false;
 	uint16_t min_cpus_per_node, ntasks_per_node = 1;
+	gres_sock_list_create_t create_args = {
+		.cores_per_sock = node_ptr->cores,
+		.core_bitmap = NULL,
+		.cr_type = cr_type,
+		.enforce_binding = false,
+		.gpu_spec_bitmap = node_ptr->gpu_spec_bitmap,
+		.job_gres_list = job_ptr->gres_list_req,
+		.node_gres_list = node_usage[node_i].gres_list ?
+		node_usage[node_i].gres_list : node_ptr->gres_list,
+		.node_inx = node_i,
+		.node_name = node_ptr->name,
+		.resv_exc_ptr = resv_exc_ptr,
+		.req_sock_map = NULL,
+		.res_cores_per_gpu = node_ptr->res_cores_per_gpu,
+		.sockets = node_ptr->tot_sockets,
+		.s_p_n = s_p_n,
+		.use_total_gres = test_only,
+	};
 
 	if (((job_ptr->bit_flags & BACKFILL_TEST) == 0) &&
 	    !test_only && !will_run && IS_NODE_COMPLETING(node_ptr)) {
@@ -516,34 +603,24 @@ static avail_res_t *_can_job_run_on_node(job_record_t *job_ptr,
 
 	if (part_core_map)
 		part_core_map_ptr = part_core_map[node_i];
-	if (node_usage[node_i].gres_list)
-		node_gres_list = node_usage[node_i].gres_list;
-	else
-		node_gres_list = node_ptr->gres_list;
 
 	if (job_ptr->gres_list_req) {
 		/* Identify available GRES and adjacent cores */
 
 		if (job_ptr->bit_flags & GRES_ENFORCE_BIND)
-			enforce_binding = true;
+			create_args.enforce_binding = true;
 		if (!core_map[node_i]) {
 			core_map[node_i] = bit_alloc(node_ptr->tot_cores);
 			bit_set_all(core_map[node_i]);
 		}
-		sock_gres_list = gres_sock_list_create(
-					job_ptr->gres_list_req, node_gres_list,
-					resv_exc_ptr,
-					test_only, core_map[node_i],
-					node_ptr->tot_sockets, node_ptr->cores,
-					job_ptr->job_id, node_ptr->name,
-					enforce_binding, s_p_n, &req_sock_map,
-					job_ptr->user_id, node_i,
-					node_ptr->gpu_spec_bitmap,
-					node_ptr->res_cores_per_gpu,
-					cr_type);
+		create_args.core_bitmap = core_map[node_i];
+
+		gres_sock_list_create(&create_args);
+		sock_gres_list = create_args.sock_gres_list;
+		create_args.sock_gres_list = NULL;
 		if (!sock_gres_list) {	/* GRES requirement fail */
 			log_flag(SELECT_TYPE, "Test fail on node %s: gres_sock_list_create",
-			     node_ptr->name);
+				 node_ptr->name);
 			return NULL;
 		}
 	}
@@ -551,9 +628,10 @@ static avail_res_t *_can_job_run_on_node(job_record_t *job_ptr,
 	/* Identify available CPUs */
 	avail_res = _allocate(job_ptr, core_map[node_i],
 			      part_core_map_ptr, node_i,
-			      &cpu_alloc_size, req_sock_map, cr_type);
+			      &cpu_alloc_size, create_args.req_sock_map,
+			      cr_type);
 
-	FREE_NULL_BITMAP(req_sock_map);
+	FREE_NULL_BITMAP(create_args.req_sock_map);
 	if (!avail_res || (avail_res->avail_cpus == 0)) {
 		_free_avail_res(avail_res);
 		log_flag(SELECT_TYPE, "Test fail on node %d: _allocate_cores/sockets",
@@ -593,7 +671,7 @@ static avail_res_t *_can_job_run_on_node(job_record_t *job_ptr,
 		rc = gres_select_filter_remove_unusable(
 			sock_gres_list, avail_mem,
 			avail_res->avail_cpus,
-			enforce_binding, core_map[node_i],
+			create_args.enforce_binding, core_map[node_i],
 			node_ptr->tot_sockets, node_ptr->cores, node_ptr->tpc,
 			s_p_n,
 			job_ptr->details->ntasks_per_node,
@@ -1092,7 +1170,7 @@ static int _verify_node_state(part_res_record_t *cr_part_ptr,
 			if (_is_node_busy(cr_part_ptr, i, true,
 					  job_ptr->part_ptr, use_extra_row,
 					  node_usage[i].jobs)) {
-				log_flag(SELECT_TYPE, "node %s is running job that shares resouces in other partition",
+				log_flag(SELECT_TYPE, "node %s is running job that shares resources in other partition",
 					 node_ptr->name);
 				goto clear_bit;
 			}
@@ -2015,7 +2093,7 @@ alloc_job:
 		return error_code;
 	}
 
-	/* translate job_res->cpus array into format with repitition count */
+	/* translate job_res->cpus array into format with repetition count */
 	build_cnt = build_job_resources_cpu_array(job_res);
 	if (job_ptr->details->whole_node & WHOLE_NODE_REQUIRED) {
 		job_ptr->total_cpus = 0;
@@ -2181,11 +2259,13 @@ static int _test_only(job_record_t *job_ptr, bitstr_t *node_bitmap,
 {
 	int rc;
 	uint16_t tmp_cr_type = _setup_cr_type(job_ptr);
+	list_t *license_list = cluster_license_copy();
 
 	rc = _job_test(job_ptr, node_bitmap, min_nodes, max_nodes, req_nodes,
 		       SELECT_MODE_TEST_ONLY, tmp_cr_type, job_node_req,
-		       select_part_record, select_node_usage,
-		       cluster_license_list, NULL, false, false, false, NULL);
+		       select_part_record, select_node_usage, license_list,
+		       NULL, false, false, false, NULL);
+	FREE_NULL_LIST(license_list);
 	return rc;
 }
 
@@ -2255,12 +2335,18 @@ static int _job_res_rm_job(part_res_record_t *part_record_ptr,
 
 static bitstr_t *_select_topo_bitmap(job_record_t *job_ptr,
 				     bitstr_t *node_bitmap,
-				     bitstr_t **efctv_bitmap)
+				     bitstr_t **efctv_bitmap, int *topology_idx)
 {
 	if (IS_JOB_WHOLE_TOPO(job_ptr)) {
 		if (!(*efctv_bitmap)) {
 			*efctv_bitmap = bit_copy(node_bitmap);
-			topology_g_whole_topo(*efctv_bitmap);
+			topology_g_whole_topo(*efctv_bitmap,
+					      job_ptr->part_ptr->topology_idx);
+		} else if (*topology_idx != job_ptr->part_ptr->topology_idx) {
+			*topology_idx = job_ptr->part_ptr->topology_idx;
+			bit_copybits(*efctv_bitmap, node_bitmap);
+			topology_g_whole_topo(*efctv_bitmap,
+					      job_ptr->part_ptr->topology_idx);
 		}
 		return *efctv_bitmap;
 	} else
@@ -2306,11 +2392,13 @@ static int _build_cr_job_list(void *x, void *arg)
 			return 0;
 		}
 	}
-	if (job_ptr_preempt->end_time < args->start) {
+
+	if (_soft_job_end(job_ptr_preempt, args->now) <= args->start) {
 		bitstr_t *efctv_bitmap_ptr;
-		efctv_bitmap_ptr = _select_topo_bitmap(tmp_job_ptr,
-						       args->orig_map,
-						       args->tmp_bitmap_pptr);
+		efctv_bitmap_ptr =
+			_select_topo_bitmap(tmp_job_ptr, args->orig_map,
+					    args->tmp_bitmap_pptr,
+					    args->topology_idx);
 		if (bit_overlap_any(efctv_bitmap_ptr,
 				    tmp_job_ptr->node_bitmap) ||
 		    license_list_overlap(tmp_job_ptr->license_list,
@@ -2374,9 +2462,161 @@ static void _set_sched_weight(bitstr_t *node_bitmap, bool future)
 		    IS_NODE_REBOOT_ISSUED(node_ptr))
 			node_ptr->sched_weight |= 0x200;
 		if (IS_NODE_POWERED_DOWN(node_ptr) ||
-		    IS_NODE_POWERING_DOWN(node_ptr))
+		    IS_NODE_POWERING_DOWN(node_ptr) ||
+		    IS_NODE_POWERING_UP(node_ptr))
 			node_ptr->sched_weight |= 0x2000000000000;
 	}
+}
+
+/*
+ * Find a license_t record by license id (for use by list_find_first)
+ */
+static int _license_find_rec_by_id(void *x, void *key)
+{
+	licenses_t *license_entry = x;
+	licenses_id_t *id = key;
+
+	xassert(id->lic_id != NO_VAL16);
+
+	if (license_entry->id.lic_id == id->lic_id)
+		return 1;
+	return 0;
+}
+
+static licenses_t *_find_license_in_list(list_t *license_list,
+					 licenses_id_t *id)
+{
+	return list_find_first(license_list, _license_find_rec_by_id, id);
+}
+
+/* Return true if the removed job's end time can not be safely ignored */
+static int _is_job_relevant(void *x, void *key)
+{
+	job_record_t *running_job_ptr = x;
+	first_relevant_job_arg_t *args = key;
+	bitstr_t *effective_bitmap;
+	licenses_t *match;
+
+	xassert(args);
+	xassert(args->selected_nodes);
+
+	effective_bitmap =
+		_select_topo_bitmap(running_job_ptr, args->selected_nodes,
+				    &args->effective_nodes, args->topology_idx);
+
+	/* If nodes overlap assume it is not safe to ignore */
+	if (bit_overlap_any(effective_bitmap, running_job_ptr->node_bitmap))
+		return true;
+
+	/*
+	* Verify there are enough licenses without this job's licenses.
+	* This is only dealing with normal licenses, not hierarchal resources.
+	* see the comment in _set_license_req() for more details.
+	*/
+	if (running_job_ptr->license_list && args->needed_licenses) {
+		for (uint32_t i = 0; i < args->license_cnt; i++) {
+			license_req_t *needed_lic = &args->needed_licenses[i];
+			match = _find_license_in_list(
+				running_job_ptr->license_list, needed_lic->id);
+			if (!match)
+				continue;
+
+			/*
+			 * At this point, we know that there are enough
+			 * licenses in the cluster to run the job request. If
+			 * we remove licenses used by running_job, then are
+			 * there still enough for the job to run? If not, then
+			 * we know running_job is relevant for this job request.
+			 */
+			if (needed_lic->remaining < match->total)
+				needed_lic->remaining = 0;
+			else
+				needed_lic->remaining -= match->total;
+			if (needed_lic->remaining < needed_lic->required)
+				return true;
+		}
+	}
+
+	if (slurm_conf.debug_flags & DEBUG_FLAG_SELECT_TYPE)
+		verbose("%pJ no longer overlaps after resource selection",
+			running_job_ptr);
+	return false;
+}
+
+static int _set_license_req(void *x, void *arg)
+{
+	first_relevant_job_arg_t *args = arg;
+	licenses_t *job_license = x;
+	licenses_t *future_license = NULL;
+
+	/*
+	 * Populate needed_licenses with the required # of licenses for the job
+	 * and the amount of licenses available to be used.
+	 * Hierarchal resource licenses are ignored. This logic is currently
+	 * only used by --test-only job option, which does not support checking
+	 * hierarchal resources.
+	 */
+	if ((job_license->id.hres_id == NO_VAL16) &&
+	    (future_license = _find_license_in_list(args->future_license_list,
+						    &job_license->id))) {
+		args->needed_licenses[args->license_cnt].id =
+			&future_license->id;
+		args->needed_licenses[args->license_cnt].required =
+			job_license->total;
+		args->needed_licenses[args->license_cnt].remaining =
+			future_license->total - future_license->used;
+
+		args->license_cnt++;
+	}
+
+	return SLURM_SUCCESS;
+}
+
+/*
+ * Returns a pointer to the job with the latest endtime that can't be ignored.
+ * IN job_ptr      - job being scheduled
+ * IN node_bitmap  - nodes selected for job_ptr
+ * IN removed_jobs - list of jobs whose resources where considered for job_ptr
+ *		     sorted by latest end time to soonest end time.
+ * IN future_license_list - list of licenses in the state they would be at the
+ *			    end time of the first job in removed_jobs.
+ *			    (Note: For Backfill cycles this will be NULL)
+ * IN topology_idx - pointer to topology index
+ */
+static job_record_t *_get_last_relevant_job(job_record_t *job_ptr,
+					    bitstr_t *node_bitmap,
+					    list_t *removed_jobs,
+					    list_t *future_license_list,
+					    int *topology_idx)
+{
+	job_record_t *last_relevant_job;
+	first_relevant_job_arg_t relevant_job_args = {
+		.selected_nodes = node_bitmap,
+		.topology_idx = topology_idx,
+	};
+
+	xassert(removed_jobs);
+
+	if (future_license_list && job_ptr->license_list) {
+		/*
+		 * Only pass relevant future license to
+		 * _is_job_relevant() to reduce looping
+		 */
+		relevant_job_args.needed_licenses =
+			xcalloc(list_count(job_ptr->license_list),
+				sizeof(license_req_t));
+		relevant_job_args.future_license_list = future_license_list;
+
+		list_for_each(job_ptr->license_list, _set_license_req,
+			      &relevant_job_args);
+	}
+
+	last_relevant_job = list_find_first(removed_jobs, _is_job_relevant,
+					    &relevant_job_args);
+
+	xfree(relevant_job_args.needed_licenses);
+
+	return last_relevant_job;
 }
 
 static int _future_run_test(job_record_t *job_ptr, bitstr_t *node_bitmap,
@@ -2390,8 +2630,9 @@ static int _future_run_test(job_record_t *job_ptr, bitstr_t *node_bitmap,
 {
 	part_res_record_t *future_part;
 	node_use_record_t *future_usage;
-	list_t *future_license_list;
+	list_t *future_license_list = NULL;
 	list_t *cr_job_list;
+	list_t *removed_jobs = NULL;
 	list_itr_t *job_iterator;
 	int rc = SLURM_ERROR;
 	time_t now = time(NULL);
@@ -2402,6 +2643,7 @@ static int _future_run_test(job_record_t *job_ptr, bitstr_t *node_bitmap,
 	int time_window = 30;
 	time_t end_time = 0;
 	bool more_jobs = true;
+	int topology_idx;
 	DEF_TIMERS;
 
 	if (will_run_ptr && will_run_ptr->start)
@@ -2421,7 +2663,8 @@ static int _future_run_test(job_record_t *job_ptr, bitstr_t *node_bitmap,
 		return SLURM_ERROR;
 	}
 
-	future_license_list = license_copy(cluster_license_list);
+	if (!(job_ptr->bit_flags & BACKFILL_TEST))
+		future_license_list = cluster_license_copy();
 
 	/* Build list of running and suspended jobs */
 	cr_job_list = list_create(NULL);
@@ -2432,10 +2675,12 @@ static int _future_run_test(job_record_t *job_ptr, bitstr_t *node_bitmap,
 		.future_part = future_part,
 		.future_license_list = future_license_list,
 		.job_license_list = job_ptr->license_list,
+		.now = now,
 		.orig_map = orig_map,
 		.qos_preemptor = &qos_preemptor,
 		.start = will_run_ptr ? will_run_ptr->start : 0,
 		.tmp_bitmap_pptr = &efctv_bitmap,
+		.topology_idx = &topology_idx,
 	};
 	list_for_each(job_list, _build_cr_job_list, &args);
 
@@ -2464,12 +2709,15 @@ static int _future_run_test(job_record_t *job_ptr, bitstr_t *node_bitmap,
 	 */
 	list_sort(cr_job_list, _cr_job_list_sort);
 
+	removed_jobs = list_create(NULL);
+
 	START_TIMER;
 	job_iterator = list_iterator_create(cr_job_list);
 	while (more_jobs) {
 		job_record_t *last_job_ptr = NULL;
 		job_record_t *next_job_ptr = NULL;
 		int overlap, rm_job_cnt = 0;
+		time_t last_job_end_time, next_job_end_time;
 
 		bit_or(node_bitmap, orig_map);
 		while (true) {
@@ -2477,14 +2725,15 @@ static int _future_run_test(job_record_t *job_ptr, bitstr_t *node_bitmap,
 
 			if (!tmp_job_ptr ||
 			    (will_run_ptr && will_run_ptr->end &&
-			     tmp_job_ptr->end_time > will_run_ptr->end)) {
+			     _soft_job_end(tmp_job_ptr, now) >
+				     will_run_ptr->end)) {
 				more_jobs = false;
 				break;
 			}
-			efctv_bitmap_ptr = _select_topo_bitmap(
-						tmp_job_ptr,
-						node_bitmap,
-						&efctv_bitmap);
+			efctv_bitmap_ptr =
+				_select_topo_bitmap(tmp_job_ptr, node_bitmap,
+						    &efctv_bitmap,
+						    &topology_idx);
 			if (slurm_conf.debug_flags &
 			    DEBUG_FLAG_SELECT_TYPE) {
 				overlap = bit_overlap(efctv_bitmap_ptr,
@@ -2498,12 +2747,16 @@ static int _future_run_test(job_record_t *job_ptr, bitstr_t *node_bitmap,
 						tmp_job_ptr->
 						node_bitmap);
 			if (overlap == 0 && /* job has no usable nodes */
-			    !license_list_overlap(tmp_job_ptr->license_list,
-						  job_ptr->license_list)) {
+			    (!future_license_list ||
+			     !license_list_overlap_non_hres( /* ignore hres */
+				tmp_job_ptr->license_list,
+				job_ptr->license_list))) {
 				continue;  /* skip it */
 			}
 			if (!end_time) {
 				time_t delta = 0;
+				time_t tmp_job_end_time =
+					_soft_job_end(tmp_job_ptr, now);
 
 				/*
 				 * align all time windows on a
@@ -2513,21 +2766,22 @@ static int _future_run_test(job_record_t *job_ptr, bitstr_t *node_bitmap,
 				 * changing the results between
 				 * scheduling evaluations
 				 */
-				delta = tmp_job_ptr->end_time %
-							time_window;
-				end_time = tmp_job_ptr->end_time +
-						(time_window - delta);
+				delta = tmp_job_end_time % time_window;
+				end_time = tmp_job_end_time +
+					   (time_window - delta);
 			}
 			last_job_ptr = tmp_job_ptr;
 			(void) job_res_rm_job(
 				future_part, future_usage,
 				future_license_list, tmp_job_ptr, 0,
 				efctv_bitmap_ptr);
+			list_push(removed_jobs, tmp_job_ptr);
 			next_job_ptr = list_peek_next(job_iterator);
 			if (!next_job_ptr) {
 				more_jobs = false;
 				break;
-			} else if (next_job_ptr->end_time >
+			} else if ((next_job_end_time =
+					    _soft_job_end(next_job_ptr, now)) >
 				   (end_time + time_window)) {
 				break;
 			}
@@ -2545,13 +2799,26 @@ static int _future_run_test(job_record_t *job_ptr, bitstr_t *node_bitmap,
 			       backfill_busy_nodes, qos_preemptor,
 			       true, NULL);
 		if (rc == SLURM_SUCCESS) {
-			if (last_job_ptr->end_time <= now) {
+			job_record_t *last_relevant_job =
+				_get_last_relevant_job(job_ptr, node_bitmap,
+						       removed_jobs,
+						       future_license_list,
+						       &topology_idx);
+			/*
+			 * _get_last_relevant_job() should never return NULL
+			 * since we know at least one job's resources needed to
+			 * be added back in order for _job_test() to succeed.
+			 */
+			xassert(last_relevant_job); /* should never be NULL */
+			if (last_relevant_job)
+				last_job_ptr = last_relevant_job;
+			last_job_end_time = _soft_job_end(last_job_ptr, now);
+			if (last_job_end_time <= now) {
 				job_ptr->start_time =
 					_guess_job_end(last_job_ptr,
 						       now);
 			} else {
-				job_ptr->start_time =
-					last_job_ptr->end_time;
+				job_ptr->start_time = last_job_end_time;
 			}
 			break;
 		}
@@ -2560,16 +2827,16 @@ static int _future_run_test(job_record_t *job_ptr, bitstr_t *node_bitmap,
 				time_window += bf_window_scale;
 			else
 				time_window *= 2;
-		} while (next_job_ptr && next_job_ptr->end_time >
-			 (end_time + time_window));
+		} while (next_job_ptr &&
+			 next_job_end_time > (end_time + time_window));
 timer_check:
 		END_TIMER;
 		if (DELTA_TIMER >= 2000000)
 			break;	/* Quit after 2 seconds wall time */
 	}
-	if (slurm_conf.debug_flags & DEBUG_FLAG_SELECT_TYPE ||
-	    ((job_ptr->bit_flags & BACKFILL_TEST) &&
-	     slurm_conf.debug_flags & DEBUG_FLAG_BACKFILL)) {
+	if (end_time && (slurm_conf.debug_flags & DEBUG_FLAG_SELECT_TYPE ||
+			 ((job_ptr->bit_flags & BACKFILL_TEST) &&
+			  slurm_conf.debug_flags & DEBUG_FLAG_BACKFILL))) {
 		char time_str[25];
 		/*
 		 * When time_window gets large it could result in
@@ -2588,6 +2855,7 @@ cleanup:
 	part_data_destroy_res(future_part);
 	node_data_destroy(future_usage);
 	FREE_NULL_LIST(future_license_list);
+	FREE_NULL_LIST(removed_jobs);
 
 	return rc;
 }
@@ -2611,6 +2879,7 @@ static int _will_run_test(job_record_t *job_ptr, bitstr_t *node_bitmap,
 	time_t now = time(NULL);
 	uint16_t tmp_cr_type = _setup_cr_type(job_ptr);
 	bitstr_t *orig_map;
+	list_t *license_list = NULL;
 
 	orig_map = bit_copy(node_bitmap);
 
@@ -2619,12 +2888,13 @@ static int _will_run_test(job_record_t *job_ptr, bitstr_t *node_bitmap,
 
 	_set_sched_weight(node_bitmap, false);
 
+	license_list = cluster_license_copy();
 	/* Try to run with currently available nodes */
 	rc = _job_test(job_ptr, node_bitmap, min_nodes, max_nodes, req_nodes,
 		       SELECT_MODE_WILL_RUN, tmp_cr_type, job_node_req,
-		       select_part_record, select_node_usage,
-		       cluster_license_list, resv_exc_ptr, false, false,
-		       false, NULL);
+		       select_part_record, select_node_usage, license_list,
+		       resv_exc_ptr, false, false, false, NULL);
+	FREE_NULL_LIST(license_list);
 	if (rc == SLURM_SUCCESS) {
 		job_ptr->start_time = now;
 		FREE_NULL_BITMAP(orig_map);
@@ -2662,6 +2932,7 @@ test_future:
 	    preemptee_candidates) {
 		job_record_t *tmp_job_ptr;
 		bitstr_t *efctv_bitmap_ptr, *efctv_bitmap = NULL;
+		int topo_idx;
 		/*
 		 * Build list of preemptee jobs whose resources are
 		 * actually used. list returned even if not killed
@@ -2672,9 +2943,9 @@ test_future:
 		}
 		preemptee_iterator = list_iterator_create(preemptee_candidates);
 		while ((tmp_job_ptr = list_next(preemptee_iterator))) {
-			efctv_bitmap_ptr = _select_topo_bitmap(tmp_job_ptr,
-							       node_bitmap,
-							       &efctv_bitmap);
+			efctv_bitmap_ptr =
+				_select_topo_bitmap(tmp_job_ptr, node_bitmap,
+						    &efctv_bitmap, &topo_idx);
 			if (!bit_overlap_any(efctv_bitmap_ptr,
 					     tmp_job_ptr->node_bitmap))
 				continue;
@@ -2701,7 +2972,7 @@ static int _run_now(job_record_t *job_ptr, bitstr_t *node_bitmap,
 	list_itr_t *job_iterator, *preemptee_iterator;
 	part_res_record_t *future_part;
 	node_use_record_t *future_usage;
-	list_t *future_license_list;
+	list_t *license_list;
 	bool remove_some_jobs = false;
 	uint16_t pass_count = 0;
 	uint16_t mode = NO_VAL16;
@@ -2711,23 +2982,22 @@ static int _run_now(job_record_t *job_ptr, bitstr_t *node_bitmap,
 	save_node_map = bit_copy(node_bitmap);
 top:	orig_node_map = bit_copy(save_node_map);
 
+	license_list = cluster_license_copy();
 	rc = _job_test(job_ptr, node_bitmap, min_nodes, max_nodes, req_nodes,
 		       SELECT_MODE_RUN_NOW, tmp_cr_type, job_node_req,
-		       select_part_record, select_node_usage,
-		       cluster_license_list, resv_exc_ptr, false, false,
-		       false, NULL);
+		       select_part_record, select_node_usage, license_list,
+		       resv_exc_ptr, false, false, false, NULL);
 
 	/* Don't try preempting for licenses if not enabled */
-	if ((rc == ESLURM_LICENSES_UNAVAILABLE) && !preempt_for_licenses)
+	if ((rc == ESLURM_LICENSES_UNAVAILABLE) &&
+	    (!preempt_for_licenses || (mode == PREEMPT_MODE_SUSPEND)))
 		preemptee_candidates = NULL;
 
 	if ((rc != SLURM_SUCCESS) && preemptee_candidates && preempt_by_qos) {
 		/* Determine QOS preempt mode of first job */
-		job_iterator = list_iterator_create(preemptee_candidates);
-		if ((tmp_job_ptr = list_next(job_iterator))) {
+		if ((tmp_job_ptr = list_peek(preemptee_candidates))) {
 			mode = slurm_job_preempt_mode(tmp_job_ptr);
 		}
-		list_iterator_destroy(job_iterator);
 	}
 	if ((rc != SLURM_SUCCESS) && preemptee_candidates && preempt_by_qos &&
 	    (mode == PREEMPT_MODE_SUSPEND) &&
@@ -2749,7 +3019,6 @@ top:	orig_node_map = bit_copy(save_node_map);
 			FREE_NULL_BITMAP(save_node_map);
 			return SLURM_ERROR;
 		}
-		future_license_list = license_copy(cluster_license_list);
 
 		job_iterator = list_iterator_create(preemptee_candidates);
 		while ((tmp_job_ptr = list_next(job_iterator))) {
@@ -2769,11 +3038,10 @@ top:	orig_node_map = bit_copy(save_node_map);
 			bit_or(node_bitmap, orig_node_map);
 			rc = _job_test(job_ptr, node_bitmap, min_nodes,
 				       max_nodes, req_nodes,
-				       SELECT_MODE_WILL_RUN,
-				       tmp_cr_type, job_node_req,
-				       future_part, future_usage,
-				       future_license_list, resv_exc_ptr,
-				       false, false, preempt_mode, NULL);
+				       SELECT_MODE_WILL_RUN, tmp_cr_type,
+				       job_node_req, future_part, future_usage,
+				       NULL, resv_exc_ptr, false, false,
+				       preempt_mode, NULL);
 
 			if (rc != SLURM_SUCCESS)
 				continue;
@@ -2788,8 +3056,8 @@ top:	orig_node_map = bit_copy(save_node_map);
 				       max_nodes, req_nodes,
 				       SELECT_MODE_RUN_NOW, tmp_cr_type,
 				       job_node_req, select_part_record,
-				       select_node_usage, cluster_license_list,
-				       resv_exc_ptr, false, true, preempt_mode,
+				       select_node_usage, NULL, resv_exc_ptr,
+				       false, true, preempt_mode,
 				       preemptees_to_suspend_by_qos);
 			FREE_NULL_LIST(preemptees_to_suspend_by_qos);
 
@@ -2798,7 +3066,7 @@ top:	orig_node_map = bit_copy(save_node_map);
 			list_iterator_destroy(job_iterator);
 			part_data_destroy_res(future_part);
 			node_data_destroy(future_usage);
-			FREE_NULL_LIST(future_license_list);
+			FREE_NULL_LIST(license_list);
 
 			return rc;
 		}
@@ -2812,6 +3080,7 @@ top:	orig_node_map = bit_copy(save_node_map);
 		if (future_part == NULL) {
 			FREE_NULL_BITMAP(orig_node_map);
 			FREE_NULL_BITMAP(save_node_map);
+			FREE_NULL_LIST(license_list);
 			return SLURM_ERROR;
 		}
 		future_usage = node_data_dup_use(select_node_usage,
@@ -2820,10 +3089,9 @@ top:	orig_node_map = bit_copy(save_node_map);
 			part_data_destroy_res(future_part);
 			FREE_NULL_BITMAP(orig_node_map);
 			FREE_NULL_BITMAP(save_node_map);
+			FREE_NULL_LIST(license_list);
 			return SLURM_ERROR;
 		}
-
-		future_license_list = license_copy(cluster_license_list);
 
 		job_iterator = list_iterator_create(preemptee_candidates);
 		while ((tmp_job_ptr = list_next(job_iterator))) {
@@ -2832,18 +3100,17 @@ top:	orig_node_map = bit_copy(save_node_map);
 			    (mode != PREEMPT_MODE_CANCEL))
 				continue;	/* can't remove job */
 			/* Remove preemptable job now */
-			if(_job_res_rm_job(future_part, future_usage,
-					   future_license_list, tmp_job_ptr, 0,
-					   orig_node_map))
+			if (_job_res_rm_job(future_part, future_usage,
+					    license_list, tmp_job_ptr, 0,
+					    orig_node_map))
 				continue;
 			bit_or(node_bitmap, orig_node_map);
 			rc = _job_test(job_ptr, node_bitmap, min_nodes,
 				       max_nodes, req_nodes,
-				       SELECT_MODE_WILL_RUN,
-				       tmp_cr_type, job_node_req,
-				       future_part, future_usage,
-				       future_license_list, resv_exc_ptr,
-				       false, false, preempt_mode, NULL);
+				       SELECT_MODE_WILL_RUN, tmp_cr_type,
+				       job_node_req, future_part, future_usage,
+				       license_list, resv_exc_ptr, false, false,
+				       preempt_mode, NULL);
 			tmp_job_ptr->details->usable_nodes = 0;
 			if (rc != SLURM_SUCCESS)
 				continue;
@@ -2902,7 +3169,7 @@ top:	orig_node_map = bit_copy(save_node_map);
 			list_iterator_destroy(job_iterator);
 			part_data_destroy_res(future_part);
 			node_data_destroy(future_usage);
-			FREE_NULL_LIST(future_license_list);
+			FREE_NULL_LIST(license_list);
 			goto top;
 		}
 		list_iterator_destroy(job_iterator);
@@ -2942,8 +3209,8 @@ top:	orig_node_map = bit_copy(save_node_map);
 
 		part_data_destroy_res(future_part);
 		node_data_destroy(future_usage);
-		FREE_NULL_LIST(future_license_list);
 	}
+	FREE_NULL_LIST(license_list);
 	FREE_NULL_BITMAP(orig_node_map);
 	FREE_NULL_BITMAP(save_node_map);
 
@@ -3176,8 +3443,9 @@ static avail_res_t *_allocate_sc(job_record_t *job_ptr, bitstr_t *core_map,
 			used_cores[i] += free_cores[i];
 			used_cpus = used_cores[i] * threads_per_core;
 			free_cores[i] = 0;
-		} else if (used_cpus >=
-			   job_ptr->part_ptr->max_cpus_per_socket) {
+		} else if (tmp_core &&
+			   (used_cpus >=
+			    job_ptr->part_ptr->max_cpus_per_socket)) {
 			log_flag(SELECT_TYPE, "MaxCpusPerSocket: %u, CPUs already used on socket[%d]: %u - won't use the socket.",
 				 job_ptr->part_ptr->max_cpus_per_socket,
 				 i,
@@ -3190,7 +3458,8 @@ static avail_res_t *_allocate_sc(job_record_t *job_ptr, bitstr_t *core_map,
 				     threads_per_core));
 		}
 		free_core_count += free_cores[i];
-		used_cpu_count += used_cpus;
+		if (tmp_core)
+			used_cpu_count += used_cpus;
 	}
 	free_cpu_count = free_core_count * threads_per_core;
 	avail_res->max_cpus = free_cpu_count;
@@ -3310,8 +3579,7 @@ static avail_res_t *_allocate_sc(job_record_t *job_ptr, bitstr_t *core_map,
 			   (cpus_per_task > threads_per_core)) {
 			/* find out how many cores a task will use */
 			int task_cores =
-				(cpus_per_task + threads_per_core - 1) /
-				threads_per_core;
+				ROUNDUP(cpus_per_task, threads_per_core);
 			int task_cpus  = task_cores * threads_per_core;
 			/* find out how many tasks can fit on a node */
 			int tasks = avail_cpus / task_cpus;

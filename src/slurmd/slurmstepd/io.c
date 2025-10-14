@@ -72,6 +72,8 @@
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
 
+#include "src/interfaces/conn.h"
+
 #include "src/slurmd/common/fname.h"
 #include "src/slurmd/slurmd/slurmd.h"
 #include "src/slurmd/slurmstepd/io.h"
@@ -83,6 +85,8 @@
  */
 #define STDIO_MAX_FREE_BUF 1024
 #define STDIO_MAX_MSG_CACHE 128
+
+#define STDIO_FILE_RETRIES 10
 
 struct io_buf {
 	int ref_count;
@@ -197,7 +201,7 @@ struct task_read_info {
 struct window_info {
 	stepd_step_task_info_t *task;
 	stepd_step_rec_t *step;
-	int pty_fd;
+	void *conn;
 };
 #ifdef HAVE_PTY_H
 static void  _spawn_window_manager(stepd_step_task_info_t *task, stepd_step_rec_t *step);
@@ -208,8 +212,8 @@ static void *_window_manager(void *arg);
  * General declarations
  **********************************************************************/
 static void *_io_thr(void *);
-static int _send_io_init_msg(int sock, srun_info_t *srun, stepd_step_rec_t *step,
-			     bool init);
+static int _send_io_init_msg(int sock, void *conn, srun_info_t *srun,
+			     stepd_step_rec_t *step, bool init);
 static void _send_eof_msg(struct task_read_info *out);
 static struct io_buf *_task_build_message(struct task_read_info *out,
 					  stepd_step_rec_t *step, cbuf_t *cbuf);
@@ -325,7 +329,7 @@ static int _client_read(eio_obj_t *obj, list_t *objs)
 			debug5("  _client_read free_incoming is empty");
 			return SLURM_SUCCESS;
 		}
-		n = io_hdr_read_fd(obj->fd, &client->header);
+		n = io_hdr_read_fd(obj->fd, obj->conn, &client->header);
 		if (n <= 0) { /* got eof or fatal error */
 			debug5("  got eof or error _client_read header, n=%d", n);
 			client->in_eof = true;
@@ -372,7 +376,12 @@ static int _client_read(eio_obj_t *obj, list_t *objs)
 		buf = client->in_msg->data +
 			(client->in_msg->length - client->in_remaining);
 	again:
-		if ((n = read(obj->fd, buf, client->in_remaining)) < 0) {
+		if (obj->conn) {
+			n = conn_g_recv(obj->conn, buf, client->in_remaining);
+		} else {
+			n = read(obj->fd, buf, client->in_remaining);
+		}
+		if (n < 0) {
 			if (errno == EINTR)
 				goto again;
 			if (errno == EAGAIN || errno == EWOULDBLOCK) {
@@ -474,7 +483,12 @@ static int _client_write(eio_obj_t *obj, list_t *objs)
 	buf = client->out_msg->data +
 		(client->out_msg->length - client->out_remaining);
 again:
-	if ((n = write(obj->fd, buf, client->out_remaining)) < 0) {
+	if (obj->conn) {
+		n = conn_g_send(obj->conn, buf, client->out_remaining);
+	} else {
+		n = write(obj->fd, buf, client->out_remaining);
+	}
+	if (n < 0) {
 		if (errno == EINTR) {
 			goto again;
 		} else if ((errno == EAGAIN) || (errno == EWOULDBLOCK)) {
@@ -819,7 +833,7 @@ static void *_window_manager(void *arg)
 	struct pollfd ufds;
 	char buf[4];
 
-	ufds.fd = win_info->pty_fd;
+	ufds.fd = conn_g_get_fd(win_info->conn);
 	ufds.events = POLLIN;
 
 	while (1) {
@@ -834,7 +848,7 @@ static void *_window_manager(void *arg)
 			 *  (ufds.revents & POLLERR)) */
 			break;
 		}
-		len = slurm_read_stream(win_info->pty_fd, buf, 4);
+		len = slurm_read_stream(win_info->conn, buf, 4);
 		if ((len == -1) && ((errno == EINTR) || (errno == EAGAIN)))
 			continue;
 		if (len < 4) {
@@ -858,14 +872,19 @@ static void *_window_manager(void *arg)
 				(int)win_info->task->pid);
 		}
 	}
+
+	conn_g_destroy(win_info->conn, true);
+	xfree(win_info);
+
 	return NULL;
 }
 
 static void
 _spawn_window_manager(stepd_step_task_info_t *task, stepd_step_rec_t *step)
 {
+	void *conn = NULL;
+	char *tls_cert = NULL;
 	char *host, *port, *rows, *cols;
-	int pty_fd;
 	slurm_addr_t pty_addr;
 	uint16_t port_u;
 	struct window_info *win_info;
@@ -901,9 +920,15 @@ _spawn_window_manager(stepd_step_task_info_t *task, stepd_step_rec_t *step)
 
 	port_u = atoi(port);
 	slurm_set_addr(&pty_addr, port_u, host);
-	pty_fd = slurm_open_msg_conn(&pty_addr);
-	if (pty_fd < 0) {
-		error("slurm_open_msg_conn(pty_conn) %s,%u: %m",
+
+	if (tls_enabled()) {
+		srun_info_t *srun = list_peek(step->sruns);
+		if (srun)
+			tls_cert = srun->tls_cert;
+	}
+
+	if (!(conn = slurm_open_msg_conn(&pty_addr, tls_cert))) {
+		error("slurm_open_stream(pty_conn) %s,%u: %m",
 			host, port_u);
 		return;
 	}
@@ -911,13 +936,13 @@ _spawn_window_manager(stepd_step_task_info_t *task, stepd_step_rec_t *step)
 	win_info = xmalloc(sizeof(struct window_info));
 	win_info->task   = task;
 	win_info->step    = step;
-	win_info->pty_fd = pty_fd;
+	win_info->conn = conn;
 	slurm_thread_create_detached(_window_manager, win_info);
 }
 #endif
 
 /**********************************************************************
- * General fuctions
+ * General functions
  **********************************************************************/
 
 /*
@@ -990,10 +1015,27 @@ _init_task_stdio_fds(stepd_step_task_info_t *task, stepd_step_rec_t *step)
 		/* open file on task's stdin */
 		debug5("  stdin file name = %s", task->ifname);
 		do {
-			task->stdin_fd = open(task->ifname, (O_RDONLY |
-							     O_CLOEXEC));
-			++count;
-		} while (task->stdin_fd == -1 && errno == EINTR && count < 10);
+			if ((task->stdin_fd = open(task->ifname,
+						   (O_RDONLY | O_CLOEXEC)))
+									!= -1)
+				break;
+
+			/* "Retry-able" errors. */
+			if (errno == EINTR) {
+				debug("%s: Could not open stdin file '%s': '%s'. Attempt [%d/%d], retrying.",
+				      __func__,
+				      task->ifname,
+				      strerror(errno),
+				      (count + 1),
+				      STDIO_FILE_RETRIES);
+				count++;
+				continue;
+			}
+
+			/* Non-"retryable" errors. */
+			break;
+
+		} while (count < STDIO_FILE_RETRIES);
 		if (task->stdin_fd == -1) {
 			error("Could not open stdin file %s: %m", task->ifname);
 			return SLURM_ERROR;
@@ -1044,18 +1086,51 @@ _init_task_stdio_fds(stepd_step_task_info_t *task, stepd_step_rec_t *step)
 	    (((step->flags & LAUNCH_LABEL_IO) == 0) ||
 	     xstrcmp(task->ofname, "/dev/null") == 0)) {
 #endif
-		int count = 0;
+		int count = 0, mkdir_rc;
+		bool tried_mkdir = false;
 		/* open file on task's stdout */
 		debug5("  stdout file name = %s", task->ofname);
 		do {
-			task->stdout_fd = open(task->ofname,
-					       file_flags | O_CLOEXEC, 0666);
-			if (!count && (errno == ENOENT)) {
-				mkdirpath(task->ofname, 0755, false);
-				errno = EINTR;
+			if ((task->stdout_fd = open(task->ofname,
+						    file_flags | O_CLOEXEC,
+						    0666)) != -1)
+				break;
+
+			/* "Retry-able" errors. */
+			if (errno == EINTR) {
+				debug("%s: Could not open stdout file '%s': '%s'. Attempt [%d/%d], retrying.",
+				      __func__,
+				      task->ofname,
+				      strerror(count + 1),
+				      (count + 1),
+				      STDIO_FILE_RETRIES);
+				count++;
+				continue;
 			}
-			++count;
-		} while (task->stdout_fd == -1 && errno == EINTR && count < 10);
+
+			if (errno == ENOENT && !tried_mkdir) {
+				mkdir_rc = mkdirpath(task->ofname, 0755, false);
+				tried_mkdir = true;
+				if (mkdir_rc == SLURM_SUCCESS) {
+					debug("%s: Could not open stdout file '%s': '%s'. Retrying after successful path creation.",
+					      __func__,
+					      task->ofname,
+					      strerror(ENOENT));
+					continue;
+				} else {
+					error("%s: Could not open stdout file '%s': '%s'. Recursive path creation failed: '%s'.",
+					      __func__,
+					      task->ofname,
+					      strerror(ENOENT),
+					      strerror(mkdir_rc));
+					return SLURM_ERROR;
+				}
+			}
+
+			/* Non-"retryable" errors. */
+			break;
+
+		} while (count < STDIO_FILE_RETRIES);
 		if (task->stdout_fd == -1) {
 			error("Could not open stdout file %s: %m",
 			      task->ofname);
@@ -1143,18 +1218,51 @@ _init_task_stdio_fds(stepd_step_task_info_t *task, stepd_step_rec_t *step)
 	    (((step->flags & LAUNCH_LABEL_IO) == 0) ||
 	     (xstrcmp(task->efname, "/dev/null") == 0))) {
 #endif
-		int count = 0;
+		int count = 0, mkdir_rc;
+		bool tried_mkdir = false;
 		/* open file on task's stdout */
 		debug5("  stderr file name = %s", task->efname);
 		do {
-			task->stderr_fd = open(task->efname,
-					       file_flags | O_CLOEXEC, 0666);
-			if (!count && (errno == ENOENT)) {
-				mkdirpath(task->efname, 0755, false);
-				errno = EINTR;
+			if ((task->stderr_fd = open(task->efname,
+						    file_flags | O_CLOEXEC,
+						    0666)) != -1)
+				break;
+
+			/* "Retry-able" errors. */
+			if (errno == EINTR) {
+				debug("%s: Could not open stderr file '%s': '%s'. Attempt [%d/%d], retrying.",
+				      __func__,
+				      task->efname,
+				      strerror(errno),
+				      (count + 1),
+				      STDIO_FILE_RETRIES);
+				count++;
+				continue;
 			}
-			++count;
-		} while (task->stderr_fd == -1 && errno == EINTR && count < 10);
+
+			if (errno == ENOENT && !tried_mkdir) {
+				mkdir_rc = mkdirpath(task->efname, 0755, false);
+				tried_mkdir = true;
+				if (mkdir_rc == SLURM_SUCCESS) {
+					debug("%s: Could not open stderr file '%s': '%s'. Retrying after successful path creation.",
+					      __func__,
+					      task->efname,
+					      strerror(ENOENT));
+					continue;
+				} else {
+					error("%s: Could not open stderr file '%s': '%s'. Recursive path creation failed: '%s'.",
+					      __func__,
+					      task->efname,
+					      strerror(ENOENT),
+					      strerror(mkdir_rc));
+					return SLURM_ERROR;
+				}
+			}
+
+			/* Non-"retryable" errors. */
+			break;
+
+		} while (count < STDIO_FILE_RETRIES);
 		if (task->stderr_fd == -1) {
 			error("Could not open stderr file %s: %m",
 			      task->efname);
@@ -1552,6 +1660,7 @@ io_initial_client_connect(srun_info_t *srun, stepd_step_rec_t *step,
 	int sock = -1;
 	struct client_io_info *client;
 	eio_obj_t *obj;
+	void *conn = NULL;
 
 	debug4 ("adding IO connection (logical node rank %d)", step->nodeid);
 
@@ -1563,7 +1672,7 @@ io_initial_client_connect(srun_info_t *srun, stepd_step_rec_t *step,
 		debug4("connecting IO back to %pA", &srun->ioaddr);
 	}
 
-	if ((sock = (int) slurm_open_stream(&srun->ioaddr, true)) < 0) {
+	if (!(conn = slurm_open_msg_conn(&srun->ioaddr, srun->tls_cert))) {
 		error("connect io: %m");
 		/* XXX retry or silently fail?
 		 *     fail for now.
@@ -1571,8 +1680,10 @@ io_initial_client_connect(srun_info_t *srun, stepd_step_rec_t *step,
 		return SLURM_ERROR;
 	}
 
+	sock = conn_g_get_fd(conn);
+
 	fd_set_blocking(sock);  /* just in case... */
-	_send_io_init_msg(sock, srun, step, true);
+	_send_io_init_msg(sock, conn, srun, step, true);
 
 	debug5("  back from _send_io_init_msg");
 	fd_set_nonblocking(sock);
@@ -1590,6 +1701,7 @@ io_initial_client_connect(srun_info_t *srun, stepd_step_rec_t *step,
 	client->is_local_file = false;
 
 	obj = eio_obj_create(sock, &client_ops, (void *)client);
+	obj->conn = conn;
 	list_append(step->clients, (void *)obj);
 	eio_new_initial_obj(step->eio, (void *)obj);
 	debug5("Now handling %d IO Client object(s)",
@@ -1610,6 +1722,7 @@ io_client_connect(srun_info_t *srun, stepd_step_rec_t *step)
 	int sock = -1;
 	struct client_io_info *client;
 	eio_obj_t *obj;
+	void *conn = NULL;
 
 	debug4 ("adding IO connection (logical node rank %d)", step->nodeid);
 
@@ -1617,7 +1730,7 @@ io_client_connect(srun_info_t *srun, stepd_step_rec_t *step)
 		debug4("connecting IO back to %pA", &srun->ioaddr);
 	}
 
-	if ((sock = (int) slurm_open_stream(&srun->ioaddr, true)) < 0) {
+	if (!(conn = slurm_open_msg_conn(&srun->ioaddr, srun->tls_cert))) {
 		error("connect io: %m");
 		/* XXX retry or silently fail?
 		 *     fail for now.
@@ -1625,8 +1738,10 @@ io_client_connect(srun_info_t *srun, stepd_step_rec_t *step)
 		return SLURM_ERROR;
 	}
 
+	sock = conn_g_get_fd(conn);
+
 	fd_set_blocking(sock);  /* just in case... */
-	_send_io_init_msg(sock, srun, step, false);
+	_send_io_init_msg(sock, conn, srun, step, false);
 
 	debug5("  back from _send_io_init_msg");
 	fd_set_nonblocking(sock);
@@ -1646,6 +1761,7 @@ io_client_connect(srun_info_t *srun, stepd_step_rec_t *step)
 	/* client object adds itself to step->clients in _client_writable */
 
 	obj = eio_obj_create(sock, &client_ops, (void *)client);
+	obj->conn = conn;
 	eio_new_obj(step->eio, (void *)obj);
 
 	debug5("New IO Client object added");
@@ -1653,8 +1769,8 @@ io_client_connect(srun_info_t *srun, stepd_step_rec_t *step)
 	return SLURM_SUCCESS;
 }
 
-static int
-_send_io_init_msg(int sock, srun_info_t *srun, stepd_step_rec_t *step, bool init)
+static int _send_io_init_msg(int sock, void *conn, srun_info_t *srun,
+			     stepd_step_rec_t *step, bool init)
 {
 	io_init_msg_t msg;
 
@@ -1678,7 +1794,7 @@ _send_io_init_msg(int sock, srun_info_t *srun, stepd_step_rec_t *step, bool init
 	else
 		msg.stderr_objs = list_count(step->stderr_eio_objs);
 
-	if (io_init_msg_write_to_fd(sock, &msg) != SLURM_SUCCESS) {
+	if (io_init_msg_write_to_fd(sock, conn, &msg) != SLURM_SUCCESS) {
 		error("Couldn't sent slurm_io_init_msg");
 		xfree(msg.io_key);
 		return SLURM_ERROR;

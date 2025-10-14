@@ -140,7 +140,7 @@ int stepd_cleanup_sockets(const char *directory, const char *nodename);
 int stepd_terminate(int fd, uint16_t protocol_version);
 
 /*
- * Connect to a slurmstepd proccess by way of its unix domain socket.
+ * Connect to a slurmstepd process by way of its unix domain socket.
  *
  * Both "directory" and "nodename" may be null, in which case stepd_connect
  * will attempt to determine them on its own.  If you are using multiple
@@ -182,8 +182,8 @@ int stepd_signal_container(int fd, uint16_t protocol_version, int signal,
  *         this header does not need to include slurm_protocol_defs.h.
  */
 extern int stepd_attach(int fd, uint16_t protocol_version, slurm_addr_t *ioaddr,
-			slurm_addr_t *respaddr, char *io_key, uid_t uid,
-			reattach_tasks_response_msg_t *resp);
+			slurm_addr_t *respaddr, char *cert, char *io_key,
+			uid_t uid, reattach_tasks_response_msg_t *resp);
 
 /*
  * Scan for available running slurm step daemons by checking

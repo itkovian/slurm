@@ -85,7 +85,7 @@ static void _update_wckeys(ctxt_t *ctxt)
 
 		if (!wckey_list || list_is_empty(wckey_list)) {
 			resp_warn(ctxt, __func__,
-				  "ignoring empty or non-existant wckeys array for update");
+				  "ignoring empty or non-existent wckeys array for update");
 		} else {
 			update_wckeys(ctxt, true, wckey_list);
 		}
@@ -150,6 +150,6 @@ extern int op_handler_wckeys(ctxt_t *ctxt)
 	}
 
 cleanup:
-	slurmdb_destroy_wckey_rec(wckey_cond);
+	slurmdb_destroy_wckey_cond(wckey_cond);
 	return SLURM_SUCCESS;
 }

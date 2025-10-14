@@ -44,8 +44,8 @@
 
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t cond = PTHREAD_COND_INITIALIZER;
-static bool running_flag = false;
-static pthread_t tid;
+static bool signaled = false;
+static pthread_t tid = 0;
 static uint16_t timeout;
 static char *program_name;
 static uint32_t recorded_jobid = NO_VAL;
@@ -60,7 +60,7 @@ void step_terminate_monitor_start(stepd_step_rec_t *step)
 
 	slurm_mutex_lock(&lock);
 
-	if (running_flag) {
+	if (tid) {
 		slurm_mutex_unlock(&lock);
 		return;
 	}
@@ -70,7 +70,6 @@ void step_terminate_monitor_start(stepd_step_rec_t *step)
 	program_name = xstrdup(conf->unkillable_program);
 	slurm_conf_unlock();
 
-	running_flag = true;
 	slurm_thread_create(&tid, _monitor, step);
 
 	recorded_jobid = step->step_id.job_id;
@@ -83,17 +82,16 @@ void step_terminate_monitor_stop(void)
 {
 	slurm_mutex_lock(&lock);
 
-	if (!running_flag) {
+	if (!tid) {
 		error("%s: already stopped", __func__);
 		slurm_mutex_unlock(&lock);
 		return;
 	}
 
-	running_flag = false;
 	debug("signaling condition");
 	slurm_cond_signal(&cond);
+	signaled = true;
 	slurm_mutex_unlock(&lock);
-
 	slurm_thread_join(tid);
 
 	xfree(program_name);
@@ -104,19 +102,19 @@ static void *_monitor(void *arg)
 {
 	stepd_step_rec_t *step = (stepd_step_rec_t *)arg;
 	struct timespec ts = {0, 0};
-	int rc;
+	int rc = 0;
 
 	debug2("step_terminate_monitor will run for %d secs", timeout);
 
 	ts.tv_sec = time(NULL) + 1 + timeout;
 
 	slurm_mutex_lock(&lock);
-	if (!running_flag)
-		goto done;
-
-	rc = pthread_cond_timedwait(&cond, &lock, &ts);
+	if (!signaled)
+		rc = pthread_cond_timedwait(&cond, &lock, &ts);
 	if (rc == ETIMEDOUT) {
 		char entity[45], time_str[256];
+		char *drain_reason = NULL;
+		char stepid_str[33];
 		time_t now = time(NULL);
 
 		_call_external_program(step);
@@ -143,14 +141,23 @@ static void *_monitor(void *arg)
 		if (step->state < SLURMSTEPD_STEP_RUNNING) {
 			error("*** %s STEPD TERMINATED ON %s AT %s DUE TO JOB NOT RUNNING ***",
 			      entity, step->node_name, time_str);
-			rc = ESLURMD_JOB_NOTRUNNING;
+			rc = ESLURMD_STEP_NOTRUNNING;
 		} else {
 			error("*** %s STEPD TERMINATED ON %s AT %s DUE TO JOB NOT ENDING WITH SIGNALS ***",
 			      entity, step->node_name, time_str);
 			rc = ESLURMD_KILL_TASK_FAILED;
 		}
 
-		stepd_drain_node(slurm_strerror(rc));
+		log_build_step_id_str(&step->step_id,
+				      stepid_str,
+				      sizeof(stepid_str),
+				      STEP_ID_FLAG_NO_JOB);
+		xstrfmtcat(drain_reason, "%s (JobId=%u %s)",
+			   slurm_strerror(rc),
+			   step->step_id.job_id,
+			   stepid_str);
+		stepd_drain_node(drain_reason);
+		xfree(drain_reason);
 
 		if (!step->batch) {
 			/* Notify waiting sruns */
@@ -168,13 +175,11 @@ static void *_monitor(void *arg)
 			stepd_send_step_complete_msgs(step);
 		}
 
-		/* stepd_cleanup always returns rc as a pass-through */
-		(void) stepd_cleanup(NULL, step, NULL, rc, false);
+		stepd_cleanup(NULL, step, NULL, rc, false);
 	} else if (rc != 0) {
 		error("Error waiting on condition in _monitor: %m");
 	}
 
-done:
 	debug2("step_terminate_monitor is stopping");
 	slurm_mutex_unlock(&lock);
 	return NULL;

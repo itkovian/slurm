@@ -1,4 +1,4 @@
-.TH slurmdbd "8" "Slurm Daemon" "April 2025" "Slurm Daemon"
+.TH slurmdbd "8" "Slurm Daemon" "Slurm 25.05" "Slurm Daemon"
 
 .SH "NAME"
 slurmdbd \- Slurm Database Daemon.
@@ -25,13 +25,6 @@ Help; print a brief summary of command options.
 .TP
 \fB\-n <value>\fR
 Set the daemon's nice value to the specified value, typically a negative number.
-.IP
-
-.TP
-\fB\-R[comma separated cluster name list]\fR
-Reset the lft and rgt values of the associations in the given cluster list.
-Lft and rgt values are used to distinguish hierarchical groups in the slurm
-accounting database. This option should be very rarely used.
 .IP
 
 .TP
@@ -98,13 +91,18 @@ Reloads the slurm configuration files, similar to 'scontrol reconfigure'.
 .IP
 
 .TP
+\fBSIGTSTP\fR
+Stop the process from a terminal.
+.IP
+
+.TP
 \fBSIGUSR2\fR
 Reread the log level from the configs, and then reopen the log file. This
 should be used when setting up \fBlogrotate\fR(8).
 .IP
 
 .TP
-\fBSIGCHLD SIGUSR1 SIGTSTP SIGXCPU SIGPIPE SIGALRM\fR
+\fBSIGCHLD SIGUSR1 SIGXCPU SIGPIPE SIGALRM\fR
 These signals are explicitly ignored.
 .IP
 

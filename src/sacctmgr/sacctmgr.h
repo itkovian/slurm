@@ -134,7 +134,6 @@ typedef enum {
 	PRINT_LINEAGE,
 	PRINT_PID,
 	PRINT_PNAME,
-	PRINT_RGT,
 	PRINT_COMMENT,
 
 	/* CLUSTER */
@@ -226,6 +225,7 @@ extern int with_assoc_flag;/* show acct/user associations flag */
 extern int readonly_flag; /* make it so you can only run list commands */
 extern void *db_conn;
 extern uint32_t my_uid;
+extern char *my_user_name;
 extern list_t *g_qos_list;
 extern list_t *g_res_list;
 extern list_t *g_tres_list;
@@ -245,6 +245,13 @@ extern int sacctmgr_set_assoc_rec(slurmdb_assoc_rec_t *assoc_rec,
 extern void sacctmgr_print_assoc_rec(slurmdb_assoc_rec_t *assoc,
 				     print_field_t *field, list_t *tree_list,
 				     bool last);
+
+extern int sacctmgr_set_qos_rec(slurmdb_qos_rec_t *qos,
+				char *type, char *value,
+				int command_len, int option);
+extern void sacctmgr_print_qos_rec(slurmdb_qos_rec_t *qos,
+				   print_field_t *field,
+				   bool last);
 
 extern int sacctmgr_add_assoc(int argc, char **argv);
 extern int sacctmgr_add_user(int argc, char **argv);
@@ -355,6 +362,8 @@ extern void sacctmgr_initialize_g_tres_list(void);
 /* file_functions.c */
 extern int print_file_add_limits_to_line(char **line,
 					 slurmdb_assoc_rec_t *assoc);
+
+extern int file_print_qos(void *x, void *arg);
 
 extern int print_file_slurmdb_hierarchical_rec_list(
 	FILE *fd, list_t *slurmdb_hierarchical_rec_list,

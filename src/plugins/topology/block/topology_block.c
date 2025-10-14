@@ -90,6 +90,7 @@ const char plugin_name[]        = "topology block plugin";
 const char plugin_type[]        = "topology/block";
 const uint32_t plugin_id = TOPOLOGY_PLUGIN_BLOCK;
 const uint32_t plugin_version   = SLURM_VERSION_NUMBER;
+const bool supports_exclusive_topo = true;
 
 typedef struct topoinfo_bblock {
 	bool aggregated;
@@ -143,8 +144,88 @@ extern int init(void)
  */
 extern int fini(void)
 {
-	block_record_table_destroy();
-	FREE_NULL_BITMAP(blocks_nodes_bitmap);
+	return SLURM_SUCCESS;
+}
+
+extern int topology_p_add_rm_node(node_record_t *node_ptr, char *unit,
+				  topology_ctx_t *tctx)
+{
+	block_context_t *ctx = tctx->plugin_ctx;
+	int *change =
+		xcalloc(ctx->block_count + ctx->ablock_count, sizeof(int));
+
+	bit_clear(ctx->blocks_nodes_bitmap, node_ptr->index);
+
+	for (int i = 0; i < ctx->block_count; i++) {
+		bool in_block = bit_test(ctx->block_record_table[i].node_bitmap,
+					 node_ptr->index);
+		bool add = (!xstrcmp(ctx->block_record_table[i].name, unit));
+
+		if (add && !in_block) {
+			debug2("%s: add %s to %s",
+			       __func__, node_ptr->name,
+			       ctx->block_record_table[i].name);
+			bit_set(ctx->block_record_table[i].node_bitmap,
+				node_ptr->index);
+			bit_set(ctx->blocks_nodes_bitmap, node_ptr->index);
+			change[i] = 1;
+		} else if (!add && in_block) {
+			debug2("%s: remove %s from %s",
+			       __func__, node_ptr->name,
+			       ctx->block_record_table[i].name);
+			bit_clear(ctx->block_record_table[i].node_bitmap,
+				  node_ptr->index);
+			change[i] = -1;
+		}
+	}
+
+	for (int i = 0; i < ctx->block_count; i++) {
+		if (!change[i])
+			continue;
+
+		xfree(ctx->block_record_table[i].nodes);
+		ctx->block_record_table[i].nodes =
+			bitmap2node_name(ctx->block_record_table[i]
+						 .node_bitmap);
+		block_record_update_block_config(tctx, i);
+
+		for (int j = ctx->block_count;
+		     j < ctx->block_count + ctx->ablock_count; j++) {
+			char *tmp_list = ctx->block_record_table[j].name;
+			hostlist_t *hl = NULL;
+
+			if (change[j])
+				continue;
+
+			hl = hostlist_create(tmp_list);
+
+			if (hl == NULL)
+				fatal("Invalid BlockName: %s", tmp_list);
+
+			if (hostlist_find(hl,
+					  ctx->block_record_table[i].name) >=
+			    0) {
+				if (change[i] > 0) {
+					bit_set(ctx->block_record_table[j]
+							.node_bitmap,
+						node_ptr->index);
+					change[j] = 1;
+				} else {
+					bit_clear(ctx->block_record_table[j]
+							  .node_bitmap,
+						  node_ptr->index);
+				}
+
+				xfree(ctx->block_record_table[j].nodes);
+				ctx->block_record_table[j]
+					.nodes = bitmap2node_name(
+					ctx->block_record_table[j].node_bitmap);
+			}
+			hostlist_destroy(hl);
+		}
+	}
+	xfree(change);
+
 	return SLURM_SUCCESS;
 }
 
@@ -152,22 +233,34 @@ extern int fini(void)
  * topo_build_config - build or rebuild system topology information
  *	after a system startup or reconfiguration.
  */
-extern int topology_p_build_config(void)
+extern int topology_p_build_config(topology_ctx_t *tctx)
 {
 	if (node_record_count)
-		block_record_validate();
+		return block_record_validate(tctx);
+	return SLURM_SUCCESS;
+}
+
+extern int topology_p_destroy_config(topology_ctx_t *tctx)
+{
+	block_context_t *ctx = tctx->plugin_ctx;
+
+	block_record_table_destroy(ctx);
+	FREE_NULL_BITMAP(ctx->blocks_nodes_bitmap);
+	xfree(tctx->plugin_ctx);
+
 	return SLURM_SUCCESS;
 }
 
 extern int topology_p_eval_nodes(topology_eval_t *topo_eval)
 {
+	block_context_t *ctx = topo_eval->tctx->plugin_ctx;
 	/*
 	 * Don't use eval_nodes_block() when there isn't any block node on
 	 * node_map. This allows the allocation of nodes not connected by block
 	 * topology (separated by partition or constraints).
 	 */
-	if (blocks_nodes_bitmap &&
-	    bit_overlap_any(blocks_nodes_bitmap, topo_eval->node_map)) {
+	if (ctx->blocks_nodes_bitmap &&
+	    bit_overlap_any(ctx->blocks_nodes_bitmap, topo_eval->node_map)) {
 		topo_eval->eval_nodes = eval_nodes_block;
 		topo_eval->trump_others = true;
 	}
@@ -175,12 +268,14 @@ extern int topology_p_eval_nodes(topology_eval_t *topo_eval)
 	return common_topo_choose_nodes(topo_eval);
 }
 
-extern int topology_p_whole_topo(bitstr_t *node_mask)
+extern int topology_p_whole_topo(bitstr_t *node_mask, void *tctx)
 {
-	for (int i = 0; i < block_record_cnt; i++) {
-		if (bit_overlap_any(block_record_table[i].node_bitmap,
+	block_context_t *ctx = tctx;
+	for (int i = 0; i < ctx->block_count; i++) {
+		if (bit_overlap_any(ctx->block_record_table[i].node_bitmap,
 				    node_mask)) {
-			bit_or(node_mask, block_record_table[i].node_bitmap);
+			bit_or(node_mask,
+			       ctx->block_record_table[i].node_bitmap);
 		}
 	}
 	return SLURM_SUCCESS;
@@ -192,24 +287,21 @@ extern int topology_p_whole_topo(bitstr_t *node_mask)
  * IN name of block
  * RET bitmap of nodes from block_record_table (do not free)
  */
-extern bitstr_t *topology_p_get_bitmap(char *name)
+extern bitstr_t *topology_p_get_bitmap(char *name, void *tctx)
 {
-	for (int i = 0; i < block_record_cnt + ablock_record_cnt; i++) {
-		if (!xstrcmp(block_record_table[i].name, name)) {
-			return block_record_table[i].node_bitmap;
+	block_context_t *ctx = tctx;
+	for (int i = 0; i < ctx->block_count + ctx->ablock_count; i++) {
+		if (!xstrcmp(ctx->block_record_table[i].name, name)) {
+			return ctx->block_record_table[i].node_bitmap;
 		}
 	}
 
 	return NULL;
 }
 
-/*
- * When TopologyParam=SwitchAsNodeRank is set, this plugin assigns a unique
- * node_rank for all nodes belonging to the same bblock.
- */
-extern bool topology_p_generate_node_ranking(void)
+extern bool topology_p_generate_node_ranking(topology_ctx_t *tctx)
 {
-	return true;
+	return false;
 }
 
 /*
@@ -221,19 +313,20 @@ extern bool topology_p_generate_node_ranking(void)
  *      pattern : block.node
  */
 extern int topology_p_get_node_addr(char *node_name, char **paddr,
-				    char **ppattern)
+				    char **ppattern, void *tctx)
 {
 	node_record_t *node_ptr = find_node_record(node_name);
+	block_context_t *ctx = tctx;
 
 	/* node not found in configuration */
 	if (!node_ptr)
 		return SLURM_ERROR;
 
-	for (int i = 0; i < block_record_cnt; i++) {
-		if (bit_test(block_record_table[i].node_bitmap,
+	for (int i = 0; i < ctx->block_count; i++) {
+		if (bit_test(ctx->block_record_table[i].node_bitmap,
 			     node_ptr->index)) {
 			*paddr = xstrdup_printf("%s.%s",
-						block_record_table[i].name,
+						ctx->block_record_table[i].name,
 						node_name);
 			*ppattern = xstrdup("block.node");
 			return SLURM_SUCCESS;
@@ -244,7 +337,8 @@ extern int topology_p_get_node_addr(char *node_name, char **paddr,
 }
 
 extern int topology_p_split_hostlist(hostlist_t *hl, hostlist_t ***sp_hl,
-				     int *count, uint16_t tree_width)
+				     int *count, uint16_t tree_width,
+				     void *tctx)
 {
 	return common_topo_split_hostlist_treewidth(
 		hl, sp_hl, count, tree_width);
@@ -267,9 +361,10 @@ extern int topology_p_topology_free(void *topoinfo_ptr)
 	return SLURM_SUCCESS;
 }
 
-extern int topology_p_get(topology_data_t type, void *data)
+extern int topology_p_get(topology_data_t type, void *data, void *tctx)
 {
 	int rc = SLURM_SUCCESS;
+	block_context_t *ctx = tctx;
 
 	switch (type) {
 	case TOPO_DATA_TOPOLOGY_PTR:
@@ -283,21 +378,23 @@ extern int topology_p_get(topology_data_t type, void *data)
 		(*topoinfo_pptr)->plugin_id = plugin_id;
 
 		topoinfo_ptr->record_count =
-			block_record_cnt + ablock_record_cnt;
+			ctx->block_count + ctx->ablock_count;
 		topoinfo_ptr->topo_array = xcalloc(topoinfo_ptr->record_count,
 						   sizeof(topoinfo_bblock_t));
 
 		for (int i = 0; i < topoinfo_ptr->record_count; i++) {
 			topoinfo_ptr->topo_array[i].block_index =
-				block_record_table[i].block_index;
+				ctx->block_record_table[i].block_index;
 			topoinfo_ptr->topo_array[i].name =
-				xstrdup(block_record_table[i].name);
+				xstrdup(ctx->block_record_table[i].name);
 			topoinfo_ptr->topo_array[i].nodes =
-				xstrdup(block_record_table[i].nodes);
-			if (block_record_table[i].level)
+				xstrdup(ctx->block_record_table[i].nodes);
+			if (ctx->block_record_table[i].level)
 				topoinfo_ptr->topo_array[i].aggregated = true;
-			topoinfo_ptr->topo_array[i].size = bblock_node_cnt *
-				block_sizes[block_record_table[i].level];
+			topoinfo_ptr->topo_array[i].size =
+				ctx->bblock_node_cnt *
+				ctx->block_sizes[ctx->block_record_table[i]
+							 .level];
 		}
 
 		break;
@@ -305,7 +402,7 @@ extern int topology_p_get(topology_data_t type, void *data)
 	case TOPO_DATA_REC_CNT:
 	{
 		int *rec_cnt = data;
-		*rec_cnt = block_record_cnt;
+		*rec_cnt = ctx->block_count;
 		break;
 	}
 	case TOPO_DATA_EXCLUSIVE_TOPO:
@@ -353,14 +450,15 @@ extern int topology_p_topology_pack(void *topoinfo_ptr, buf_t *buffer,
 }
 
 extern int topology_p_topology_print(void *topoinfo_ptr, char *nodes_list,
-				     char **out)
+				     char *unit, char **out)
 {
 	int i, match, match_cnt = 0;;
 	topoinfo_block_t *topoinfo = topoinfo_ptr;
 
 	*out = NULL;
 
-	if ((nodes_list == NULL) || (nodes_list[0] == '\0')) {
+	if ((!nodes_list || (nodes_list[0] == '\0')) &&
+	    (!unit || (unit[0] == '\0'))) {
 		if (topoinfo->record_count == 0) {
 			error("No topology information available");
 			return SLURM_SUCCESS;
@@ -372,35 +470,35 @@ extern int topology_p_topology_print(void *topoinfo_ptr, char *nodes_list,
 		return SLURM_SUCCESS;
 	}
 
-	/* Search for matching block name */
-	for (i = 0; i < topoinfo->record_count; i++) {
-		if (xstrcmp(topoinfo->topo_array[i].name, nodes_list))
-			continue;
-		_print_topo_record(&topoinfo->topo_array[i], out);
-		return SLURM_SUCCESS;
-	}
-
-	/* Search for matching node name */
+	/* Search for matching node name and  block name */
 	for (i = 0; i < topoinfo->record_count; i++) {
 		hostset_t *hs;
 
-		if ((topoinfo->topo_array[i].nodes == NULL) ||
-		    (topoinfo->topo_array[i].nodes[0] == '\0'))
+		if (unit && xstrcmp(topoinfo->topo_array[i].name, unit))
 			continue;
-		hs = hostset_create(topoinfo->topo_array[i].nodes);
-		if (hs == NULL)
-			fatal("hostset_create: memory allocation failure");
-		match = hostset_within(hs, nodes_list);
-		hostset_destroy(hs);
-		if (!match)
-			continue;
+
+		if (nodes_list) {
+			if ((topoinfo->topo_array[i].nodes == NULL) ||
+			    (topoinfo->topo_array[i].nodes[0] == '\0'))
+				continue;
+			hs = hostset_create(topoinfo->topo_array[i].nodes);
+			if (hs == NULL)
+				fatal("hostset_create: memory allocation failure");
+			match = hostset_within(hs, nodes_list);
+			hostset_destroy(hs);
+			if (!match)
+				continue;
+		}
 		match_cnt++;
 		_print_topo_record(&topoinfo->topo_array[i], out);
 	}
 
 	if (match_cnt == 0) {
-		error("Topology information contains no block or "
-		      "node named %s", nodes_list);
+		error("Topology information contains no block%s%s%s%s",
+		      unit ? " named " : "",
+		      unit ? unit : "",
+		      nodes_list ? " with nodes " : "",
+		      nodes_list ? nodes_list : "");
 	}
 	return SLURM_SUCCESS;
 }
@@ -456,39 +554,40 @@ unpack_error:
 	return SLURM_ERROR;
 }
 
-extern uint32_t topology_p_get_fragmentation(bitstr_t *node_mask)
+extern uint32_t topology_p_get_fragmentation(bitstr_t *node_mask, void *tctx)
 {
 	uint32_t frag = 0;
 	bool bset[MAX_BLOCK_LEVELS] = {0};
+	block_context_t *ctx = tctx;
 
 	/*
 	 * Calculate fragmentation as the sum of sizes of all unavailable
 	 * base and aggregate blocks.
 	 */
-	for (int i = 0; i < block_record_cnt; i++) {
-		if (bit_overlap(block_record_table[i].node_bitmap, node_mask) >=
-		    bblock_node_cnt) {
-			for (int j = 1; j < block_sizes_cnt; j++) {
-				if (!(i % block_sizes[j]) &&
-				    (block_sizes[j] <= (block_record_cnt - i)))
+	for (int i = 0; i < ctx->block_count; i++) {
+		if (bit_overlap(ctx->block_record_table[i].node_bitmap,
+				node_mask) >= ctx->bblock_node_cnt) {
+			for (int j = 1; j < ctx->block_sizes_cnt; j++) {
+				if (!(i % ctx->block_sizes[j]) &&
+				    (ctx->block_sizes[j] <=
+				     (ctx->block_count - i)))
 					bset[j] = true;
 			}
 		} else {
-			for (int j = 0; j < block_sizes_cnt; j++) {
-				if (bset[j] ||
-				    (!(i % block_sizes[j]) &&
-				     (block_sizes[j] <=
-				      (block_record_cnt - i)))) {
-					frag += block_sizes[j];
+			for (int j = 0; j < ctx->block_sizes_cnt; j++) {
+				if (bset[j] || (!(i % ctx->block_sizes[j]) &&
+						(ctx->block_sizes[j] <=
+						 (ctx->block_count - i)))) {
+					frag += ctx->block_sizes[j];
 					bset[j] = false;
 				}
 			}
 		}
 	}
 
-	frag *= bblock_node_cnt;
-	frag += blocks_nodes_cnt;
-	frag -= bit_overlap(node_mask, blocks_nodes_bitmap);
+	frag *= ctx->bblock_node_cnt;
+	frag += ctx->blocks_nodes_cnt;
+	frag -= bit_overlap(node_mask, ctx->blocks_nodes_bitmap);
 
 	return frag;
 }

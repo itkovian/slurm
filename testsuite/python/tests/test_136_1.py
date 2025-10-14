@@ -2,8 +2,9 @@
 # Copyright (C) SchedMD LLC.
 ############################################################################
 import atf
+
+# import os
 import pytest
-import os
 import re
 
 total_cpus = 0
@@ -32,7 +33,7 @@ def node_names():
     global total_cpus, total_cores, available_cores
 
     # Grab our 2 nodes with 2 Cores each
-    nodes = atf.run_job_nodes(f"--cpu-bind=core --ntasks-per-node=2 -N2 true")
+    nodes = atf.run_job_nodes("--cpu-bind=core --ntasks-per-node=2 -N2 true")
 
     # Reserve 1 spec core on the first, 2 on the second
     for idx, node in enumerate(nodes):
@@ -141,7 +142,7 @@ def test_core_spec_override(node_names):
 
     assert (
         output == total_cores
-    ), f"Using --core-spec should imply --exclusive and using all cores"
+    ), "Using --core-spec should imply --exclusive and using all cores"
 
     job_id = atf.submit_job_sbatch(
         f"-w {node_names} --core-spec=1 -n{total_cores - 2} --wrap='srun true'"
@@ -158,7 +159,7 @@ def test_core_spec_override(node_names):
 
     assert (
         output == total_cores - 2
-    ), f"--core-spec=1 should allocate all cores except 1 per node"
+    ), "--core-spec=1 should allocate all cores except 1 per node"
 
     job_id = atf.submit_job_sbatch(
         f"-w {node_names} --core-spec=2 -n{total_cores - 4} --wrap='srun true'"
@@ -175,7 +176,7 @@ def test_core_spec_override(node_names):
 
     assert (
         output == total_cores - 4
-    ), f"--core-spec=2 should allocate all cores except 2 per node"
+    ), "--core-spec=2 should allocate all cores except 2 per node"
 
     exit_code = atf.run_job_exit(
         f" -w {node_names} -N2 --core-spec=2 -n{available_cores} true", xfail=True
@@ -203,4 +204,4 @@ def test_thread_spec_override(node_names):
 
     assert output == (
         total_cpus - 2
-    ), f"--thread-spec=1 should override and reserve 1 cpu per node (2 total) for the batch step"
+    ), "--thread-spec=1 should override and reserve 1 cpu per node (2 total) for the batch step"

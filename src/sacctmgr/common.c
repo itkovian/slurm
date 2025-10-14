@@ -40,6 +40,7 @@
 
 #include "src/sacctmgr/sacctmgr.h"
 #include "src/common/macros.h"
+#include "src/common/parse_value.h"
 #include "src/common/slurmdbd_defs.h"
 #include "src/interfaces/auth.h"
 #include "src/common/slurm_protocol_defs.h"
@@ -50,6 +51,7 @@
 static bool warn_needed = false;
 static pthread_mutex_t warn_mutex = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t warn_cond = PTHREAD_COND_INITIALIZER;
+static pthread_t notice_thread_handler = 0;
 
 static void *_print_lock_warn(void *no_data)
 {
@@ -131,6 +133,11 @@ extern char *strip_quotes(char *option, int *increased, bool make_lower)
 		quote = 1;
 		i++;
 	}
+
+	/* skip beginning spaces */
+	while (option[i] && isspace(option[i]))
+		i++;
+
 	start = i;
 
 	while(option[i]) {
@@ -147,6 +154,11 @@ extern char *strip_quotes(char *option, int *increased, bool make_lower)
 
 		i++;
 	}
+
+	/* trim end spaces */
+	while ((i - 1) && option[i - 1] && isspace(option[i - 1]))
+		i--;
+
 	end += i;
 
 	meat = xmalloc((i-start)+1);
@@ -723,11 +735,6 @@ static print_field_t *_get_print_field(char *object)
 		field->name = xstrdup("Reason");
 		field->len = 30;
 		field->print_routine = print_fields_str;
-	} else if (!xstrncasecmp("RGT", object, MAX(command_len, 1))) {
-		field->type = PRINT_RGT;
-		field->name = xstrdup("RGT");
-		field->len = 6;
-		field->print_routine = print_fields_uint;
 	} else if (!xstrncasecmp("RPC", object, MAX(command_len, 1))) {
 		field->type = PRINT_RPC_VERSION;
 		field->name = xstrdup("RPC");
@@ -856,7 +863,7 @@ extern void notice_thread_init(void)
 {
 	slurm_mutex_lock(&warn_mutex);
 	warn_needed = true;
-	slurm_thread_create_detached(_print_lock_warn, NULL);
+	slurm_thread_create(&notice_thread_handler, _print_lock_warn, NULL);
 	slurm_mutex_unlock(&warn_mutex);
 }
 
@@ -866,11 +873,15 @@ extern void notice_thread_fini(void)
 	warn_needed = false;
 	slurm_cond_broadcast(&warn_cond);
 	slurm_mutex_unlock(&warn_mutex);
+
+	if (notice_thread_handler)
+		slurm_thread_join(notice_thread_handler);
 }
 
 extern int commit_check(char *warning)
 {
 	int ans = 0;
+	int input = 0;
 	char c = '\0';
 	int fd = fileno(stdin);
 	fd_set rfds;
@@ -897,14 +908,18 @@ extern int commit_check(char *warning)
 		if ((ans = select(fd+1, &rfds, NULL, NULL, &tv)) <= 0)
 			break;
 
-		c = (char) getchar();
 		printf("\n");
+		if ((input = getchar()) == EOF)
+			break;
+		c = (char) input;
 	}
 	_nonblock(0);
-	if (ans <= 0)
+	if (ans == 0)
 		printf("timeout\n");
 	else if (c == 'Y' || c == 'y')
 		return 1;
+	else if ((ans < 0) || (input < 0))
+		printf("error: %s\n", strerror(errno));
 
 	return 0;
 }
@@ -1534,16 +1549,15 @@ extern int get_uint64(char *in_value, uint64_t *out_value, char *type)
 
 extern int get_double(char *in_value, double *out_value, char *type)
 {
-	char *ptr = NULL, *meat = NULL;
+	char *meat = NULL;
 	double num;
 
 	if (!(meat = strip_quotes(in_value, NULL, 1))) {
 		error("Problem with strip_quotes");
 		return SLURM_ERROR;
 	}
-	num = strtod(meat, &ptr);
-	if ((num == 0) && ptr && ptr[0]) {
-		error("Invalid value for %s (%s)", type, meat);
+
+	if (s_p_handle_double(&num, type, meat)) {
 		xfree(meat);
 		return SLURM_ERROR;
 	}

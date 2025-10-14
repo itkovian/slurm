@@ -69,6 +69,22 @@ extern char *slurm_ctime2_r(const time_t *timep, char *time_str)
 	return time_str;
 }
 
+extern int slurm_nanosleep(time_t sleep_sec, uint32_t sleep_ns)
+{
+	timespec_t ts = { .tv_sec = sleep_sec, .tv_nsec = sleep_ns };
+	timespec_t rem;
+
+	while (nanosleep(&ts, &rem)) {
+		if (errno != EINTR) {
+			return errno;
+		}
+		ts.tv_sec = rem.tv_sec;
+		ts.tv_nsec = rem.tv_nsec;
+	}
+
+	return SLURM_SUCCESS;
+}
+
 extern void print_date(void)
 {
 	time_t now = time(NULL);
@@ -227,7 +243,7 @@ extern timespec_diff_ns_t timespec_diff_ns(const timespec_t x,
 	int64_t s = (((int64_t) x.tv_sec) - ((int64_t) y.tv_sec));
 	int64_t ns = (((int64_t) x.tv_nsec) - ((int64_t) y.tv_nsec));
 
-	/* Adjust postive nanoseconds if seconds is negative */
+	/* Adjust positive nanoseconds if seconds is negative */
 	if ((ns > 0) && (s < 0)) {
 		s += 1;
 		ns -= NSEC_IN_SEC;
@@ -249,4 +265,22 @@ extern timespec_diff_ns_t timespec_diff_ns(const timespec_t x,
 				.tv_nsec = ns,
 			},
 		};
+}
+
+extern double timespec_to_secs(const timespec_t x)
+{
+	double s = x.tv_sec;
+	double ns = x.tv_nsec;
+	return (s + (ns / NSEC_IN_SEC));
+}
+
+extern int timeval_tot_wait(struct timeval *start_time)
+{
+	struct timeval end_time;
+	int msec_delay;
+
+	gettimeofday(&end_time, NULL);
+	msec_delay = (end_time.tv_sec - start_time->tv_sec) * 1000;
+	msec_delay += ((end_time.tv_usec - start_time->tv_usec + 500) / 1000);
+	return msec_delay;
 }

@@ -113,10 +113,10 @@ typedef struct {
  * 	NULL (to use path in op_path)
  * IN op_path - Operation binding for path
  * IN meta - Meta information from plugin (or NULL)
- * IN parser - Relavent data_parser (or NULL)
+ * IN parser - Relevant data_parser (or NULL)
  * IN/OUT tag_ptr - Sets tag on success
  * RET SLURM_SUCCESS or
- *	ESLURM_NOT_SUPPORTED: if data_parser doesnt support all types in method
+ *	ESLURM_NOT_SUPPORTED: if data_parser doesn't support all types in method
  *	or any other Slurm error
  *
  * Can safely be called multiple times for same path.
@@ -213,9 +213,10 @@ extern void openapi_resp_warn(openapi_ctxt_t *ctxt, const char *source,
 /*
  * Generate OpenAPI specification
  * IN/OUT dst - data_t to populate with specification
+ * IN mime_types - NULL terminated array of mime types to dump
  * RET SLURM_SUCCESS or error
  */
-extern int generate_spec(data_t *dst);
+extern int generate_spec(data_t *dst, const char **mime_types);
 
 /*
  * True if only generating an OAS

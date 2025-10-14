@@ -85,6 +85,7 @@ static void _usage(void);
 static void _autocomplete(const char *query);
 
 /*---- global variables, defined in opt.h ----*/
+int colon_cnt = 0;
 int	error_exit = 1;
 int	immediate_exit = 1;
 srun_opt_t sropt;
@@ -454,7 +455,7 @@ extern int initialize_and_process_args(int argc, char **argv, int *argc_off)
 		if (opt.verbose)
 			slurm_print_set_options(&opt);
 
-		if (spank_init_post_opt() < 0) {
+		if (spank_init_post_opt()) {
 			error("Plugin stack post-option processing failed.");
 			exit(error_exit);
 		}
@@ -634,6 +635,7 @@ env_vars_t env_vars[] = {
   { "SRUN_ERROR", 'e' },
   { "SRUN_INPUT", 'i' },
   { "SRUN_OUTPUT", 'o' },
+  { "SRUN_SEGMENT_SIZE", LONG_OPT_SEGMENT_SIZE },
   { NULL }
 };
 
@@ -940,14 +942,14 @@ static bool _opt_verify(void)
 
 	/*
 	 * If we are packing the nodes in an allocation set min_nodes to
-	 * 1. The slurmctld will adjust the max_nodes to the approriate
+	 * 1. The slurmctld will adjust the max_nodes to the appropriate
 	 * number if the allocation is homogeneous.
 	 */
 	if ((opt.distribution & SLURM_DIST_PACK_NODES) &&
 	    slurm_option_set_by_env(&opt, 'N')) {
 		opt.min_nodes = 1;
 		if (opt.verbose)
-			info("Reseting -N set by environment variable because of -mpack");
+			info("Resetting -N set by environment variable because of -mpack");
 		mpack_reset_nodes = true;
 	}
 
@@ -1545,7 +1547,7 @@ static void _help(void)
 "      --epilog=program        run \"program\" after launching job step\n"
 "  -E, --preserve-env          env vars for node and task counts override\n"
 "                              command-line flags\n"
-"      --gres=list             required generic resources\n"
+"      --gres=list             required generic resources per node\n"
 "      --gres-flags=opts       flags related to GRES management\n"
 "  -H, --hold                  submit job in held state\n"
 "  -i, --input=in              location of stdin redirection\n"
@@ -1616,6 +1618,8 @@ static void _help(void)
 "      --use-min-nodes         if a range of node counts is given, prefer the\n"
 "                              smaller count\n"
 "  -v, --verbose               verbose mode (multiple -v's increase verbosity)\n"
+"      --wait-for-children     wait for all children processes in a task to\n"
+"                              close before considering the task ended.\n"
 "  -W, --wait=sec              seconds to wait after first task exits\n"
 "                              before killing job\n"
 "      --wckey=wckey           wckey to run job under\n"

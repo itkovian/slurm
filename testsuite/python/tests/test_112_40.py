@@ -3,21 +3,22 @@
 ############################################################################
 import atf
 import getpass
-import json
-import logging
-import math
-import os
-import pathlib
+
+# import json
+# import logging
+# import math
+# import os
 import pytest
 import random
-import re
-import requests
-import signal
-import socket
-import subprocess
-import sys
-import tempfile
-import time
+
+# import re
+# import requests
+# import signal
+# import socket
+# import subprocess
+# import sys
+# import tempfile
+# import time
 
 random.seed()
 
@@ -244,8 +245,8 @@ def test_db_accounts(slurm, slurmdb, create_wckeys, admin_level):
     # from openapi_client import Configuration as Config  # noqa: F401
     from openapi_client.models.v0040_openapi_accounts_resp import (
         V0040OpenapiAccountsResp,
-    )
-    from openapi_client.models.v0040_account import V0040Account
+    )  # noqa: F401
+    from openapi_client.models.v0040_account import V0040Account  # noqa: F401
 
     # from openapi_client.models.v0040_assoc_short import V0040AssocShort  # noqa: F401
     from openapi_client.models.v0040_coord import V0040Coord  # noqa: F401
@@ -293,7 +294,7 @@ def test_db_accounts(slurm, slurmdb, create_wckeys, admin_level):
     resp = slurmdb.slurmdb_v0040_post_accounts_with_http_info(accounts)
     assert resp.status_code == 200
 
-    # verify account matches modifiy request
+    # verify account matches modify request
     resp = slurmdb.slurmdb_v0040_get_account(account2_name)
     assert resp.accounts
     for account in resp.accounts:
@@ -503,12 +504,15 @@ def test_db_clusters(slurmdb, admin_level):
 
 
 def test_db_users(slurmdb, admin_level):
-    from openapi_client.models.v0040_openapi_users_resp import V0040OpenapiUsersResp
-    from openapi_client.models.v0040_assoc_short import V0040AssocShort
-    from openapi_client.models.v0040_coord import V0040Coord
-    from openapi_client.models.v0040_user import V0040User
-    from openapi_client.models.v0040_user_default import V0040UserDefault
-    from openapi_client.models.v0040_wckey import V0040Wckey
+    from openapi_client.models.v0040_openapi_users_resp import (
+        V0040OpenapiUsersResp,
+    )  # noqa: F401
+
+    # from openapi_client.models.v0040_assoc_short import V0040AssocShort
+    # from openapi_client.models.v0040_coord import V0040Coord
+    from openapi_client.models.v0040_user import V0040User  # noqa: F401
+    from openapi_client.models.v0040_user_default import V0040UserDefault  # noqa: F401
+    from openapi_client.models.v0040_wckey import V0040Wckey  # noqa: F401
 
     users = V0040OpenapiUsersResp(
         users=[
@@ -886,9 +890,11 @@ def test_db_qos(slurmdb, create_coords, admin_level):
     from openapi_client.models.v0040_tres import V0040Tres  # noqa: F401
     from openapi_client.models.v0040_openapi_slurmdbd_qos_resp import (
         V0040OpenapiSlurmdbdQosResp,
-    )
-    from openapi_client.models.v0040_float64_no_val import V0040Float64NoVal
-    from openapi_client.models.v0040_uint32_no_val import V0040Uint32NoVal
+    )  # noqa: F401
+    from openapi_client.models.v0040_float64_no_val import (
+        V0040Float64NoVal,
+    )  # noqa: F401
+    from openapi_client.models.v0040_uint32_no_val import V0040Uint32NoVal  # noqa: F401
 
     qos = V0040OpenapiSlurmdbdQosResp(
         qos=[
@@ -1040,10 +1046,13 @@ def test_db_config(slurmdb, admin_level):
     reason="Ticket 20394 about jobs without associations, fixed for v43+"
 )
 def test_jobs(slurm, slurmdb):
-    from openapi_client.models.v0040_job_submit_req import V0040JobSubmitReq
-    from openapi_client.models.v0040_job_desc_msg import V0040JobDescMsg
-    from openapi_client.models.v0040_job_info import V0040JobInfo
-    from openapi_client.models.v0040_uint32_no_val import V0040Uint32NoVal
+    from openapi_client.models.v0040_job_submit_req import (
+        V0040JobSubmitReq,
+    )  # noqa: F401
+    from openapi_client.models.v0040_job_desc_msg import V0040JobDescMsg  # noqa: F401
+
+    # from openapi_client.models.v0040_job_info import V0040JobInfo  # noqa: F401
+    from openapi_client.models.v0040_uint32_no_val import V0040Uint32NoVal  # noqa: F401
 
     script = "#!/bin/bash\n/bin/true"
     env = ["PATH=/bin/:/sbin/:/usr/bin/:/usr/sbin/"]
@@ -1135,7 +1144,7 @@ def test_jobs(slurm, slurmdb):
         assert job.user_name == local_user_name
         assert job.job_state == ["CANCELLED"]
 
-    # Ensure that job is in the DB before quering it
+    # Ensure that job is in the DB before querying it
     atf.wait_for_job_accounted(jobid, fatal=True)
 
     resp = slurmdb.slurmdb_v0040_get_jobs()
@@ -1224,7 +1233,9 @@ def test_partitions(slurm):
 
 
 def test_nodes(slurm, admin_level):
-    from openapi_client.models.v0040_update_node_msg import V0040UpdateNodeMsg
+    from openapi_client.models.v0040_update_node_msg import (
+        V0040UpdateNodeMsg,
+    )  # noqa: F401
 
     node_name = None
     reasonuid = None
@@ -1235,11 +1246,11 @@ def test_nodes(slurm, admin_level):
     for node in resp.nodes:
         if "IDLE" in node.state:
             node_name = node.name
-            comment = node.comment
+            # comment = node.comment
             extra = node.extra
             feat = node.features
             actfeat = node.active_features
-            state = node.state
+            # state = node.state
             reason = node.reason
             reasonuid = node.reason_set_by_user
             break

@@ -30,6 +30,6 @@ def test_srun_increasing_job_sizes():
                 if good_error in result["stderr"]:
                     good_error_flag = True
                     break
-            if good_error_flag == False:
-                pytest.fail(f"Unexpect error occoured: {result['stderr']}")
+            if good_error_flag is False:
+                pytest.fail(f"Unexpected error occurred: {result['stderr']}")
         node_count *= 2

@@ -514,7 +514,7 @@ static void _check_flag_bit(int8_t i, const flag_bit_t *bit, bool *found_bit,
 	}
 
 	if (bit->type == FLAG_BIT_TYPE_BIT) {
-		/* atleast one bit must be set */
+		/* at least one bit must be set */
 		xassert(bit->value);
 		/* mask must include all value bits */
 		xassert((bit->mask & bit->value) == bit->value);
@@ -609,7 +609,7 @@ extern void check_parser_funcname(const parser_t *const parser,
 	xassert(parser->size > 0);
 
 	if (parser->model == PARSER_MODEL_ARRAY_SKIP_FIELD) {
-		/* field is only a place holder so most assert()s dont apply */
+		/* field is only a place holder so most assert()s don't apply */
 		xassert(parser->field_name && parser->field_name[0]);
 		xassert(parser->type == DATA_PARSER_TYPE_INVALID);
 		xassert(!parser->flag_bit_array_count);
@@ -1132,7 +1132,7 @@ static int DUMP_FUNC(QOS_PREEMPT_LIST)(const parser_t *const parser, void *obj,
 
 			/*
 			 * There is a race condition here where the global
-			 * QOS list could have changed betwen the query of the
+			 * QOS list could have changed between the query of the
 			 * list and the bitstrs. Just error and have the user
 			 * try again if they want.
 			 */
@@ -1381,7 +1381,7 @@ static void _fill_job_stp(job_std_pattern_t *job_stp, slurmdb_job_rec_t *job)
 
 	job_stp->array_job_id = job->array_job_id;
 	job_stp->array_task_id = job->array_task_id;
-	job_stp->first_step_name = step ? step->stepname : NULL;
+	job_stp->first_step_id = SLURM_BATCH_SCRIPT;
 	job_stp->first_step_node = step ? step->nodes : NULL;
 	job_stp->jobid = job->jobid;
 	job_stp->jobname = job->jobname;
@@ -1581,7 +1581,8 @@ static int DUMP_FUNC(TRES_STR)(const parser_t *const parser, void *obj,
 		return SLURM_SUCCESS;
 	}
 
-	slurmdb_tres_list_from_string(&tres_list, *tres, TRES_STR_FLAG_BYTES);
+	slurmdb_tres_list_from_string(&tres_list, *tres, TRES_STR_FLAG_BYTES,
+				      NULL);
 
 	if (!tres_list) {
 		rc = on_error(DUMPING, parser->type, args,
@@ -1699,11 +1700,11 @@ static int _dump_tres_nct(const parser_t *const parser, data_t *dst,
 	fargs.host_list = hostlist_create(nodes);
 
 	slurmdb_tres_list_from_string(&tres_count_list, tres_count,
-				      TRES_STR_FLAG_BYTES);
+				      TRES_STR_FLAG_BYTES, NULL);
 	slurmdb_tres_list_from_string(&tres_node_list, tres_node,
-				      TRES_STR_FLAG_BYTES);
+				      TRES_STR_FLAG_BYTES, NULL);
 	slurmdb_tres_list_from_string(&tres_task_list, tres_task,
-				      TRES_STR_FLAG_BYTES);
+				      TRES_STR_FLAG_BYTES, NULL);
 
 	fargs.type = TRES_EXPLODE_COUNT;
 	if (tres_count_list &&
@@ -2217,7 +2218,10 @@ static int PARSE_FUNC(GROUP_ID)(const parser_t *const parser, void *obj,
 				   "Invalid group field: %pd", src);
 	case DATA_TYPE_NONE:
 	case DATA_TYPE_MAX:
-		fatal_abort("invalid type");
+		return parse_error(
+			parser, args, parent_path, ESLURM_DATA_CONV_FAILED,
+			"Invalid group field, data type out of bounds: %s",
+			data_get_type_string(src));
 	}
 
 	if (gid >= INT_MAX)
@@ -3729,106 +3733,15 @@ static int DUMP_FUNC(CSV_STRING_LIST)(const parser_t *const parser, void *obj,
 	return SLURM_SUCCESS;
 }
 
-PARSE_DISABLED(NODE_SELECT_ALLOC_MEMORY)
-
-static int DUMP_FUNC(NODE_SELECT_ALLOC_MEMORY)(const parser_t *const parser,
-					       void *obj, data_t *dst,
-					       args_t *args)
-{
-	int rc;
-	node_info_t *node = obj;
-	uint64_t alloc_memory = 0;
-
-	if ((rc = slurm_get_select_nodeinfo(node->select_nodeinfo,
-					    SELECT_NODEDATA_MEM_ALLOC,
-					    NODE_STATE_ALLOCATED,
-					    &alloc_memory))) {
-		return on_error(
-			DUMPING, parser->type, args, rc,
-			"slurm_get_select_nodeinfo", __func__,
-			"slurm_get_select_nodeinfo(%s, SELECT_NODEDATA_MEM_ALLOC) failed",
-			node->name);
-	}
-
-	data_set_int(dst, alloc_memory);
-
-	return SLURM_SUCCESS;
-}
-
-PARSE_DISABLED(NODE_SELECT_ALLOC_CPUS)
-
-static int DUMP_FUNC(NODE_SELECT_ALLOC_CPUS)(const parser_t *const parser,
-					     void *obj, data_t *dst,
-					     args_t *args)
-{
-	int rc;
-	node_info_t *node = obj;
-	uint16_t alloc_cpus = 0;
-
-	if ((rc = slurm_get_select_nodeinfo(node->select_nodeinfo,
-					    SELECT_NODEDATA_SUBCNT,
-					    NODE_STATE_ALLOCATED,
-					    &alloc_cpus))) {
-		return on_error(DUMPING, parser->type, args, rc,
-				"slurm_get_select_nodeinfo", __func__,
-				"slurm_get_select_nodeinfo(%s, SELECT_NODEDATA_SUBCNT) failed",
-				node->name);
-	}
-
-	data_set_int(dst, alloc_cpus);
-
-	return SLURM_SUCCESS;
-}
-
 PARSE_DISABLED(NODE_SELECT_ALLOC_IDLE_CPUS)
 
 static int DUMP_FUNC(NODE_SELECT_ALLOC_IDLE_CPUS)(const parser_t *const parser,
 						  void *obj, data_t *dst,
 						  args_t *args)
 {
-	int rc;
 	node_info_t *node = obj;
-	uint16_t alloc_cpus = 0;
 
-	if ((rc = slurm_get_select_nodeinfo(node->select_nodeinfo,
-					    SELECT_NODEDATA_SUBCNT,
-					    NODE_STATE_ALLOCATED,
-					    &alloc_cpus))) {
-		return on_error(DUMPING, parser->type, args, rc,
-				"slurm_get_select_nodeinfo", __func__,
-				"slurm_get_select_nodeinfo(%s, SELECT_NODEDATA_SUBCNT) failed",
-				node->name);
-	}
-
-	data_set_int(dst, (node->cpus - alloc_cpus));
-
-	return SLURM_SUCCESS;
-}
-
-PARSE_DISABLED(NODE_SELECT_TRES_USED)
-
-static int DUMP_FUNC(NODE_SELECT_TRES_USED)(const parser_t *const parser,
-					    void *obj, data_t *dst,
-					    args_t *args)
-{
-	int rc;
-	node_info_t *node = obj;
-	char *node_alloc_tres = NULL;
-
-	if ((rc = slurm_get_select_nodeinfo(node->select_nodeinfo,
-					    SELECT_NODEDATA_TRES_ALLOC_FMT_STR,
-					    NODE_STATE_ALLOCATED,
-					    &node_alloc_tres))) {
-		return on_error(DUMPING, parser->type, args, rc,
-				"slurm_get_select_nodeinfo", __func__,
-				"slurm_get_select_nodeinfo(%s, SELECT_NODEDATA_TRES_ALLOC_FMT_STR) failed",
-				node->name);
-	}
-
-	if (node_alloc_tres)
-		data_set_string_own(dst, node_alloc_tres);
-	else
-		data_set_string(dst, "");
+	data_set_int(dst, (node->cpus - node->alloc_cpus));
 
 	return SLURM_SUCCESS;
 }
@@ -3839,21 +3752,7 @@ static int DUMP_FUNC(NODE_SELECT_TRES_WEIGHTED)(const parser_t *const parser,
 						void *obj, data_t *dst,
 						args_t *args)
 {
-	int rc;
-	node_info_t *node = obj;
-	double node_tres_weighted = 0;
-
-	if ((rc = slurm_get_select_nodeinfo(node->select_nodeinfo,
-					    SELECT_NODEDATA_TRES_ALLOC_WEIGHTED,
-					    NODE_STATE_ALLOCATED,
-					    &node_tres_weighted))) {
-		return on_error(DUMPING, parser->type, args, rc,
-				"slurm_get_select_nodeinfo", __func__,
-				"slurm_get_select_nodeinfo(%s, SELECT_NODEDATA_TRES_ALLOC_WEIGHTED) failed",
-				node->name);
-	}
-
-	data_set_float(dst, node_tres_weighted);
+	data_set_float(dst, 0);
 
 	return SLURM_SUCCESS;
 }
@@ -6913,7 +6812,6 @@ static const parser_t PARSER_ARRAY(ASSOC_REC_SET)[] = {
 	add_skip(id),
 	add_skip(is_def),
 	add_skip(leaf_usage),
-	add_skip(lft),
 	add_skip(lineage),
 	add_parse(UINT32_NO_VAL, max_jobs, "maxjobs", "Maximum number of running jobs per user in this association"),
 	add_parse(UINT32_NO_VAL, max_jobs_accrue, "maxjobsaccrue", "Maximum number of pending jobs able to accrue age priority at any given time in this association"),
@@ -6933,7 +6831,6 @@ static const parser_t PARSER_ARRAY(ASSOC_REC_SET)[] = {
 	add_skip(partition),
 	add_parse(UINT32_NO_VAL, priority, "priority", "Association priority factor"),
 	add_parse(QOS_STRING_ID_LIST, qos_list, "qoslevel", "List of available QOS names"),
-	add_skip(rgt),
 	add_parse(UINT32, shares_raw, "fairshare", "Allocated shares used for fairshare calculation"),
 	/* slurmdbd should never set uid - it should always be zero */
 	add_skip(uid),
@@ -6981,7 +6878,6 @@ static const parser_t PARSER_ARRAY(ASSOC)[] = {
 	add_complex_parser(slurmdb_assoc_rec_t, ASSOC_ID, false, "id", "Unique ID"),
 	add_parse(BOOL16, is_def, "is_default", "Is default association for user"),
 	add_skip(leaf_usage),
-	add_skip(lft),
 	add_parse(STRING, lineage, "lineage", "Complete path up the hierarchy to the root association"),
 	add_parse(UINT32_NO_VAL, max_jobs, "max/jobs/active", "MaxJobs"),
 	add_parse(UINT32_NO_VAL, max_jobs_accrue, "max/jobs/accruing", "MaxJobsAccrue"),
@@ -6999,7 +6895,6 @@ static const parser_t PARSER_ARRAY(ASSOC)[] = {
 	add_parse(STRING, partition, "partition", "Partition name"),
 	add_parse(UINT32_NO_VAL, priority, "priority", "Association priority factor"),
 	add_parse(QOS_STRING_ID_LIST, qos_list, "qos", "List of available QOS names"),
-	add_skip(rgt),
 	add_parse(UINT32, shares_raw, "shares_raw", "Allocated shares used for fairshare calculation"),
 	/* slurmdbd should never set uid - it should always be zero */
 	add_skip(uid),
@@ -7139,7 +7034,6 @@ static const parser_t PARSER_ARRAY(JOB)[] = {
 	add_parse(UINT32_NO_VAL, het_job_offset, "het/job_offset", "Unique sequence number applied to this component of the heterogeneous job"),
 	add_parse(UINT32, jobid, "job_id", "Job ID"),
 	add_parse(STRING, jobname, "name", "Job name"),
-	add_skip(lft),
 	add_parse(STRING, licenses, "licenses", "License(s) required by the job"),
 	add_parse(STRING, mcs_label, "mcs/label", "Multi-Category Security label on the job"),
 	add_parse(STRING, nodes, "nodes", "Node(s) allocated to the job"),
@@ -7483,7 +7377,6 @@ static const parser_t PARSER_ARRAY(STATS_RPC)[] = {
 static const flag_bit_t PARSER_FLAG_ARRAY(CLUSTER_REC_FLAGS)[] = {
 	add_flag_bit(CLUSTER_FLAG_REGISTER, "REGISTERING"),
 	add_flag_bit(CLUSTER_FLAG_MULTSD, "MULTIPLE_SLURMD"),
-	add_flag_bit(CLUSTER_FLAG_FE, "FRONT_END"),
 	add_flag_bit(CLUSTER_FLAG_FED, "FEDERATION"),
 	add_flag_bit(CLUSTER_FLAG_EXT, "EXTERNAL"),
 };
@@ -7782,11 +7675,11 @@ static const parser_t PARSER_ARRAY(NODE)[] = {
 	add_parse(USER_ID, reason_uid, "reason_set_by_user", "User who set the reason"),
 	add_parse(TIMESTAMP_NO_VAL, resume_after, "resume_after", "Number of seconds after the node's state is updated to \"DOWN\" or \"DRAIN\" before scheduling a node state resume"),
 	add_parse(STRING, resv_name, "reservation", "Name of reservation containing this node"),
-	add_cparse(NODE_SELECT_ALLOC_MEMORY, "alloc_memory", "Total memory in MB currently allocated for jobs"),
-	add_cparse(NODE_SELECT_ALLOC_CPUS, "alloc_cpus", "Total number of CPUs currently allocated for jobs"),
+	add_parse(UINT64, alloc_memory, "alloc_memory", "Total memory in MB currently allocated for jobs"),
+	add_parse(UINT16, alloc_cpus, "alloc_cpus", "Total number of CPUs currently allocated for jobs"),
 	add_cparse(NODE_SELECT_ALLOC_IDLE_CPUS, "alloc_idle_cpus", "Total number of idle CPUs"),
-	add_cparse(NODE_SELECT_TRES_USED, "tres_used", "Trackable resources currently allocated for jobs"),
-	add_cparse(NODE_SELECT_TRES_WEIGHTED, "tres_weighted", "Weighted number of billable trackable resources allocated"),
+	add_parse(STRING, alloc_tres_fmt_str, "tres_used", "Trackable resources currently allocated for jobs"),
+	add_removed(NODE_SELECT_TRES_WEIGHTED, "tres_weighted", "Ignored. Was weighted number of billable trackable resources allocated", SLURM_25_05_PROTOCOL_VERSION),
 	add_parse(TIMESTAMP_NO_VAL, slurmd_start_time, "slurmd_start_time", "Time when the slurmd started (UNIX timestamp)"),
 	add_parse(UINT16, sockets, "sockets", "Number of physical processor sockets/chips on the node"),
 	add_parse(UINT16, threads, "threads", "Number of logical threads in a single physical core"),
@@ -8184,7 +8077,7 @@ static const parser_t PARSER_ARRAY(STEP_INFO)[] = {
 	add_parse(STRING, submit_line, "submit_line", "Full command used to submit the step"),
 	add_parse(TASK_DISTRIBUTION, task_dist, "task/distribution", "Layout"),
 	add_parse(UINT32_NO_VAL, time_limit, "time/limit", "Maximum run time in minutes"),
-	add_parse(STRING, tres_alloc_str, "tres/allocation", "Trackable resources allocated to the step"),
+	add_parse(STRING, tres_fmt_alloc_str, "tres/allocation", "Trackable resources allocated to the step"),
 	add_parse(STRING, tres_bind, "tres/binding", "Task to TRES binding directives"),
 	add_parse(STRING, tres_freq, "tres/frequency", "TRES frequency directive"),
 	add_parse(STRING, tres_per_step, "tres/per/step", "Comma separated list of TRES=# values to be allocated per job step"),
@@ -9011,7 +8904,7 @@ static const parser_t PARSER_ARRAY(OPENAPI_ACCOUNT_QUERY)[] = {
 #define add_parse(mtype, field, path, desc) \
 	add_parser(slurmdb_account_cond_t , mtype, false, field, 0, path, desc)
 static const parser_t PARSER_ARRAY(ACCOUNT_CONDITION)[] = {
-	add_parse(ASSOC_CONDITION_PTR, assoc_cond, "assocation", "Association filter"),
+	add_parse(ASSOC_CONDITION_PTR, assoc_cond, "association", "Association filter"),
 	add_parse(STRING_LIST, description_list, "description", "CSV description list"),
 	add_parse_bit_eflag_array(slurmdb_account_cond_t, ACCOUNT_FLAGS, flags, "Query flags"),
 };
@@ -9566,7 +9459,7 @@ static const parser_t PARSER_ARRAY(JOB_ALLOC_REQ)[] = {
 	add_parser(rtype, OPENAPI_WARNINGS, false, warnings, 0, XSTRINGIFY(OPENAPI_RESP_STRUCT_WARNINGS_FIELD_NAME), "Query warnings")
 
 /*
- * Generic response when there is only possiblity of warnings/errors
+ * Generic response when there is only possibility of warnings/errors
  * and HTTP status code.
  */
 static const parser_t PARSER_ARRAY(OPENAPI_RESP)[] = {                            \
@@ -10124,10 +10017,7 @@ static const parser_t parsers[] = {
 	addpca(STATS_MSG_RPCS_BY_USER, STATS_MSG_RPC_USER, stats_info_response_msg_t, NEED_NONE, "RPCs by user"),
 	addpca(STATS_MSG_RPCS_QUEUE, STATS_MSG_RPC_QUEUE, stats_info_response_msg_t, NEED_NONE, "Pending RPCs"),
 	addpca(STATS_MSG_RPCS_DUMP, STATS_MSG_RPC_DUMP, stats_info_response_msg_t, NEED_NONE, "Pending RPCs by hostlist"),
-	addpc(NODE_SELECT_ALLOC_MEMORY, node_info_t, NEED_NONE, INT64, NULL),
-	addpc(NODE_SELECT_ALLOC_CPUS, node_info_t, NEED_NONE, INT32, NULL),
 	addpc(NODE_SELECT_ALLOC_IDLE_CPUS, node_info_t, NEED_NONE, INT32, NULL),
-	addpc(NODE_SELECT_TRES_USED, node_info_t, NEED_NONE, STRING, NULL),
 	addpc(NODE_SELECT_TRES_WEIGHTED, node_info_t, NEED_NONE, DOUBLE, NULL),
 	addpca(NODES, NODE, node_info_msg_t, NEED_NONE, NULL),
 	addpca(JOB_INFO_GRES_DETAIL, STRING, slurm_job_info_t, NEED_NONE, NULL),
@@ -10218,7 +10108,7 @@ static const parser_t parsers[] = {
 	addpap(ACCOUNT_SHORT, slurmdb_account_rec_t, NULL, slurmdb_destroy_account_rec),
 	addpap(ACCOUNTING, slurmdb_accounting_rec_t, NULL, slurmdb_destroy_accounting_rec),
 	addpap(ACCOUNTS_ADD_COND, slurmdb_add_assoc_cond_t, NEW_FUNC(ACCOUNTS_ADD_COND), slurmdb_destroy_add_assoc_cond),
-	/* Re-use already existing NEW_FUNC */
+	/* Reuse already existing NEW_FUNC */
 	addpap(USERS_ADD_COND, slurmdb_add_assoc_cond_t, NEW_FUNC(ACCOUNTS_ADD_COND), slurmdb_destroy_add_assoc_cond),
 	addpap(COORD, slurmdb_coord_rec_t, NULL, slurmdb_destroy_coord_rec),
 	addpap(WCKEY, slurmdb_wckey_rec_t, NEW_FUNC(WCKEY), slurmdb_destroy_wckey_rec),
@@ -10353,9 +10243,9 @@ static const parser_t parsers[] = {
 	addfa(SLURMDB_JOB_FLAGS, uint32_t),
 	addfa(ACCOUNT_FLAGS, uint32_t),
 	addfa(WCKEY_FLAGS, uint32_t),
-	addfa(QOS_FLAGS, uint32_t),
+	addfa(QOS_FLAGS, slurmdb_qos_flags_t),
 	addfa(QOS_PREEMPT_MODES, uint16_t),
-	addfa(CLUSTER_REC_FLAGS, uint32_t),
+	addfa(CLUSTER_REC_FLAGS, slurmdb_cluster_flags_t),
 	addfa(NODE_STATES, uint32_t),
 	addfa(PARTITION_STATES, uint16_t),
 	addfa(JOB_FLAGS, uint64_t),

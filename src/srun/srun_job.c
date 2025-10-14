@@ -86,7 +86,6 @@
  * about node allocation to be passed to _job_create_structure()
  */
 typedef struct allocation_info {
-	char                   *alias_list;
 	uint16_t               *cpus_per_node;
 	uint32_t               *cpu_count_reps;
 	uint32_t                nnodes;
@@ -106,7 +105,6 @@ typedef struct allocation_info {
 } allocation_info_t;
 
 typedef struct het_job_resp_struct {
-	char **alias_list;
 	uint16_t *cpu_cnt;
 	hostlist_t *host_list;
 	uint32_t node_cnt;
@@ -185,7 +183,7 @@ job_create_noalloc(void)
 
 	hostlist_destroy(hl);
 
-	cpn[0] = (opt_local->ntasks + ai->nnodes - 1) / ai->nnodes;
+	cpn[0] = ROUNDUP(opt_local->ntasks, ai->nnodes);
 	ai->cpus_per_node  = cpn;
 	cpu_count_reps[0] = ai->nnodes;
 	ai->cpu_count_reps = cpu_count_reps;
@@ -291,7 +289,6 @@ extern srun_job_t *job_step_create_allocation(
 	ai->step_id.job_id          = job_id;
 	ai->step_id.step_id         = NO_VAL;
 	ai->step_id.step_het_comp = NO_VAL;
-	ai->alias_list     = resp->alias_list;
 	if (srun_opt->alloc_nodelist)
 		ai->nodelist = xstrdup(srun_opt->alloc_nodelist);
 	else
@@ -498,7 +495,6 @@ extern srun_job_t *job_create_allocation(
 	srun_job_t *job;
 	allocation_info_t *i = xmalloc(sizeof(allocation_info_t));
 
-	i->alias_list     = resp->alias_list;
 	i->nodelist       = _normalize_hostlist(resp->node_list);
 	i->nnodes	  = resp->node_cnt;
 	i->partition      = resp->partition;
@@ -690,7 +686,7 @@ extern void init_srun(int argc, char **argv, log_options_t *logopt,
 	 * Initialize plugin stack, read options from plugins, etc.
 	 */
 	init_spank_env();
-	if (spank_init(NULL) < 0) {
+	if (spank_init(NULL)) {
 		error("Plug-in initialization failed");
 		exit(error_exit);
 	}
@@ -729,6 +725,7 @@ extern void init_srun(int argc, char **argv, log_options_t *logopt,
 			 */
 			het_job_argc -= het_job_argc_off;
 			het_job_argv += het_job_argc_off;
+			colon_cnt++;
 		} else {
 			het_job_fini = true;
 		}
@@ -769,11 +766,14 @@ extern void init_srun(int argc, char **argv, log_options_t *logopt,
 }
 
 /*
- * Modify options for a job step (after job allocaiton is complete
+ * Modify options for a job step (after job allocation is complete
  */
-static void _set_step_opts(slurm_opt_t *opt_local)
+static void _set_step_opts(slurm_opt_t *opt_local,
+			   resource_allocation_response_msg_t *resp)
 {
 	srun_opt_t *srun_opt = opt_local->srun_opt;
+	int new_cpt;
+
 	xassert(srun_opt);
 
 	opt_local->time_limit = NO_VAL;/* not applicable for step, only job */
@@ -786,6 +786,15 @@ static void _set_step_opts(slurm_opt_t *opt_local)
 	} else {
 		/* Step gets all CPUs in the job allocation. */
 		srun_opt->exclusive = false;
+	}
+
+	new_cpt = slurm_opt_get_tres_per_task_cpu_cnt(resp->tres_per_task);
+	if (new_cpt)
+		opt_local->cpus_per_task = new_cpt;
+
+	if (resp->tres_per_task) {
+		xfree(opt_local->tres_per_task);
+		SWAP(opt_local->tres_per_task, resp->tres_per_task);
 	}
 }
 
@@ -1003,7 +1012,20 @@ static int _create_job_step(srun_job_t *job, bool use_all_cpus,
 			job->het_job_ntasks = job->ntasks;
 			job->het_job_task_offset = 0;
 		}
-		return create_job_step(job, use_all_cpus, &opt);
+		if ((rc = create_job_step(job, use_all_cpus, &opt)) < 0)
+			return rc;
+
+		if (het_job_id) {
+			/*
+			 * If packing nodes (CR_PACK_NODES, -mpack), the step
+			 * may have an updated layout.
+			 */
+			job->het_job_nnodes = job->nhosts;
+			/* The stepmgr logic can modify ntasks */
+			job->het_job_ntasks = job->ntasks;
+		}
+
+		return rc;
 	} else {
 		return -1;
 	}
@@ -1042,13 +1064,7 @@ static void _cancel_steps(list_t *srun_job_list)
 static void _het_job_struct_del(void *x)
 {
 	het_job_resp_struct_t *het_job_resp = (het_job_resp_struct_t *) x;
-	int i;
 
-	if (het_job_resp->alias_list) {
-		for (i = 0; i < het_job_resp->node_cnt; i++)
-			xfree(het_job_resp->alias_list[i]);
-		xfree(het_job_resp->alias_list);
-	}
 	xfree(het_job_resp->cpu_cnt);
 	if (het_job_resp->host_list)
 		hostlist_destroy(het_job_resp->host_list);
@@ -1061,13 +1077,12 @@ static char *_compress_het_job_nodelist(list_t *used_resp_list)
 	het_job_resp_struct_t *het_job_resp;
 	list_t *het_job_resp_list;
 	list_itr_t *resp_iter;
-	char *aliases = NULL, *save_ptr = NULL, *tok, *tmp;
+	char *tmp;
 	char *het_job_nodelist = NULL, *node_name;
 	hostset_t *hs;
 	int cnt, i, j, k;
 	uint16_t *cpus;
 	uint32_t *reps, cpu_inx;
-	bool have_aliases = false;
 
 	if (!used_resp_list)
 		return het_job_nodelist;
@@ -1082,27 +1097,6 @@ static char *_compress_het_job_nodelist(list_t *used_resp_list)
 		hostset_insert(hs, resp->node_list);
 		het_job_resp = xmalloc(sizeof(het_job_resp_struct_t));
 		het_job_resp->node_cnt = resp->node_cnt;
-		/*
-		 * alias_list contains <NodeName>:<NodeAddr>:<NodeHostName>
-		 * values in comma separated list
-		 */
-		if (resp->alias_list) {
-			have_aliases = true;
-			het_job_resp->alias_list = xmalloc(sizeof(char *) *
-							   resp->node_cnt);
-			tmp = xstrdup(resp->alias_list);
-			i = 0;
-			tok = strtok_r(tmp, ",", &save_ptr);
-			while (tok) {
-				if (i >= resp->node_cnt) {
-					fatal("%s: Invalid alias_list",
-					      __func__);
-				}
-				het_job_resp->alias_list[i++] = xstrdup(tok);
-				tok = strtok_r(NULL, ",", &save_ptr);
-			}
-			xfree(tmp);
-		}
 		het_job_resp->cpu_cnt =
 			xmalloc(sizeof(uint16_t) * resp->node_cnt);
 		het_job_resp->host_list = hostlist_create(resp->node_list);
@@ -1134,19 +1128,6 @@ static char *_compress_het_job_nodelist(list_t *used_resp_list)
 			j = hostlist_find(het_job_resp->host_list, node_name);
 			if ((j == -1) || !het_job_resp->cpu_cnt)
 				continue;	/* node not in this hetjob */
-			if (have_aliases) {
-				if (aliases)
-					xstrcat(aliases, ",");
-				if (het_job_resp->alias_list &&
-				    het_job_resp->alias_list[j]) {
-					xstrcat(aliases,
-						het_job_resp->alias_list[j]);
-				} else {
-					xstrfmtcat(aliases, "%s:%s:%s",
-						   node_name, node_name,
-						   node_name);
-				}
-			}
 			if (cpus[cpu_inx] == het_job_resp->cpu_cnt[j]) {
 				reps[cpu_inx]++;
 			} else {
@@ -1445,19 +1426,16 @@ extern void create_srun_job(void **p_job, bool *got_alloc)
 		xfree(het_job_nodelist);
 	} else {
 		/* Combined job allocation and job step launch */
-#if defined HAVE_FRONT_END
-		uid_t my_uid = getuid();
-		if ((my_uid != 0) && (my_uid != slurm_conf.slurm_user_id)) {
-			error("srun task launch not supported on this system");
-			exit(error_exit);
-		}
-#endif
 		if (slurm_option_set_by_cli(&opt, 'J'))
 			setenvfs("SLURM_JOB_NAME=%s", opt.job_name);
 		else if (!slurm_option_set_by_env(&opt, 'J') && opt.argc)
 			setenvfs("SLURM_JOB_NAME=%s", opt.argv[0]);
 
 		if (opt_list) {
+			if (!colon_cnt) {
+				error("--het-group expected to be used within an HetJob allocation");
+				exit(error_exit);
+			}
 			job_resp_list = allocate_het_job_nodes();
 			if (!job_resp_list)
 				exit(error_exit);
@@ -1484,7 +1462,7 @@ extern void create_srun_job(void **p_job, bool *got_alloc)
 				job = job_create_allocation(resp, opt_local);
 				job->het_job_offset = het_job_offset;
 				list_append(srun_job_list, job);
-				_set_step_opts(opt_local);
+				_set_step_opts(opt_local, resp);
 			}
 			list_iterator_destroy(opt_iter);
 			list_iterator_destroy(resp_iter);
@@ -1496,6 +1474,12 @@ extern void create_srun_job(void **p_job, bool *got_alloc)
 					 het_job_offset + 1);
 			}
 		} else {
+			if (sropt.het_grp_bits &&
+			    (bit_fls(sropt.het_grp_bits) != -1)) {
+				error("--het-group expected to be used within an HetJob allocation");
+				exit(error_exit);
+			}
+
 			if (!(resp = allocate_nodes(&opt)))
 				exit(error_exit);
 			*got_alloc = true;
@@ -1507,7 +1491,7 @@ extern void create_srun_job(void **p_job, bool *got_alloc)
 				exit(error_exit);
 			}
 			job = job_create_allocation(resp, &opt);
-			_set_step_opts(&opt);
+			_set_step_opts(&opt, resp);
 		}
 		if (srun_job_list && (list_count(srun_job_list) > 1) &&
 		    opt_list && (list_count(opt_list) > 1) && my_job_id) {
@@ -1558,7 +1542,7 @@ extern void pre_launch_srun_job(srun_job_t *job, slurm_opt_t *opt_local)
 		slurm_thread_create(&signal_thread, _srun_signal_mgr, job);
 
 	_run_srun_prolog(job);
-	if (_call_spank_local_user(job, opt_local) < 0) {
+	if (_call_spank_local_user(job, opt_local)) {
 		error("Failure in local plugin stack");
 		slurm_step_launch_abort(job->step_ctx);
 		exit(error_exit);
@@ -1686,7 +1670,6 @@ static srun_job_t *_job_create_structure(allocation_info_t *ainfo,
 	slurm_cond_init(&job->state_cond, NULL);
 	job->state = SRUN_JOB_INIT;
 
- 	job->alias_list = xstrdup(ainfo->alias_list);
 	job->container = xstrdup(opt_local->container);
  	job->nodelist = xstrdup(ainfo->nodelist);
  	job->partition = xstrdup(ainfo->partition);
@@ -1698,10 +1681,6 @@ static srun_job_t *_job_create_structure(allocation_info_t *ainfo,
 	job->het_job_task_offset = NO_VAL;
 	job->nhosts   = ainfo->nnodes;
 
-#if defined HAVE_FRONT_END
-	/* Limited job step support */
-	opt_local->overcommit = true;
-#else
 	if (opt_local->min_nodes > job->nhosts) {
 		error("Only allocated %d nodes asked for %d",
 		      job->nhosts, opt_local->min_nodes);
@@ -1719,7 +1698,7 @@ static srun_job_t *_job_create_structure(allocation_info_t *ainfo,
 		xfree(job);
 		return NULL;
 	}
-#endif
+
 	job->ntasks  = opt_local->ntasks;
 	job->ntasks_per_board = ainfo->ntasks_per_board;
 	job->ntasks_per_core = ainfo->ntasks_per_core;

@@ -274,7 +274,7 @@ static int _set_task_dist_internal(job_record_t *job_ptr)
 		}
 	}
 
-	/* Distrubute remaining tasks per plane size */
+	/* Distribute remaining tasks per plane size */
 	while (maxtasks > tid) {
 		uint32_t last_tid = tid;
 		for (n = 0; n < job_res->nhosts; n++) {
@@ -532,7 +532,7 @@ static void _block_sync_core_bitmap(job_record_t *job_ptr,
 		if ((ntasks_per_core == 1) &&
 		    (cpus_per_task > vpus)) {
 			/* how many cores a task will consume */
-			int cores_per_task = (cpus_per_task + vpus - 1) / vpus;
+			int cores_per_task = ROUNDUP(cpus_per_task, vpus);
 			int tasks = cpus / cpus_per_task;
 			req_cores = tasks * cores_per_task;
 		}

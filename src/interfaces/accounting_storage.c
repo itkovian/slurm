@@ -211,8 +211,6 @@ typedef struct slurm_acct_storage_ops {
 				    time_t event_time);
 	int (*reconfig)            (void *db_conn, bool dbd);
 	int (*relay_msg)           (void *db_conn, persist_msg_t *msg);
-	int (*reset_lft_rgt)       (void *db_conn, uid_t uid,
-				    list_t *cluster_list);
 	int (*get_stats)           (void *db_conn, slurmdb_stats_rec_t **stats);
 	int (*clear_stats)         (void *db_conn);
 	int (*get_data)            (void *db_conn, acct_storage_info_t dinfo,
@@ -300,7 +298,6 @@ static const char *syms[] = {
 	"acct_storage_p_flush_jobs_on_cluster",
 	"acct_storage_p_reconfig",
 	"acct_storage_p_relay_msg",
-	"acct_storage_p_reset_lft_rgt",
 	"acct_storage_p_get_stats",
 	"acct_storage_p_clear_stats",
 	"acct_storage_p_get_data",
@@ -332,6 +329,21 @@ extern int acct_storage_g_init(void)
 	if (!slurm_conf.accounting_storage_type) {
 		plugin_inited = PLUGIN_NOOP;
 		goto done;
+	}
+
+	/*
+	 * Neither slurmd nor slurmstepd can directly communicate with
+	 * slurmdbd, and will need to use the ctld_relay plugin instead.
+	 * Technically the slurmd would be fine with PLUGIN_NOOP, but
+	 * forcing it to load ctld_relay instead here helps ensure that
+	 * the slurmstepd will be able to load that plugin later.
+	 */
+	if (running_in_slurmd_stepd() &&
+	    !xstrcasecmp(slurm_conf.accounting_storage_type,
+			 "accounting_storage/slurmdbd")) {
+		xfree(slurm_conf.accounting_storage_type);
+		slurm_conf.accounting_storage_type =
+			xstrdup("accounting_storage/ctld_relay");
 	}
 
 	plugin_context = plugin_context_create(
@@ -1329,22 +1341,6 @@ extern int acct_storage_g_reconfig(void *db_conn, bool dbd)
 }
 
 /*
- * Reset the lft and rights of an association table.
- * RET: SLURM_SUCCESS on success SLURM_ERROR else
- */
-extern int acct_storage_g_reset_lft_rgt(void *db_conn, uid_t uid,
-					list_t *cluster_list)
-{
-	xassert(plugin_inited != PLUGIN_NOT_INITED);
-
-	if (plugin_inited == PLUGIN_NOOP)
-		return SLURM_SUCCESS;
-
-	return (*(ops.reset_lft_rgt))(db_conn, uid, cluster_list);
-
-}
-
-/*
  * Get performance statistics.
  * RET: SLURM_SUCCESS on success SLURM_ERROR else
  */
@@ -1388,7 +1384,7 @@ extern int acct_storage_g_get_data(void *db_conn, acct_storage_info_t dinfo,
 }
 
 /*
- * Send all relavant information to the DBD.
+ * Send all relevant information to the DBD.
  * RET: SLURM_SUCCESS on success SLURM_ERROR else
  */
 extern void acct_storage_g_send_all(void *db_conn, time_t event_time,

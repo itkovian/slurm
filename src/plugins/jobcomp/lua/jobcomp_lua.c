@@ -164,7 +164,7 @@ extern int init(void)
 	slurm_mutex_lock(&lua_lock);
 	rc = slurm_lua_loadscript(&L, "job_comp/lua",
 				  lua_script_path, req_fxns,
-				  &lua_script_last_loaded, NULL);
+				  &lua_script_last_loaded, NULL, NULL);
 	slurm_mutex_unlock(&lua_lock);
 
 	return rc;
@@ -194,13 +194,14 @@ extern int jobcomp_p_set_location(void)
 	return SLURM_SUCCESS;
 }
 
-extern int jobcomp_p_log_record(job_record_t *job_ptr)
+extern int jobcomp_p_record_job_end(job_record_t *job_ptr, uint32_t event)
 {
 	int rc;
 	slurm_mutex_lock(&lua_lock);
 
 	rc = slurm_lua_loadscript(&L, "jobcomp/lua", lua_script_path,
-				  req_fxns, &lua_script_last_loaded, NULL);
+				  req_fxns, &lua_script_last_loaded, NULL,
+				  NULL);
 
 	if (rc != SLURM_SUCCESS)
 		goto out;
@@ -237,4 +238,9 @@ out:	slurm_mutex_unlock(&lua_lock);
 extern list_t *jobcomp_p_get_jobs(void *job_cond)
 {
 	return NULL;
+}
+
+extern int jobcomp_p_record_job_start(job_record_t *job_ptr, uint32_t event)
+{
+	return SLURM_SUCCESS;
 }

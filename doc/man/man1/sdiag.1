@@ -1,4 +1,4 @@
-.TH sdiag "1" "Slurm Commands" "May 2023" "Slurm Commands"
+.TH sdiag "1" "Slurm Commands" "Slurm 25.05" "Slurm Commands"
 
 .SH "NAME"
 sdiag \- Scheduling diagnostic tool for Slurm
@@ -107,7 +107,7 @@ dependencies or affected  by accounts limits are not processed.
 
 .TP
 \fBLast cycle\fR
-Time in microseconds for last scheduling cycle. 
+Time in microseconds for last scheduling cycle.
 .IP
 
 .TP
@@ -386,6 +386,36 @@ Same as \fB\-\-cluster\fR
 .TP 20
 \fBSLURM_CONF\fR
 The location of the Slurm configuration file.
+
+.TP
+\fBSLURM_JSON\fR
+Control JSON serialization:
+.IP
+.RS
+.TP
+\fBcompact\fR
+Output JSON as compact as possible.
+.IP
+
+.TP
+\fBpretty\fR
+Output JSON in pretty format to make it more readable.
+.IP
+.RE
+
+.TP
+\fBSLURM_YAML\fR
+Control YAML serialization:
+.IP
+.RS
+.TP
+\fBcompact\fR Output YAML as compact as possible.
+.IP
+
+.TP
+\fBpretty\fR Output YAML in pretty format to make it more readable.
+.RE
+.IP
 
 .SH "COPYING"
 Copyright (C) 2010\-2011 Barcelona Supercomputing Center.

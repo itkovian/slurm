@@ -34,6 +34,7 @@
 \*****************************************************************************/
 
 #include "config.h"
+#include "math.h"
 
 #if HAVE_JSON_C_INC
 #include <json-c/json.h>
@@ -48,8 +49,12 @@
 #include "src/common/log.h"
 #include "src/common/read_config.h"
 #include "src/common/xassert.h"
+#include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
 #include "src/interfaces/serializer.h"
+
+#define SERIALIZER_JSON_DEFAULT_FORMAT JSON_C_TO_STRING_PLAIN
+#define SERIALIZER_JSON_DEFAULT_FLAGS SER_FLAGS_PRETTY
 
 /*
  * These variables are required by the generic plugin interface.  If they
@@ -84,23 +89,44 @@ const char *mime_types[] = {
 	"application/jsonrequest",
 	NULL
 };
+static serializer_flags_t global_flags = SERIALIZER_JSON_DEFAULT_FLAGS;
 
-static json_object *_data_to_json(const data_t *d);
+#define MAGIC_CONVERT_FOREACH 0x0a0b0808
 
-extern int serializer_p_init(void)
+typedef struct {
+	int magic; /* MAGIC_CONVERT_FOREACH */
+	json_object *jobj;
+	serializer_flags_t flags;
+} convert_foreach_arg_t;
+
+static json_object *_data_to_json(const data_t *d, serializer_flags_t flags);
+
+/* Merge global_flags and flags into the coherent set of flags */
+static serializer_flags_t _merge_flags(serializer_flags_t flags)
 {
+	serializer_flags_t ret = global_flags;
+
+	/* Avoid conflicting flags from global */
+	if (flags & (SER_FLAGS_COMPACT|SER_FLAGS_PRETTY))
+		ret &= ~(SER_FLAGS_COMPACT|SER_FLAGS_PRETTY);
+
+	return (ret | flags);
+}
+
+extern int serialize_p_init(serializer_flags_t flags)
+{
+	if (flags != SER_FLAGS_NONE)
+		global_flags = flags;
+
 	log_flag(DATA, "loaded");
 
 	return SLURM_SUCCESS;
 }
 
-extern int serializer_p_fini(void)
+extern void serialize_p_fini(void)
 {
 	log_flag(DATA, "unloaded");
-
-	return SLURM_SUCCESS;
 }
-
 
 static json_object *_try_parse(const char *src, size_t stringlen,
 			       struct json_tokener *tok)
@@ -168,8 +194,11 @@ static data_for_each_cmd_t _convert_dict_json(const char *key,
 					      const data_t *data,
 					      void *arg)
 {
-	json_object *jobj = arg;
-	json_object *jobject = _data_to_json(data);
+	convert_foreach_arg_t *args = arg;
+	json_object *jobj = args->jobj;
+	json_object *jobject = _data_to_json(data, args->flags);
+
+	xassert(args->magic == MAGIC_CONVERT_FOREACH);
 
 	json_object_object_add(jobj, key, jobject);
 	return DATA_FOR_EACH_CONT;
@@ -177,14 +206,17 @@ static data_for_each_cmd_t _convert_dict_json(const char *key,
 
 static data_for_each_cmd_t _convert_list_json(const data_t *data, void *arg)
 {
-	json_object *jobj = arg;
-	json_object *jarray = _data_to_json(data);
+	convert_foreach_arg_t *args = arg;
+	json_object *jobj = args->jobj;
+	json_object *jarray = _data_to_json(data, args->flags);
+
+	xassert(args->magic == MAGIC_CONVERT_FOREACH);
 
 	json_object_array_add(jobj, jarray);
 	return DATA_FOR_EACH_CONT;
 }
 
-static json_object *_data_to_json(const data_t *d)
+static json_object *_data_to_json(const data_t *d, serializer_flags_t flags)
 {
 	if (!d)
 		return NULL;
@@ -197,6 +229,15 @@ static json_object *_data_to_json(const data_t *d)
 		return json_object_new_boolean(data_get_bool(d));
 		break;
 	case DATA_TYPE_FLOAT:
+		if (!(flags & SER_FLAGS_COMPLEX)) {
+			if (isinf(data_get_float(d)))
+				return json_object_new_double(
+					(double) INFINITE64);
+			else if (isnan(data_get_float(d)))
+				return json_object_new_double(
+					(double) NO_VAL64);
+		}
+
 		return json_object_new_double(data_get_float(d));
 		break;
 	case DATA_TYPE_INT_64:
@@ -205,7 +246,12 @@ static json_object *_data_to_json(const data_t *d)
 	case DATA_TYPE_DICT:
 	{
 		json_object *jobj = json_object_new_object();
-		if (data_dict_for_each_const(d, _convert_dict_json, jobj) < 0)
+		convert_foreach_arg_t args = {
+			.magic = MAGIC_CONVERT_FOREACH,
+			.jobj = jobj,
+			.flags = flags,
+		};
+		if (data_dict_for_each_const(d, _convert_dict_json, &args) < 0)
 			error("%s: unexpected error calling _convert_dict_json()",
 			      __func__);
 		return jobj;
@@ -213,7 +259,12 @@ static json_object *_data_to_json(const data_t *d)
 	case DATA_TYPE_LIST:
 	{
 		json_object *jobj = json_object_new_array();
-		if (data_list_for_each_const(d, _convert_list_json, jobj) < 0)
+		convert_foreach_arg_t args = {
+			.magic = MAGIC_CONVERT_FOREACH,
+			.jobj = jobj,
+			.flags = flags,
+		};
+		if (data_list_for_each_const(d, _convert_list_json, &args) < 0)
 			error("%s: unexpected error calling _convert_list_json()",
 			      __func__);
 		return jobj;
@@ -236,21 +287,22 @@ extern int serialize_p_data_to_string(char **dest, size_t *length,
 				      const data_t *src,
 				      serializer_flags_t flags)
 {
-	struct json_object *jobj = _data_to_json(src);
+	struct json_object *jobj = NULL;
 	int jflags = 0;
+
+	flags = _merge_flags(flags);
+	jobj = _data_to_json(src, flags);
 
 	/* can't be pretty and compact at the same time! */
 	xassert((flags & (SER_FLAGS_PRETTY | SER_FLAGS_COMPACT)) !=
 		(SER_FLAGS_PRETTY | SER_FLAGS_COMPACT));
 
-	switch (flags) {
-	case SER_FLAGS_PRETTY:
+	if (flags & SER_FLAGS_PRETTY)
 		jflags = JSON_C_TO_STRING_SPACED | JSON_C_TO_STRING_PRETTY;
-		break;
-	case SER_FLAGS_COMPACT: /* fallthrough */
-	default:
+	else if (flags & SER_FLAGS_COMPACT)
 		jflags = JSON_C_TO_STRING_PLAIN;
-	}
+	else
+		jflags = SERIALIZER_JSON_DEFAULT_FORMAT;
 
 	/* string will die with jobj */
 	*dest = xstrdup(json_object_to_json_string_ext(jobj, jflags));

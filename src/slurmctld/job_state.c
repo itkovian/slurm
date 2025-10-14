@@ -33,6 +33,9 @@
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
 
+#define _GNU_SOURCE
+#include <pthread.h>
+
 #include "src/common/macros.h"
 #include "src/common/xahash.h"
 #include "src/common/xstring.h"
@@ -45,6 +48,17 @@
 #define ONLY_DEBUG(...) __VA_ARGS__
 #else
 #define ONLY_DEBUG(...)
+#endif
+
+/*
+ * Favor writer lock acquisition to avoid delaying the scheduling thread
+ * when under heavy client load. Clients can be safely delayed, job launch
+ * is most important.
+ */
+#ifdef PTHREAD_RWLOCK_WRITER_NONRECURSIVE_INITIALIZER_NP
+#define CACHE_LOCK_INIT PTHREAD_RWLOCK_WRITER_NONRECURSIVE_INITIALIZER_NP
+#else
+#define CACHE_LOCK_INIT PTHREAD_RWLOCK_INITIALIZER
 #endif
 
 #define JOB_STATE_MIMIC_RECORD(js)                                             \
@@ -188,7 +202,7 @@ static xahash_table_t *array_job_cache_table = NULL;
  *	Maintains table_size for number of jobs reserved in hashtable
  */
 static xahash_table_t *array_task_cache_table = NULL;
-static pthread_rwlock_t cache_lock = PTHREAD_RWLOCK_INITIALIZER;
+static pthread_rwlock_t cache_lock = CACHE_LOCK_INIT;
 
 #ifndef NDEBUG
 
@@ -278,7 +292,7 @@ static void _log_job_state_change(const job_record_t *job_ptr,
 #define _log_array_job_chain(js, caller, fmt, ...) {}
 #define _check_all_jobs(compare_job_ptrs) {}
 #define _is_debug() (false)
-#define LOG(fmt, ...) do {} while (false)
+#define LOG(fmt, ...) log_flag(TRACE_JOBS, "%s: " fmt, __func__, ##__VA_ARGS__)
 #define _check_job_id(job_id_ptr) {(void) job_id_ptr;}
 #define _check_job_magic(js) {(void) js;}
 #define _check_array_job_magic(ajs) {(void) ajs;}
@@ -755,7 +769,7 @@ static void _sync_job_task_id_bitmap(const job_record_t *job_ptr,
 		}
 
 		if (!js->task_id_bitmap) {
-			LOG("[%pJ] mimicing array without task_id_bitmap with new bitmap[%u]",
+			LOG("[%pJ] mimicking array without task_id_bitmap with new bitmap[%u]",
 			    JOB_STATE_MIMIC_RECORD(js), task_cnt);
 			js->task_id_bitmap = bit_alloc(task_cnt);
 		}
@@ -767,7 +781,7 @@ static void _sync_job_task_id_bitmap(const job_record_t *job_ptr,
 
 		if (_is_debug()) {
 			char *map = bit_fmt_full(js->task_id_bitmap);
-			LOG("[%pJ] mimicing array without bitmap as task_id_bitmap[%lu]: %s",
+			LOG("[%pJ] mimicking array without bitmap as task_id_bitmap[%lu]: %s",
 			    JOB_STATE_MIMIC_RECORD(js),
 			    bit_size(js->task_id_bitmap), map);
 			xfree(map);
@@ -1330,7 +1344,7 @@ static bool _array_task_match(void *entry, const void *key,
 	_check_array_task_magic(ats_key);
 	xassert(sizeof(*ats_key) == key_bytes);
 
-	/* treat NO_VAL and INFINTE as * for arrays */
+	/* treat NO_VAL and INFINITE as * for arrays */
 	if ((ats_key->array_task_id < NO_VAL) &&
 	    (ats->array_task_id != ats_key->array_task_id))
 		return false;

@@ -139,8 +139,6 @@ typedef struct {
 	uint16_t fmt;            /* Flag for specifying timestamp format */
 }	log_t;
 
-char *slurm_prog_name = NULL;
-
 /* static variables */
 static pthread_mutex_t  log_lock = PTHREAD_MUTEX_INITIALIZER;
 static log_t            *log = NULL;
@@ -310,6 +308,11 @@ _log_init(char *prog, log_options_t opt, log_facility_t fac, char *logfile )
 		atfork_install_handlers();
 	}
 
+	if (syslog_open) {
+		closelog();
+		syslog_open = false;
+	}
+
 	if (prog) {
 		if (log->argv0)
 			xfree(log->argv0);
@@ -322,10 +325,6 @@ _log_init(char *prog, log_options_t opt, log_facility_t fac, char *logfile )
 			short_name = default_name;
 		log->argv0 = xstrdup(short_name);
 	}
-
-	/* Only take the first one here.  In some situations it can change. */
-	if (!slurm_prog_name && log->argv0 && (strlen(log->argv0) > 0))
-		slurm_prog_name = xstrdup(log->argv0);
 
 	if (!log->prefix)
 		log->prefix = xstrdup("");
@@ -344,11 +343,6 @@ _log_init(char *prog, log_options_t opt, log_facility_t fac, char *logfile )
 	if (log->opt.buffered) {
 		log->buf  = cbuf_create(128, 8192);
 		log->fbuf = cbuf_create(128, 8192);
-	}
-
-	if (syslog_open) {
-		closelog();
-		syslog_open = false;
 	}
 
 	if (log->opt.syslog_level > LOG_LEVEL_QUIET) {
@@ -528,6 +522,10 @@ void log_fini(void)
 
 	slurm_mutex_lock(&log_lock);
 	_log_flush(log);
+	if (syslog_open) {
+		closelog();
+		syslog_open = false;
+	}
 	xfree(log->argv0);
 	xfree(log->prefix);
 	if (log->buf)
@@ -536,12 +534,7 @@ void log_fini(void)
 		cbuf_destroy(log->fbuf);
 	if (log->logfp)
 		fclose(log->logfp);
-	if (syslog_open) {
-		closelog();
-		syslog_open = false;
-	}
 	xfree(log);
-	xfree(slurm_prog_name);
 	slurm_mutex_unlock(&log_lock);
 }
 
@@ -585,6 +578,10 @@ void log_set_prefix(char **prefix)
 void log_set_argv0(char *argv0)
 {
 	slurm_mutex_lock(&log_lock);
+	if (syslog_open) {
+		closelog();
+		syslog_open = false;
+	}
 	if (log->argv0)
 		xfree(log->argv0);
 	if (!argv0)
@@ -1091,7 +1088,7 @@ extern char *vxstrfmt(const char *fmt, va_list ap)
 					xiso8601timecat(substitute, true);
 					break;
 				}
-				switch (log->fmt & (~LOG_FMT_FORMAT_STDERR)) {
+				switch (log->fmt) {
 				case LOG_FMT_ISO8601_MS:
 					/* "%M" => "yyyy-mm-ddThh:mm:ss.fff"  */
 					xiso8601timecat(substitute, true);
@@ -1392,25 +1389,14 @@ static void _log_msg(log_level_t level, bool sched, bool spank, bool warn,
 		fflush(stdout);
 		if (spank) {
 			_log_printf(log, log->buf, stderr, "%s%s", buf, eol);
-		} else if (log->fmt == LOG_FMT_THREAD_ID) {
-			/*
-			 * This is for backward compatibility. In versions
-			 * < 23.11 this was the only way to print to stderr.
-			 * Keep this behavior since LogTimeFormat=format_stderr
-			 * results in a little bit different format.
-			 */
-			char tmp[64];
-			_set_idbuf(tmp, sizeof(tmp));
-			_log_printf(log, log->buf, stderr, "%s: %s%s%s",
-			            tmp, pfx, buf, eol);
-		} else if ((log->fmt & LOG_FMT_FORMAT_STDERR)) {
-			xlogfmtcat(&msgbuf, "[%M] %s", pfx);
-			_log_printf(log, log->buf, stderr, "%s%s%s",
-				    msgbuf, buf, eol);
+		} else if (running_in_daemon()) {
+			xlogfmtcat(&msgbuf, "[%M]");
+			_log_printf(log, log->buf, stderr, "%s %s%s%s", msgbuf,
+				    pfx, buf, eol);
 			xfree(msgbuf);
 		} else {
 			_log_printf(log, log->buf, stderr, "%s: %s%s%s",
-			            log->argv0, pfx, buf, eol);
+				    log->argv0, pfx, buf, eol);
 		}
 		fflush(stderr);
 	}
@@ -1447,7 +1433,6 @@ static void _log_msg(log_level_t level, bool sched, bool spank, bool warn,
 
 		xfree(json);
 		fflush(log->logfp);
-		xfree(msgbuf);
 	} else {
 		xassert(log->opt.logfile_fmt == LOG_FILE_FMT_TIMESTAMP);
 		xlogfmtcat(&msgbuf, "[%M] %s%s", log->prefix, pfx);
@@ -1461,11 +1446,8 @@ static void _log_msg(log_level_t level, bool sched, bool spank, bool warn,
 
 		/* Avoid changing errno if syslog fails */
 		int orig_errno = errno;
-		xlogfmtcat(&msgbuf, "%s%s%s", log->prefix, pfx, buf);
-		syslog(priority, "%.500s", msgbuf);
+		syslog(priority, "%s%s%s", log->prefix, pfx, buf);
 		errno = orig_errno;
-
-		xfree(msgbuf);
 	}
 
 	slurm_mutex_unlock(&log_lock);

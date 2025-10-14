@@ -103,7 +103,7 @@ void slurm_init_job_desc_msg(job_desc_msg_t * job_desc_msg)
 /*
  * slurm_init_update_step_msg - initialize step update message with default
  *	values before calling slurm_update_step()
- * OUT step_msg - step update messasge descriptor
+ * OUT step_msg - step update message descriptor
  */
 extern void slurm_init_update_step_msg (step_update_request_msg_t * step_msg)
 {
@@ -166,17 +166,6 @@ void slurm_init_update_node_msg (update_node_msg_t * update_node_msg)
 	update_node_msg->node_state = NO_VAL;
 	update_node_msg->resume_after = NO_VAL;
 	update_node_msg->weight = NO_VAL;
-}
-
-/*
- * slurm_init_update_front_end_msg - initialize front_end node update message
- * OUT update_front_end_msg - user defined node descriptor
- */
-void slurm_init_update_front_end_msg (update_front_end_msg_t *
-				      update_front_end_msg)
-{
-	memset(update_front_end_msg, 0, sizeof(update_front_end_msg_t));
-	update_front_end_msg->node_state = NO_VAL;
 }
 
 /*

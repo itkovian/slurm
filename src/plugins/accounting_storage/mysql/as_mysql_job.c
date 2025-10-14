@@ -506,7 +506,7 @@ no_rollup_change:
 	/*
 	 * Only jobs < 24.11 will not have a db_index here. This would also be
 	 * likely the first time we have seen this.
-	 * This can be removed 3 versions after 24.11.
+	 * When 24.05 is no longer supported this can be removed.
 	 */
 	if (!job_ptr->db_index) {
 		if (!(job_ptr->db_index = _get_db_index(mysql_conn,
@@ -605,6 +605,10 @@ no_rollup_change:
 			xstrcatat(query, &pos, ", container");
 		if (job_ptr->licenses)
 			xstrcatat(query, &pos, ", licenses");
+		if (job_ptr->details->segment_size)
+			xstrcatat(query, &pos, ", segment_size");
+		if (job_ptr->details->resv_req)
+			xstrcatat(query, &pos, ", resv_req");
 
 		xstrfmtcatat(query, &pos,
 			     ") values (%"PRIu64", %u, UNIX_TIMESTAMP(), "
@@ -681,6 +685,12 @@ no_rollup_change:
 		if (job_ptr->licenses)
 			xstrfmtcatat(query, &pos, ", '%s'",
 				     job_ptr->licenses);
+		if (job_ptr->details->segment_size)
+			xstrfmtcatat(query, &pos, ", %u",
+				     job_ptr->details->segment_size);
+		if (job_ptr->details->resv_req)
+			xstrfmtcatat(query, &pos, ", '%s'",
+				     job_ptr->details->resv_req);
 
 		xstrfmtcatat(query, &pos,
 			     ") on duplicate key update "
@@ -772,6 +782,12 @@ no_rollup_change:
 		if (job_ptr->licenses)
 			xstrfmtcatat(query, &pos, ", licenses='%s'",
 				     job_ptr->licenses);
+		if (job_ptr->details->segment_size)
+			xstrfmtcatat(query, &pos, ", segment_size=%u",
+				     job_ptr->details->segment_size);
+		if (job_ptr->details->resv_req)
+			xstrfmtcatat(query, &pos, ", resv_req='%s'",
+				     job_ptr->details->resv_req);
 	} else {
 		xstrfmtcatat(query, &pos,
 			     "update \"%s_%s\" set nodelist='%s', ",
@@ -838,6 +854,12 @@ no_rollup_change:
 		if (job_ptr->licenses)
 			xstrfmtcatat(query, &pos, "licenses='%s', ",
 				     job_ptr->licenses);
+		if (job_ptr->details->segment_size)
+			xstrfmtcatat(query, &pos, "segment_size=%u, ",
+				     job_ptr->details->segment_size);
+		if (job_ptr->details->resv_req)
+			xstrfmtcatat(query, &pos, "resv_req='%s', ",
+				     job_ptr->details->resv_req);
 
 		xstrfmtcatat(query, &pos, "time_start=%ld, job_name='%s', "
 			     "state=greatest(state, %u), "
@@ -1185,7 +1207,7 @@ static char *_get_derived_ec_update_str(uint32_t exit_code)
 
 	/*
 	 * Sync with _internal_step_complete() for setting derived_ec on the
-	 * contoller.
+	 * controller.
 	 */
 	if (exit_code == SIG_OOM)
 		derived_str = xstrdup_printf("%u", exit_code);
@@ -1452,28 +1474,44 @@ extern int as_mysql_step_start(mysql_conn_t *mysql_conn,
 	/* The stepid could be negative so use %d not %u */
 	query = xstrdup_printf(
 		"insert into \"%s_%s\" (job_db_inx, id_step, step_het_comp, "
-		"time_start, step_name, state, tres_alloc, "
+		"time_start, timelimit, step_name, state, tres_alloc, "
 		"nodes_alloc, task_cnt, nodelist, node_inx, "
 		"task_dist, req_cpufreq, req_cpufreq_min, req_cpufreq_gov",
 		mysql_conn->cluster_name, step_table);
 
+	if (step_ptr->cwd)
+		xstrcat(query, ", cwd");
+	if (step_ptr->std_err)
+		xstrcat(query, ", std_err");
+	if (step_ptr->std_in)
+		xstrcat(query, ", std_in");
+	if (step_ptr->std_out)
+		xstrcat(query, ", std_out");
 	if (step_ptr->submit_line)
 		xstrcat(query, ", submit_line");
 	if (step_ptr->container)
 		xstrcat(query, ", container");
 
 	xstrfmtcat(query,
-		   ") values (%"PRIu64", %d, %u, %d, '%s', %d, '%s', %d, %d, "
-		   "'%s', '%s', %d, %u, %u, %u",
+		   ") values (%"PRIu64", %d, %u, %d, %u, '%s', %d, '%s', %d, "
+		   "%d, '%s', '%s', %d, %u, %u, %u",
 		   step_ptr->job_ptr->db_index,
 		   step_ptr->step_id.step_id,
 		   step_ptr->step_id.step_het_comp,
-		   (int)start_time, step_ptr->name,
+		   (int)start_time, step_ptr->time_limit, step_ptr->name,
 		   JOB_RUNNING, step_ptr->tres_alloc_str,
 		   nodes, tasks, node_list, node_inx, task_dist,
 		   step_ptr->cpu_freq_max, step_ptr->cpu_freq_min,
 		   step_ptr->cpu_freq_gov);
 
+	if (step_ptr->cwd)
+		xstrfmtcat(query, ", '%s'", step_ptr->cwd);
+	if (step_ptr->std_err)
+		xstrfmtcat(query, ", '%s'", step_ptr->std_err);
+	if (step_ptr->std_in)
+		xstrfmtcat(query, ", '%s'", step_ptr->std_in);
+	if (step_ptr->std_out)
+		xstrfmtcat(query, ", '%s'", step_ptr->std_out);
 	if (step_ptr->submit_line)
 		xstrfmtcat(query, ", '%s'", step_ptr->submit_line);
 	if (step_ptr->container)
@@ -1481,15 +1519,23 @@ extern int as_mysql_step_start(mysql_conn_t *mysql_conn,
 
 	xstrfmtcat(query,
 		   ") on duplicate key update "
-		   "nodes_alloc=%d, task_cnt=%d, time_end=0, state=%d, "
-		   "nodelist='%s', node_inx='%s', task_dist=%d, "
+		   "nodes_alloc=%d, task_cnt=%d, time_end=0, timelimit=%u, "
+		   "state=%d, nodelist='%s', node_inx='%s', task_dist=%d, "
 		   "req_cpufreq=%u, req_cpufreq_min=%u, req_cpufreq_gov=%u,"
 		   "tres_alloc='%s'",
-		   nodes, tasks, JOB_RUNNING,
+		   nodes, tasks, step_ptr->time_limit, JOB_RUNNING,
 		   node_list, node_inx, task_dist, step_ptr->cpu_freq_max,
 		   step_ptr->cpu_freq_min, step_ptr->cpu_freq_gov,
 		   step_ptr->tres_alloc_str);
 
+	if (step_ptr->cwd)
+		xstrfmtcat(query, ", cwd='%s'", step_ptr->cwd);
+	if (step_ptr->std_err)
+		xstrfmtcat(query, ", std_err='%s'", step_ptr->std_err);
+	if (step_ptr->std_in)
+		xstrfmtcat(query, ", std_in='%s'", step_ptr->std_in);
+	if (step_ptr->std_out)
+		xstrfmtcat(query, ", std_out='%s'", step_ptr->std_out);
 	if (step_ptr->submit_line)
 		xstrfmtcat(query, ", submit_line='%s'", step_ptr->submit_line);
 

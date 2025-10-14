@@ -226,6 +226,7 @@ env_vars_t env_vars[] = {
   { "SBATCH_REQ_SWITCH", LONG_OPT_SWITCH_REQ },
   { "SBATCH_REQUEUE", LONG_OPT_REQUEUE },
   { "SBATCH_RESERVATION", LONG_OPT_RESERVATION },
+  { "SBATCH_SEGMENT_SIZE", LONG_OPT_SEGMENT_SIZE },
   { "SBATCH_SIGNAL", LONG_OPT_SIGNAL },
   { "SBATCH_SPREAD_JOB", LONG_OPT_SPREAD_JOB },
   { "SBATCH_THREAD_SPEC", LONG_OPT_THREAD_SPEC },
@@ -324,6 +325,10 @@ extern char *process_options_first_pass(int argc, char **argv)
 
 	if ((local_argc > optind) && (sbopt.wrap != NULL)) {
 		error("Script arguments not permitted with --wrap option");
+		exit(error_exit);
+	}
+	if ((local_argc > optind) && (opt.job_flags & EXTERNAL_JOB)) {
+		error("Script arguments not permitted with --external option");
 		exit(error_exit);
 	}
 	if (local_argc > optind) {
@@ -750,6 +755,8 @@ static bool _opt_verify(void)
 
 	if (!opt.job_name && sbopt.wrap)
 		opt.job_name = xstrdup("wrap");
+	else if (!opt.job_name && (opt.job_flags & EXTERNAL_JOB))
+		opt.job_name = xstrdup("external");
 	else if (!opt.job_name && (opt.argc > 0))
 		opt.job_name = base_name(opt.argv[0]);
 
@@ -1123,7 +1130,7 @@ static void _help(void)
 "                              descriptor to export\n"
 "      --get-user-env          load environment from local cluster\n"
 "      --gid=group_id          group ID to run job as (user root only)\n"
-"      --gres=list             required generic resources\n"
+"      --gres=list             required generic resources per node\n"
 "      --gres-flags=opts       flags related to GRES management\n"
 "  -H, --hold                  submit job in held state\n"
 "      --ignore-pbs            Ignore #PBS and #BSUB options in the batch script\n"

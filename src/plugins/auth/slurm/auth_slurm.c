@@ -107,16 +107,15 @@ static void _run_sack_maybe(void)
 extern int init(void)
 {
 	static bool init_run = false;
-	bool run = false, set = false;
 
 	if (init_run)
 		return SLURM_SUCCESS;
 	init_run = true;
 
-	if (serializer_g_init(MIME_TYPE_JSON_PLUGIN, NULL))
-		fatal("%s: serializer_g_init() failed", __func__);
+	serializer_required(MIME_TYPE_JSON);
 
-	internal = run_in_daemon(&run, &set, "sackd,slurmd,slurmctld,slurmdbd");
+	internal = run_in_daemon(IS_SACKD | IS_SLURMD | IS_SLURMCTLD |
+				 IS_SLURMDBD);
 
 	if (internal) {
 		debug("running as daemon");

@@ -314,7 +314,7 @@ extern int command_state(void)
 			 data_set_dict(data_key_set(o, "annotations")));
 
 	if ((rc = serialize_g_data_to_string(&str, NULL, o, MIME_TYPE_JSON,
-					     SER_FLAGS_PRETTY)))
+					     SER_FLAGS_NONE)))
 		fatal("unable to serialise: %s", slurm_strerror(rc));
 
 	printf("%s\n", str);
@@ -452,7 +452,7 @@ extern int command_delete(void)
 				      __func__, strsignal(signal), state.id,
 				      state.jobid);
 			} else {
-				info("%s: JobId=%u running contianer %s has been sent signal %s",
+				info("%s: JobId=%u running container %s has been sent signal %s",
 				     __func__, state.jobid, state.id,
 				     strsignal(signal));
 				rc = SLURM_SUCCESS;

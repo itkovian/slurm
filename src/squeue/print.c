@@ -801,6 +801,19 @@ int _print_job_licenses(job_info_t * job, int width, bool right, char* suffix)
 	return SLURM_SUCCESS;
 }
 
+int _print_job_licenses_alloc(job_info_t *job, int width, bool right,
+			      char *suffix)
+{
+	if (job == NULL) /* Print the Header instead */
+		_print_str("LICENSES_ALLOC", width, right, true);
+	else
+		_print_str(job->licenses_allocated, width, right, true);
+
+	if (suffix)
+		printf("%s", suffix);
+	return SLURM_SUCCESS;
+}
+
 int _print_job_wckey(job_info_t * job, int width, bool right, char* suffix)
 {
 	if (job == NULL)	/* Print the Header instead */
@@ -2142,6 +2155,21 @@ int _print_job_restart_cnt(job_info_t * job, int width,
 	return SLURM_SUCCESS;
 }
 
+int _print_job_segment_size(job_info_t *job, int width, bool right_justify,
+			    char *suffix)
+{
+	if (job == NULL)
+		_print_str("SEGMENT_SIZE", width, right_justify, true);
+	else if (job->segment_size)
+		_print_int(job->segment_size, width, right_justify, true);
+	else
+		_print_str("N/A", width, right_justify, true);
+
+	if (suffix)
+		printf("%s", suffix);
+	return SLURM_SUCCESS;
+}
+
 int _print_job_sockets_per_board(job_info_t * job, int width,
 				 bool right_justify, char* suffix)
 {
@@ -2156,29 +2184,14 @@ int _print_job_sockets_per_board(job_info_t * job, int width,
 
 }
 
-static char *_expand_std_patterns(char *path, job_info_t *job)
-{
-	job_std_pattern_t job_stp;
-
-	job_stp.array_job_id = job->array_job_id;
-	job_stp.array_task_id = job->array_task_id;
-	job_stp.first_step_name = "batch";
-	job_stp.first_step_node = job->batch_host;
-	job_stp.jobid = job->job_id;
-	job_stp.jobname = job->name;
-	job_stp.user = job->user_name;
-	job_stp.work_dir = job->work_dir;
-
-	return expand_stdio_fields(path, &job_stp);
-}
-
 int _print_job_std_err(job_info_t * job, int width,
 		       bool right_justify, char* suffix)
 {
 	if (job == NULL)
 		_print_str("STDERR", width, right_justify, true);
 	else if (params.expand_patterns) {
-		char *tmp_str = _expand_std_patterns(job->std_err, job);
+		char *tmp_str = slurm_expand_job_stdio_fields(job->std_err,
+							      job);
 		_print_str(tmp_str, width, right_justify, true);
 		xfree(tmp_str);
 	} else
@@ -2195,7 +2208,7 @@ int _print_job_std_in(job_info_t * job, int width,
 	if (job == NULL)
 		_print_str("STDIN", width, right_justify, true);
 	else if (params.expand_patterns) {
-		char *tmp_str = _expand_std_patterns(job->std_in, job);
+		char *tmp_str = slurm_expand_job_stdio_fields(job->std_in, job);
 		_print_str(tmp_str, width, right_justify, true);
 		xfree(tmp_str);
 	} else
@@ -2225,7 +2238,8 @@ int _print_job_std_out(job_info_t * job, int width,
 	if (job == NULL)
 		_print_str("STDOUT", width, right_justify, true);
 	else if (params.expand_patterns) {
-		char *tmp_str = _expand_std_patterns(job->std_out, job);
+		char *tmp_str = slurm_expand_job_stdio_fields(job->std_out,
+							      job);
 		_print_str(tmp_str, width, right_justify, true);
 		xfree(tmp_str);
 	} else
@@ -2572,6 +2586,72 @@ int _print_step_prefix(job_step_info_t * step, int width, bool right,
 {
 	if (suffix)
 		printf("%s", suffix);
+	return SLURM_SUCCESS;
+}
+
+int _print_step_std_err(job_step_info_t *step, int width, bool right_justify,
+			char *suffix)
+{
+	if (step == NULL) {
+		_print_str("STDERR", width, right_justify, true);
+	} else if (!step->std_err) {
+		_print_str("", width, right_justify, true);
+	} else if (params.expand_patterns) {
+		char *tmp_str = slurm_expand_step_stdio_fields(step->std_err,
+							       step);
+		_print_str(tmp_str, width, right_justify, true);
+		xfree(tmp_str);
+	} else {
+		_print_str(step->std_err, width, right_justify, true);
+	}
+
+	if (suffix)
+		printf("%s", suffix);
+
+	return SLURM_SUCCESS;
+}
+
+int _print_step_std_in(job_step_info_t *step, int width, bool right_justify,
+		       char *suffix)
+{
+	if (step == NULL) {
+		_print_str("STDIN", width, right_justify, true);
+	} else if (!step->std_in) {
+		_print_str("", width, right_justify, true);
+	} else if (params.expand_patterns) {
+		char *tmp_str = slurm_expand_step_stdio_fields(step->std_in,
+							       step);
+		_print_str(tmp_str, width, right_justify, true);
+		xfree(tmp_str);
+	} else {
+		_print_str(step->std_in, width, right_justify, true);
+	}
+
+	if (suffix)
+		printf("%s", suffix);
+
+	return SLURM_SUCCESS;
+}
+
+int _print_step_std_out(job_step_info_t *step, int width, bool right_justify,
+			char *suffix)
+{
+	if (step == NULL) {
+		_print_str("STDOUT", width, right_justify, true);
+	} else if (!step->std_out) {
+		_print_str("", width, right_justify, true);
+	} else if (params.expand_patterns) {
+		char *tmp_str = slurm_expand_step_stdio_fields(step->std_out,
+							       step);
+		_print_str(tmp_str, width, right_justify, true);
+		xfree(tmp_str);
+	} else {
+		_print_str(step->std_out, width, right_justify, true);
+	}
+
+	if (suffix)
+		printf("%s", suffix);
+
 	return SLURM_SUCCESS;
 }
 
@@ -2922,6 +3002,11 @@ int _print_step_tres_per_task(job_step_info_t * step, int width, bool right,
 	return SLURM_SUCCESS;
 }
 
+static int _find_any_resv(void *x, void *arg)
+{
+	return list_find_first(arg, slurm_find_char_exact_in_list, x) ? 1 : 0;
+}
+
 /*
  * Filter job records per input specifications.
  * Returns true if the job should be filtered out (not printed).
@@ -3089,10 +3174,29 @@ static bool _filter_job(job_info_t *job)
 	}
 
 	if (params.reservation) {
-		if ((job->resv_name == NULL) ||
-		    (xstrcmp(job->resv_name, params.reservation))) {
+		bool filter = false;
+		list_t *spec_resv_list = NULL, *job_resv_list = NULL;
+
+		if (!job->resv_name)
 			return true;
-		}
+
+		spec_resv_list = list_create(xfree_ptr);
+		slurm_addto_char_list_with_case(spec_resv_list,
+						params.reservation, false);
+
+		job_resv_list = list_create(xfree_ptr);
+		slurm_addto_char_list_with_case(job_resv_list, job->resv_name,
+						false);
+
+		if (!list_find_first(spec_resv_list, _find_any_resv,
+				     job_resv_list))
+			filter = true;
+
+		FREE_NULL_LIST(spec_resv_list);
+		FREE_NULL_LIST(job_resv_list);
+
+		if (filter)
+			return true;
 	}
 
 	if (params.name_list) {
@@ -3268,6 +3372,21 @@ static int _filter_step(job_step_info_t * step)
 
 int _print_com_invalid(void * p, int width, bool right, char* suffix)
 {
+	if (suffix)
+		printf("%s", suffix);
+	return SLURM_SUCCESS;
+}
+
+int _print_job_cron_flag(job_info_t *job, int width, bool right_justify,
+			 char *suffix)
+{
+	if (!job)
+		_print_str("CRON_JOB", width, right_justify, true);
+	else if (job->bitflags & CRON_JOB)
+		_print_str("Yes", width, right_justify, true);
+	else
+		_print_str("No", width, right_justify, true);
+
 	if (suffix)
 		printf("%s", suffix);
 	return SLURM_SUCCESS;

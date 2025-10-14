@@ -211,7 +211,7 @@ slurm_sprint_job_step_info ( job_step_info_t * job_step_ptr,
 
 	/****** Line 4 ******/
 	xstrcat(out, line_end);
-	xstrfmtcat(out, "TRES=%s", job_step_ptr->tres_alloc_str);
+	xstrfmtcat(out, "TRES=%s", job_step_ptr->tres_fmt_alloc_str);
 
 	/****** Line 5 ******/
 	xstrcat(out, line_end);
@@ -294,6 +294,36 @@ slurm_sprint_job_step_info ( job_step_info_t * job_step_ptr,
 		xstrcat(out, line_end);
 		xstrfmtcat(out, "Container=%s ContainerID=%s",
 			   job_step_ptr->container, job_step_ptr->container_id);
+	}
+
+	/****** Line (optional) ******/
+	if (job_step_ptr->std_in) {
+		char *tmp_path;
+		xstrcat(out, line_end);
+		tmp_path = slurm_expand_step_stdio_fields(job_step_ptr->std_in,
+							  job_step_ptr);
+		xstrfmtcat(out, "StdIn=%s", tmp_path);
+		xfree(tmp_path);
+	}
+
+	/****** Line (optional) ******/
+	if (job_step_ptr->std_err) {
+		char *tmp_path;
+		xstrcat(out, line_end);
+		tmp_path = slurm_expand_step_stdio_fields(job_step_ptr->std_err,
+							  job_step_ptr);
+		xstrfmtcat(out, "StdErr=%s", tmp_path);
+		xfree(tmp_path);
+	}
+
+	/****** Line (optional) ******/
+	if (job_step_ptr->std_out) {
+		char *tmp_path;
+		xstrcat(out, line_end);
+		tmp_path = slurm_expand_step_stdio_fields(job_step_ptr->std_out,
+							  job_step_ptr);
+		xstrfmtcat(out, "StdOut=%s", tmp_path);
+		xfree(tmp_path);
 	}
 
 	/****** END OF JOB RECORD ******/

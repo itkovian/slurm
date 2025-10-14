@@ -1,4 +1,4 @@
-.TH slurmd "8" "Slurm Daemon" "April 2025" "Slurm Daemon"
+.TH slurmd "8" "Slurm Daemon" "Slurm 25.05" "Slurm Daemon"
 
 .SH "NAME"
 slurmd \- The compute node daemon for Slurm.
@@ -37,6 +37,12 @@ Print the actual hardware configuration (not the configuration from the
 slurm.conf file) and exit.
 The format of output is the same as used in \fBslurm.conf\fR to describe a node's
 configuration plus its uptime.
+.IP
+
+.TP
+\fB\-\-ca\-cert\-file <file>\fR
+Absolute path to CA certificate used for fetching configuration when running
+configless in a TLS enabled cluster.
 .IP
 
 .TP
@@ -94,7 +100,7 @@ for shepherding user job steps. This can be useful for testing purposes.
 
 .TP
 \fB\-D\fR
-Run slurmd in the foreground. Error and debug messages will be copied to stderr.
+Run \fBslurmd\fR in the foreground with logging copied to stderr.
 .IP
 
 .TP
@@ -192,8 +198,8 @@ Print version information and exit.
 .TP
 \fB\-Z\fR
 Start this node as a Dynamic Normal node. If no \fB\-\-conf\fR is specified,
-then the slurmd will register with the same hardware configuration as defined
-by the \fB\-C\fR option.
+then the slurmd will register with the same hardware configuration (except GRES)
+as defined by the \fB\-C\fR option.
 .IP
 
 .SH "ENVIRONMENT VARIABLES"

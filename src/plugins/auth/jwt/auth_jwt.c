@@ -121,7 +121,7 @@ static __thread char *thread_username = NULL;
  *		the current thread.
  *	auth_p_thread_clear() - free any thread_config memory
  *	auth_p_token_generate() - creates a JWT to be passed back to the
- *		requestor for a given username and duration.
+ *		requester for a given username and duration.
  */
 
 static void _check_key_permissions(const char *path, int bad_perms)
@@ -151,7 +151,7 @@ static data_for_each_cmd_t _build_jwks_keys(data_t *d, void *arg)
 	if (!(kid = data_get_string(data_key_get(d, "kid"))))
 		fatal("%s: failed to load kid field", __func__);
 
-	/* Ignore non-RS256 keys in the JWKS if algorthim is provided */
+	/* Ignore non-RS256 keys in the JWKS if algorithm is provided */
 	if ((alg = data_get_string(data_key_get(d, "alg"))) &&
 	    xstrcasecmp(alg, "RS256"))
 		return DATA_FOR_EACH_CONT;
@@ -180,8 +180,7 @@ static void _init_jwks(void)
 
 	_check_key_permissions(key_file, S_IWOTH);
 
-	if (serializer_g_init(MIME_TYPE_JSON_PLUGIN, NULL))
-		fatal("%s: serializer_g_init() failed", __func__);
+	serializer_required(MIME_TYPE_JSON);
 
 	debug("loading jwks file `%s`", key_file);
 	if (!(buf = create_mmap_buf(key_file))) {
@@ -457,7 +456,7 @@ extern int auth_p_verify(auth_token_t *cred, char *auth_info)
 		/* if they match, ignore it, they were being redundant */
 		xfree(username);
 	} else {
-		uid_t uid;
+		uid_t uid = NO_VAL;
 		if (uid_from_string(username, &uid)) {
 			error("%s: uid_from_string failure", __func__);
 			goto fail;
@@ -485,6 +484,8 @@ fail:
 
 extern void auth_p_get_ids(auth_token_t *cred, uid_t *uid, gid_t *gid)
 {
+	uid_t pw_uid = NO_VAL;
+
 	*uid = SLURM_AUTH_NOBODY;
 	*gid = SLURM_AUTH_NOBODY;
 
@@ -501,8 +502,9 @@ extern void auth_p_get_ids(auth_token_t *cred, uid_t *uid, gid_t *gid)
 		return;
 	}
 
-	if (uid_from_string(cred->username, &cred->uid))
+	if (uid_from_string(cred->username, &pw_uid))
 		return;
+	cred->uid = pw_uid;
 
 	if (((cred->gid = gid_from_uid(cred->uid)) == (gid_t) -1))
 		return;

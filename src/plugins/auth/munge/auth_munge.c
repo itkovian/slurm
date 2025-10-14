@@ -227,7 +227,7 @@ auth_credential_t *auth_p_create(char *opts, uid_t r_uid, void *data, int dlen)
 	/*
 	 *  Temporarily block SIGALARM to avoid misleading
 	 *    "Munged communication error" from libmunge if we
-	 *    happen to time out the connection in this secion of
+	 *    happen to time out the connection in this section of
 	 *    code. FreeBSD needs this cast.
 	 */
 	ohandler = xsignal(SIGALRM, (SigFunc *)SIG_BLOCK);
@@ -344,7 +344,7 @@ extern void auth_p_get_ids(auth_credential_t *cred, uid_t *uid, gid_t *gid)
  */
 char *auth_p_get_host(auth_credential_t *cred)
 {
-	slurm_addr_t addr;
+	slurm_addr_t addr = { 0 };
 	struct sockaddr_in *sin = (struct sockaddr_in *) &addr;
 	char *hostname = NULL, *dot_ptr = NULL;
 

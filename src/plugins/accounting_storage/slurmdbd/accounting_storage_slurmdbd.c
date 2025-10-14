@@ -672,7 +672,8 @@ extern list_t *acct_storage_p_modify_users(void *db_conn, uint32_t uid,
 			ret_list = list_create(NULL);
 		} else {
 			errno = msg->rc;
-			error("%s", msg->comment);
+			if (errno != SLURM_NO_CHANGE_IN_DATA)
+				error("%s", msg->comment);
 		}
 		slurm_persist_free_rc_msg(msg);
 	} else if (resp.msg_type != DBD_GOT_LIST) {
@@ -716,7 +717,8 @@ extern list_t *acct_storage_p_modify_accts(void *db_conn, uint32_t uid,
 			ret_list = list_create(NULL);
 		} else {
 			errno = msg->rc;
-			error("%s", msg->comment);
+			if (errno != SLURM_NO_CHANGE_IN_DATA)
+				error("%s", msg->comment);
 		}
 		slurm_persist_free_rc_msg(msg);
 	} else if (resp.msg_type != DBD_GOT_LIST) {
@@ -762,7 +764,8 @@ extern list_t *acct_storage_p_modify_clusters(void *db_conn, uint32_t uid,
 			ret_list = list_create(NULL);
 		} else {
 			errno = msg->rc;
-			error("%s", msg->comment);
+			if (errno != SLURM_NO_CHANGE_IN_DATA)
+				error("%s", msg->comment);
 		}
 		slurm_persist_free_rc_msg(msg);
 	} else if (resp.msg_type != DBD_GOT_LIST) {
@@ -809,7 +812,8 @@ extern list_t *acct_storage_p_modify_assocs(
 			ret_list = list_create(NULL);
 		} else {
 			errno = msg->rc;
-			error("%s", msg->comment);
+			if (errno != SLURM_NO_CHANGE_IN_DATA)
+				error("%s", msg->comment);
 		}
 		slurm_persist_free_rc_msg(msg);
 	} else if (resp.msg_type != DBD_GOT_LIST) {
@@ -855,7 +859,8 @@ extern list_t *acct_storage_p_modify_federations(
 			ret_list = list_create(NULL);
 		} else {
 			errno = msg->rc;
-			error("%s", msg->comment);
+			if (errno != SLURM_NO_CHANGE_IN_DATA)
+				error("%s", msg->comment);
 		}
 		slurm_persist_free_rc_msg(msg);
 	} else if (resp.msg_type != DBD_GOT_LIST) {
@@ -909,7 +914,8 @@ extern list_t *acct_storage_p_modify_job(void *db_conn, uint32_t uid,
 			ret_list = list_create(NULL);
 		} else {
 			errno = msg->rc;
-			error("%s", msg->comment);
+			if (errno != SLURM_NO_CHANGE_IN_DATA)
+				error("%s", msg->comment);
 		}
 		slurm_persist_free_rc_msg(msg);
 	} else if (resp.msg_type != DBD_GOT_LIST) {
@@ -953,7 +959,8 @@ extern list_t *acct_storage_p_modify_qos(void *db_conn, uint32_t uid,
 			ret_list = list_create(NULL);
 		} else {
 			errno = msg->rc;
-			error("%s", msg->comment);
+			if (errno != SLURM_NO_CHANGE_IN_DATA)
+				error("%s", msg->comment);
 		}
 		slurm_persist_free_rc_msg(msg);
 	} else if (resp.msg_type != DBD_GOT_LIST) {
@@ -997,7 +1004,8 @@ extern list_t *acct_storage_p_modify_res(void *db_conn, uint32_t uid,
 			ret_list = list_create(NULL);
 		} else {
 			errno = msg->rc;
-			error("%s", msg->comment);
+			if (errno != SLURM_NO_CHANGE_IN_DATA)
+				error("%s", msg->comment);
 		}
 		slurm_persist_free_rc_msg(msg);
 	} else if (resp.msg_type != DBD_GOT_LIST) {
@@ -1041,7 +1049,8 @@ extern list_t *acct_storage_p_modify_wckeys(void *db_conn, uint32_t uid,
 			ret_list = list_create(NULL);
 		} else {
 			errno = msg->rc;
-			error("%s", msg->comment);
+			if (errno != SLURM_NO_CHANGE_IN_DATA)
+				error("%s", msg->comment);
 		}
 		slurm_persist_free_rc_msg(msg);
 	} else if (resp.msg_type != DBD_GOT_LIST) {
@@ -1126,7 +1135,8 @@ extern list_t *acct_storage_p_remove_users(void *db_conn, uint32_t uid,
 			ret_list = list_create(NULL);
 		} else {
 			errno = msg->rc;
-			error("%s", msg->comment);
+			if (errno != SLURM_NO_CHANGE_IN_DATA)
+				error("%s", msg->comment);
 		}
 		slurm_persist_free_rc_msg(msg);
 	} else if (resp.msg_type != DBD_GOT_LIST) {
@@ -1173,7 +1183,8 @@ extern list_t *acct_storage_p_remove_coord(void *db_conn, uint32_t uid,
 			ret_list = list_create(NULL);
 		} else {
 			errno = msg->rc;
-			error("%s", msg->comment);
+			if (errno != SLURM_NO_CHANGE_IN_DATA)
+				error("%s", msg->comment);
 		}
 		slurm_persist_free_rc_msg(msg);
 	} else if (resp.msg_type != DBD_GOT_LIST) {
@@ -1216,7 +1227,8 @@ extern list_t *acct_storage_p_remove_accts(void *db_conn, uint32_t uid,
 			ret_list = list_create(NULL);
 		} else {
 			errno = msg->rc;
-			error("%s", msg->comment);
+			if (errno != SLURM_NO_CHANGE_IN_DATA)
+				error("%s", msg->comment);
 		}
 		slurm_persist_free_rc_msg(msg);
 	} else if (resp.msg_type != DBD_GOT_LIST) {
@@ -1261,7 +1273,8 @@ extern list_t *acct_storage_p_remove_clusters(void *db_conn, uint32_t uid,
 			ret_list = list_create(NULL);
 		} else {
 			errno = msg->rc;
-			error("%s", msg->comment);
+			if (errno != SLURM_NO_CHANGE_IN_DATA)
+				error("%s", msg->comment);
 		}
 		slurm_persist_free_rc_msg(msg);
 	} else if (resp.msg_type != DBD_GOT_LIST) {
@@ -1307,7 +1320,8 @@ extern list_t *acct_storage_p_remove_assocs(
 			ret_list = list_create(NULL);
 		} else {
 			errno = msg->rc;
-			error("%s", msg->comment);
+			if (errno != SLURM_NO_CHANGE_IN_DATA)
+				error("%s", msg->comment);
 		}
 		slurm_persist_free_rc_msg(msg);
 	} else if (resp.msg_type != DBD_GOT_LIST) {
@@ -1353,7 +1367,8 @@ extern list_t *acct_storage_p_remove_federations(
 			ret_list = list_create(NULL);
 		} else {
 			errno = msg->rc;
-			error("%s", msg->comment);
+			if (errno != SLURM_NO_CHANGE_IN_DATA)
+				error("%s", msg->comment);
 		}
 		slurm_persist_free_rc_msg(msg);
 	} else if (resp.msg_type != DBD_GOT_LIST) {
@@ -1399,7 +1414,8 @@ extern list_t *acct_storage_p_remove_qos(
 			ret_list = list_create(NULL);
 		} else {
 			errno = msg->rc;
-			error("%s", msg->comment);
+			if (errno != SLURM_NO_CHANGE_IN_DATA)
+				error("%s", msg->comment);
 		}
 		slurm_persist_free_rc_msg(msg);
 	} else if (resp.msg_type != DBD_GOT_LIST) {
@@ -1409,7 +1425,9 @@ extern list_t *acct_storage_p_remove_qos(
 		got_msg = (dbd_list_msg_t *) resp.data;
 		ret_list = got_msg->my_list;
 		got_msg->my_list = NULL;
+		rc = got_msg->return_code;
 		slurmdbd_free_list_msg(got_msg);
+		errno = rc;
 	}
 
 	return ret_list;
@@ -1442,7 +1460,8 @@ extern list_t *acct_storage_p_remove_res(
 			ret_list = list_create(NULL);
 		} else {
 			errno = msg->rc;
-			error("%s", msg->comment);
+			if (errno != SLURM_NO_CHANGE_IN_DATA)
+				error("%s", msg->comment);
 		}
 		slurm_persist_free_rc_msg(msg);
 	} else if (resp.msg_type != DBD_GOT_LIST) {
@@ -1485,7 +1504,8 @@ extern list_t *acct_storage_p_remove_wckeys(
 			ret_list = list_create(NULL);
 		} else {
 			errno = msg->rc;
-			error("%s", msg->comment);
+			if (errno != SLURM_NO_CHANGE_IN_DATA)
+				error("%s", msg->comment);
 		}
 		slurm_persist_free_rc_msg(msg);
 	} else if (resp.msg_type != DBD_GOT_LIST) {
@@ -1495,7 +1515,9 @@ extern list_t *acct_storage_p_remove_wckeys(
 		got_msg = (dbd_list_msg_t *) resp.data;
 		ret_list = got_msg->my_list;
 		got_msg->my_list = NULL;
+		rc = got_msg->return_code;
 		slurmdbd_free_list_msg(got_msg);
+		errno = rc;
 	}
 
 	return ret_list;
@@ -2532,7 +2554,7 @@ extern int clusteracct_storage_p_register_ctld(void *db_conn, uint16_t port)
 	memset(&req, 0, sizeof(dbd_register_ctld_msg_t));
 
 	req.port         = port;
-	req.dimensions   = SYSTEM_DIMENSIONS;
+	req.dimensions   = 1;
 	req.flags        = slurmdb_setup_cluster_flags();
 
 	msg.msg_type     = DBD_REGISTER_CTLD;
@@ -2677,6 +2699,8 @@ extern int jobacct_storage_p_job_start(void *db_conn, job_record_t *job_ptr)
 	req.uid = job_ptr->user_id;
 	req.qos_id = job_ptr->qos_id;
 	req.gres_used = job_ptr->gres_used;
+	req.segment_size = job_ptr->details->segment_size;
+	req.resv_req = job_ptr->details->resv_req;
 
 	if (slurmdbd_agent_send(SLURM_PROTOCOL_VERSION, &msg) < 0)
 		return SLURM_ERROR;
@@ -3062,12 +3086,6 @@ extern int acct_storage_p_reconfig(void *db_conn, bool dbd)
 	dbd_conn_send_recv_rc_msg(SLURM_PROTOCOL_VERSION, &msg, &rc);
 
 	return rc;
-}
-
-extern int acct_storage_p_reset_lft_rgt(void *db_conn, uid_t uid,
-					list_t *cluster_list)
-{
-	return SLURM_SUCCESS;
 }
 
 extern int acct_storage_p_get_stats(void *db_conn, slurmdb_stats_rec_t **stats)

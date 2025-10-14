@@ -31,12 +31,16 @@ libcommon_interfaces_la_SOURCES =    \
 	acct_gather_profile.h			\
 	auth.c					\
 	auth.h					\
+	certgen.c				\
+	certgen.h				\
 	certmgr.c				\
 	certmgr.h				\
 	cgroup.c				\
 	cgroup.h				\
 	cli_filter.c				\
 	cli_filter.h				\
+	conn.c					\
+	conn.h					\
 	cred.h					\
 	cred.c					\
 	data_parser.c				\
@@ -69,8 +73,8 @@ libcommon_interfaces_la_SOURCES =    \
 	site_factor.h				\
 	switch.c				\
 	switch.h				\
-	tls.c					\
-	tls.h					\
+	tls.c				        \
+	tls.h				        \
 	topology.c				\
 	topology.h
 

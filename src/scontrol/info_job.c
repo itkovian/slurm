@@ -534,6 +534,7 @@ static char *_sprint_job_info(job_info_t *job_ptr)
 
 	if (job_resrcs && job_resrcs->core_bitmap &&
 	    ((last = bit_fls(job_resrcs->core_bitmap)) != -1)) {
+		char *cpustr = NULL, *last_cpustr = NULL;
 
 		xstrfmtcat(out, "JOB_GRES=%s", job_ptr->gres_total);
 		xstrcat(out, line_end);
@@ -556,11 +557,8 @@ static char *_sprint_job_info(job_info_t *job_ptr)
 		abs_node_inx = job_ptr->node_inx[i];
 
 		gres_last = "";
-		/* tmp1[] stores the current cpu(s) allocated */
-		tmp2[0] = '\0';	/* stores last cpu(s) allocated */
 		for (rel_node_inx=0; rel_node_inx < job_resrcs->nhosts;
 		     rel_node_inx++) {
-
 			if (sock_reps >=
 			    job_resrcs->sock_core_rep_count[sock_inx]) {
 				sock_inx++;
@@ -581,14 +579,14 @@ static char *_sprint_job_info(job_info_t *job_ptr)
 				}
 				bit_inx++;
 			}
-			bit_fmt(tmp1, sizeof(tmp1), cpu_bitmap);
+			cpustr = bit_fmt_full(cpu_bitmap);
 			FREE_NULL_BITMAP(cpu_bitmap);
 			/*
 			 * If the allocation values for this host are not the
 			 * same as the last host, print the report of the last
 			 * group of hosts that had identical allocation values.
 			 */
-			if (xstrcmp(tmp1, tmp2) ||
+			if (xstrcmp(cpustr, last_cpustr) ||
 			    ((rel_node_inx < job_ptr->gres_detail_cnt) &&
 			     xstrcmp(job_ptr->gres_detail_str[rel_node_inx],
 				     gres_last)) ||
@@ -604,7 +602,7 @@ static char *_sprint_job_info(job_info_t *job_ptr)
 					xstrfmtcat(out,
 						   "  Nodes=%s CPU_IDs=%s "
 						   "Mem=%"PRIu64" GRES=%s",
-						   last_hosts, tmp2,
+						   last_hosts, last_cpustr,
 						   last_mem_alloc_ptr ?
 						   last_mem_alloc : 0,
 						   gres_last);
@@ -615,7 +613,10 @@ static char *_sprint_job_info(job_info_t *job_ptr)
 					hl_last = hostlist_create(NULL);
 				}
 
-				strcpy(tmp2, tmp1);
+				xfree(last_cpustr);
+				last_cpustr = cpustr;
+				cpustr = NULL;
+
 				if (rel_node_inx < job_ptr->gres_detail_cnt) {
 					gres_last = job_ptr->
 						    gres_detail_str[rel_node_inx];
@@ -630,6 +631,8 @@ static char *_sprint_job_info(job_info_t *job_ptr)
 				else
 					last_mem_alloc = NO_VAL64;
 			}
+
+			xfree(cpustr);
 			hostlist_push_host(hl_last, host);
 			free(host);
 
@@ -647,7 +650,7 @@ static char *_sprint_job_info(job_info_t *job_ptr)
 		if (hostlist_count(hl_last)) {
 			last_hosts = hostlist_ranged_string_xmalloc(hl_last);
 			xstrfmtcat(out, "  Nodes=%s CPU_IDs=%s Mem=%"PRIu64" GRES=%s",
-				 last_hosts, tmp2,
+				 last_hosts, last_cpustr,
 				 last_mem_alloc_ptr ? last_mem_alloc : 0,
 				 gres_last);
 			xfree(last_hosts);
@@ -655,6 +658,7 @@ static char *_sprint_job_info(job_info_t *job_ptr)
 		}
 		hostlist_destroy(hl);
 		hostlist_destroy(hl_last);
+		xfree(last_cpustr);
 	}
 	/****** Line 18 ******/
 
@@ -705,9 +709,10 @@ static char *_sprint_job_info(job_info_t *job_ptr)
 	}
 
 	/****** Line 20 ******/
-	xstrfmtcat(out, "OverSubscribe=%s Contiguous=%d Licenses=%s Network=%s",
+	xstrfmtcat(out, "OverSubscribe=%s Contiguous=%d Licenses=%s LicensesAlloc=%s Network=%s",
 		   job_share_string(job_ptr->shared), job_ptr->contiguous,
-		   job_ptr->licenses, job_ptr->network);
+		   job_ptr->licenses, job_ptr->licenses_allocated,
+		   job_ptr->network);
 	xstrcat(out, line_end);
 
 	/****** Line 21 ******/
@@ -760,6 +765,12 @@ static char *_sprint_job_info(job_info_t *job_ptr)
 		xstrcat(out, line_end);
 		slurm_get_job_stdout(tmp_path, sizeof(tmp_path), job_ptr);
 		xstrfmtcat(out, "StdOut=%s", tmp_path);
+	}
+
+	/****** Line (optional) ******/
+	if (job_ptr->segment_size) {
+		xstrcat(out, line_end);
+		xstrfmtcat(out, "SegmentSize=%u", job_ptr->segment_size);
 	}
 
 	/****** Line 34 (optional) ******/
@@ -2119,7 +2130,7 @@ scontrol_print_hosts (char * node_list)
 		error("host list is empty");
 		return;
 	}
-	hl = hostlist_create_dims(node_list, 0);
+	hl = hostlist_create_client(node_list);
 	if (!hl) {
 		fprintf(stderr, "Invalid hostlist: %s\n", node_list);
 		return;
@@ -2205,7 +2216,7 @@ extern int scontrol_encode_hostlist(char *arg_hostlist, bool sorted)
 	} else
 		tmp_list = hostlist;
 
-	hl = hostlist_create(tmp_list);
+	hl = hostlist_create_client(tmp_list);
 	if (hl == NULL) {
 		fprintf(stderr, "Invalid hostlist: %s\n", tmp_list);
 		xfree(io_buf);

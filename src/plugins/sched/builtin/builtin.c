@@ -3,7 +3,7 @@
  *		Periodically when pending jobs can start.
  *		This is a minimal implementation of the logic found in
  *		src/plugins/sched/backfill/backfill.c and disregards
- *		how jobs are scheduled sequencially.
+ *		how jobs are scheduled sequentially.
  *****************************************************************************
  *  Copyright (C) 2003-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
@@ -268,6 +268,7 @@ extern void *builtin_agent(void *args)
 			continue;
 
 		lock_slurmctld(all_locks);
+		validate_all_reservations(true, false);
 		_compute_start_times();
 		last_sched_time = time(NULL);
 		(void) bb_g_job_try_stage_in();

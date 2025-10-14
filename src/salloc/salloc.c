@@ -191,14 +191,14 @@ int main(int argc, char **argv)
 	argvzero = argv[0];
 	_set_exit_code();
 
-	if (spank_init_allocator() < 0) {
+	if (spank_init_allocator()) {
 		error("Failed to initialize plugin stack");
 		exit(error_exit);
 	}
 
 	/* Be sure to call spank_fini when salloc exits
 	 */
-	if (atexit((void (*) (void)) spank_fini) < 0)
+	if (atexit((void (*) (void)) spank_fini))
 		error("Failed to register atexit handler for plugins: %m");
 
 
@@ -229,7 +229,7 @@ int main(int argc, char **argv)
 			log_alter(logopt, 0, NULL);
 		}
 
-		if (spank_init_post_opt() < 0) {
+		if (spank_init_post_opt()) {
 			error("Plugin stack post-option processing failed");
 			exit(error_exit);
 		}
@@ -681,8 +681,8 @@ static int _proc_alloc(resource_allocation_response_msg_t *alloc)
 				working_cluster_rec->rpc_version);
 		} else {
 			/*
-			 * Remove three versions after 24.11 and always use
-			 * the "[]" wrapped format and remove the above comment.
+			 * When 24.11 is no longer supported this else clause
+			 * can be removed.
 			 */
 			setenvf(NULL, "SLURM_WORKING_CLUSTER", "%s:%s:%d:%d",
 				working_cluster_rec->name,
@@ -1012,8 +1012,6 @@ static int _wait_nodes_ready(resource_allocation_response_msg_t *alloc)
 	int is_ready = 0, i = 0, rc;
 	bool job_killed = false;
 
-	if (alloc->alias_list && !xstrcmp(alloc->alias_list, "TBD"))
-		saopt.wait_all_nodes = 1;	/* Wait for boot & addresses */
 	if (saopt.wait_all_nodes == NO_VAL16)
 		saopt.wait_all_nodes = 0;
 

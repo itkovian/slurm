@@ -1,4 +1,4 @@
-.TH srun "1" "Slurm Commands" "December 2024" "Slurm Commands"
+.TH srun "1" "Slurm Commands" "Slurm 25.05" "Slurm Commands"
 
 .SH "NAME"
 srun \- Run parallel jobs
@@ -406,10 +406,9 @@ Unique name for OCI container.
 \fB\-\-contiguous\fR
 If set, then the allocated nodes must form a contiguous set.
 
-\fBNOTE\fR: If the SelectType is cons_tres this option won't be honored
-with the \fBtopology/tree\fR or \fBtopology/3d_torus\fR
-plugins, both of which can modify the node ordering. This option applies to job
-allocations.
+\fBNOTE\fR: This option will only work with the \fBtopology/flat\fR plugin.
+Other topology plugins modify the node ordering and prevent this option from
+taking effect. This option applies to job allocations.
 .IP
 
 .TP
@@ -1410,13 +1409,15 @@ requested in a comma separated list, for example:
 This option requires an explicit task count, e.g. \-n, \-\-ntasks or "\-\-gpus=X
 \-\-gpus\-per\-task=Y" rather than an ambiguous range of nodes with \-N, \-\-nodes.
 This option will implicitly set \-\-tres\-bind=gres/gpu:per_task:<gpus_per_task>,
-but that can be overridden with an explicit \-\-tres\-bind=gres/gpu
-specification.
+or if multiple gpu types are specified
+\-\-tres\-bind=gres/gpu:per_task:<gpus_per_task_type_sum>. However, that can be
+overridden with an explicit \-\-tres\-bind=gres/gpu specification.
 .IP
 
 .TP
 \fB\-\-gres\fR=<\fIlist\fR>
-Specifies a comma\-delimited list of generic consumable resources.
+Specifies a comma\-delimited list of generic consumable resources requested per
+node.
 The format for each entry in the list is "name[[:type]:count]".
 The \fIname\fR is the type of consumable resource (e.g. gpu).
 The \fItype\fR is an optional classification for the resource (e.g. a100).
@@ -1487,6 +1488,9 @@ filtering will be performed on a per\-socket basis.
 .br
 \fBNOTE\fR: This option is specific to \fBSelectType=cons_tres\fR for job
 allocations.
+.br
+\fBNOTE\fR: This option can give undefined results if attempting to enforce
+binding on multiple gres on multiple sockets.
 .IP
 
 .TP
@@ -1651,12 +1655,25 @@ Specification of licenses (or other resources available on all
 nodes of the cluster) which must be allocated to this job.
 License names can be followed by a colon and count
 (the default count is one).
-Multiple license names should be comma separated (e.g.
-"\-\-licenses=foo:4,bar"). This option applies to job allocations.
+Multiple licenses can be requested. If they are separated by a comma (','
+meaning AND), then all requested licenses are required for the job. For example,
+"\-\-licenses=foo:4,bar". If they are separated by a pipe ('|' meaning OR),
+then only one of the license requests are required for the job. For example,
+"\-\-licenses=foo:4|bar". AND and OR cannot both be used.
 
 \fBNOTE\fR: When submitting heterogeneous jobs, license requests
 may only be made on the first component job.
 For example "srun \-L ansys:2 : myexecutable".
+
+\fBNOTE\fR: If licenses are tracked in AccountingStorageTres and OR is used,
+ReqTRES will display all requested tres separated by commas. AllocTRES will
+display only the license that was allocated to the job.
+
+\fBNOTE\fR: When a job requests OR'd licenses, Slurm will attempt to allocate
+the licenses in the order in which they are requested. This specified order
+will take precedence even if the rest of requested licenses could be satisfied
+on a requested reservation. This also applies to backfill planning when
+\fBSchedulerParameters=bf_licenses\fR is configured.
 .IP
 
 .TP
@@ -1687,10 +1704,11 @@ allocations.
 
 .TP
 \fB\-\-mcs\-label\fR=<\fImcs\fR>
-Used only when the mcs/group plugin is enabled.
-This parameter is a group among the groups of the user.
-Default value is calculated by the Plugin mcs if it's enabled. This option
-applies to job allocations.
+Used only when a compatible \fBMCSPlugin\fR is enabled. This parameter is a
+group that the user belongs to (\fBmcs/group\fR) or an arbitrary label string
+(\fBmcs/label\fR). In both cases, no label will be assigned by default. This
+option applies to job allocations. Refer to the MCS documentation for more
+details: <https://slurm.schedmd.com/mcs.html>
 .IP
 
 .TP
@@ -2035,8 +2053,7 @@ step allocations.
 \fB\-\-network\fR=<\fItype\fR>
 Specify information pertaining to the switch or network.
 The interpretation of \fItype\fR is system dependent.
-This option is supported when running Slurm on a Cray natively. It is
-used to request using Network Performance Counters.
+It is used to request using Network Performance Counters.
 Only one value per request is valid.
 All options are case in\-sensitive.
 In this configuration supported values include:
@@ -2189,7 +2206,7 @@ List entries. The default is 16 per-CPU, maximum 16384 per-node.
 
 .TP
 \fBacs\fR
-Addressing contexts. The default is 4 per-CPU, maximum 1022 per-node.
+Addressing contexts. The default is 2 per-CPU, maximum 1022 per-node.
 .RE
 .IP
 
@@ -2726,8 +2743,8 @@ will be used to create the job allocation.
 No requirement would be placed on all segments for a job needing to
 be placed within the same higher-level block.
 
-\fBNOTE\fR: The segment size must always be evenly divisible by
-the requested node count.
+\fBNOTE\fR: The requested node count must always be evenly divisible by
+the requested segment size.
 
 \fBNOTE\fR: The segment size must be less than or equal to
 the planning base block size. E.g., for a system with 30 nodes as the
@@ -3092,8 +3109,9 @@ The available trackable resources are configurable by the system
 administrator.
 .br
 \fBNOTE\fR: This option with gres/gpu or gres/shard will implicitly set
-\-\-tres\-bind=per_task:(gpu or shard)<tres_per_task>; this can be overridden
-with an explicit \-\-tres\-bind specification.
+\-\-tres\-bind=gres/[gpu|shard]:per_task:<tres_per_task>, or if multiple gpu
+types are specified \-\-tres\-bind=gres/gpu:per_task:<gpus_per_task_type_sum>.
+This can be overridden with an explicit \-\-tres\-bind specification.
 .br
 \fBNOTE\fR: Invalid TRES for \-\-tres\-per\-task include
 bb,billing,energy,fs,mem,node,pages,vmem.
@@ -3130,6 +3148,22 @@ errors will be displayed. This option applies to job and step allocations.
 .TP
 \fB\-V\fR, \fB\-\-version\fR
 Display version information and exit.
+.IP
+
+.TP
+\fB\-\-wait\-for\-children\fR
+Wait for all processes in each task to finish before considering a task as
+ended. The default behavior without this option is to only wait for the parent
+process in each task to finish.
+
+Depending on the setting of \fB\-\-kill\-on\-bad\-exit\fR, the task may end if
+the parent process exits with a non-zero exit code. If
+\fB\-\-kill\-on\-bad\-exit\fR=1 and the parent process exits with a non-zero
+exit code, the task will end. If \fB\-\-kill\-on\-bad\-exit\fR=0 and the parent
+process exits with a non-zero exit code, the task will continue until all
+children processes have exited.
+
+This option requires proctrack/cgroup and cgroup/v2.
 .IP
 
 .TP
@@ -3266,8 +3300,7 @@ unique to a given jobid, stepid, node, or task. In each case,
 the appropriate number of files are opened and associated with
 the corresponding tasks. Note that any format string containing
 %t, %n, and/or %N will be written on the node executing the task
-rather than the node where \fBsrun\fR executes, these format specifiers
-are not supported on a BGQ system.
+rather than the node where \fBsrun\fR executes.
 .IP
 .RS 10
 
@@ -3293,7 +3326,8 @@ Job array ID (index) number.
 
 .TP
 \fB%J\fR
-jobid.stepid of the running job. (e.g. "128.0")
+jobid.stepid of the running job (e.g. "128.0"). The stepid is only expanded for
+regular steps, not for special steps like "batch" or "extern".
 .IP
 
 .TP
@@ -3949,6 +3983,11 @@ Same as \fB\-\-export\fR, and will override any setting for
 \fBSLURM_EXPORT_ENV\fR.
 .IP
 
+.TP
+\fBSRUN_SEGMENT_SIZE\fR
+Same as \fB\-\-segment\fR
+.IP
+
 .SH "OUTPUT ENVIRONMENT VARIABLES"
 .PP
 srun will set some environment variables in the environment
@@ -4158,6 +4197,11 @@ Sort free cache pages (run zonesort on Intel KNL nodes).
 .TP
 \fBSLURM_MEM_BIND_VERBOSE\fR
 \fB\-\-mem\-bind\fR verbosity (quiet,verbose).
+.IP
+
+.TP
+\fBSLURM_NETWORK\fR
+Set to the value of the \fB\-\-network\fR option, if specified.
 .IP
 
 .TP

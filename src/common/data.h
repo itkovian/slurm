@@ -52,7 +52,7 @@
  * contents. If the source data is provided by a user (or is just unknown), then
  * one of the many data_*convert*() functions must be used to ensure that the
  * data_t pointer is of the correct type. These convert functions will generally
- * allow conversion betwen all of the types except DICT and LIST (as converting
+ * allow conversion between all of the types except DICT and LIST (as converting
  * between them is not well defined).
  *
  * There are helpers to iterate over all members of LIST and DICT data_t
@@ -65,7 +65,7 @@
  * Example usage:
  *
  * //Global init requiring JSON serializer
- * if (serializer_g_init(MIME_TYPE_JSON_PLUGIN, NULL)) fatal("failed");
+ * serializer_required(MIME_TYPE_JSON);
  * //Create root data entry:
  * data_t *ex = data_new();
  * //Set data entry to be a dictionary type

@@ -3,8 +3,8 @@
 dnl Prologue
 dnl
 
-AC_INIT(slurm, m4_esyscmd([perl -ne 'print,exit if s/^\s*VERSION:\s*(\d*.\d*).\S*/\1/i' ./META | sed 's/^v//' | tr '-' '_' | tr -d '\n']), [], [], [https://slurm.schedmd.com])
-AC_PREREQ(2.59)
+AC_INIT([slurm],m4_esyscmd([perl -ne 'print,exit if s/^\s*VERSION:\s*(\d*.\d*).\S*/\1/i' ./META | sed 's/^v//' | tr '-' '_' | tr -d '\n']),[],[],[https://slurm.schedmd.com])
+AC_PREREQ([2.59])
 AC_CONFIG_SRCDIR([configure.ac])
 AC_CONFIG_AUX_DIR([auxdir])
 AC_CONFIG_MACRO_DIR([auxdir])
@@ -65,6 +65,23 @@ AC_DEFINE_UNQUOTED([SLEEP_CMD], ["$SLEEP_CMD"], [Define path to sleep command])
 
 AC_PATH_PROG([SUCMD], [su], [/bin/su])
 AC_DEFINE_UNQUOTED([SUCMD], ["$SUCMD"], [Define path to su command])
+
+
+# Check if the compiler is Clang
+AC_MSG_CHECKING([whether the compiler is Clang])
+AC_COMPILE_IFELSE(
+    [AC_LANG_PROGRAM([], [[
+        #ifndef __clang__
+            not clang
+        #endif
+    ]])],
+    [is_clang=yes],
+    [is_clang=no]
+)
+AC_MSG_RESULT([$is_clang])
+
+# Set a conditional flag if the compiler is Clang
+AM_CONDITIONAL([CLANG], [test "x$is_clang" = "xyes"])
 
 dnl Checks for libraries
 dnl Includes workaround to disable -Werror=builtin-declaration-mismatch which
@@ -163,10 +180,6 @@ if test "x$ax_cv_have_epoll" = "xyes"; then
 fi
 AM_CONDITIONAL(HAVE_EPOLL, [test "x$ax_cv_have_epoll" = "xyes" ])
 
-dnl Checks for compiler characteristics.
-dnl
-AC_PROG_GCC_TRADITIONAL([])
-
 AX_GCC_BUILTIN(__builtin_bswap64)
 AX_GCC_BUILTIN(__builtin_clzll)
 AX_GCC_BUILTIN(__builtin_ctzll)
@@ -215,8 +228,6 @@ esac
 LDFLAGS="$LDFLAGS "
 CFLAGS="$CFLAGS $PTHREAD_CFLAGS"
 LIBS="$PTHREAD_LIBS $LIBS"
-
-X_AC_DIMENSIONS
 
 X_AC_OFED
 
@@ -299,6 +310,10 @@ X_AC_MAN2HTML
 AM_CONDITIONAL(HAVE_MAN2HTML, test "x$ac_have_man2html" = "xyes")
 AC_SUBST(HAVE_MAN2HTML)
 
+dnl
+dnl Check bash-completion support
+dnl
+X_AC_BASH_COMPLETION
 
 dnl check if we can use standard printf functions
 dnl
@@ -426,6 +441,8 @@ AC_CONFIG_FILES([Makefile
 		 src/plugins/burst_buffer/common/Makefile
 		 src/plugins/burst_buffer/datawarp/Makefile
 		 src/plugins/burst_buffer/lua/Makefile
+		 src/plugins/certgen/Makefile
+		 src/plugins/certgen/script/Makefile
 		 src/plugins/certmgr/Makefile
 		 src/plugins/certmgr/script/Makefile
 		 src/plugins/cgroup/Makefile
@@ -445,6 +462,7 @@ AC_CONFIG_FILES([Makefile
 		 src/plugins/data_parser/v0.0.40/Makefile
 		 src/plugins/data_parser/v0.0.41/Makefile
 		 src/plugins/data_parser/v0.0.42/Makefile
+		 src/plugins/data_parser/v0.0.43/Makefile
 		 src/plugins/gpu/Makefile
 		 src/plugins/gpu/common/Makefile
 		 src/plugins/gpu/generic/Makefile
@@ -532,10 +550,9 @@ AC_CONFIG_FILES([Makefile
 		 src/plugins/tls/none/Makefile
 		 src/plugins/tls/s2n/Makefile
 		 src/plugins/topology/Makefile
-		 src/plugins/topology/3d_torus/Makefile
 		 src/plugins/topology/block/Makefile
 		 src/plugins/topology/common/Makefile
-		 src/plugins/topology/default/Makefile
+		 src/plugins/topology/flat/Makefile
 		 src/plugins/topology/tree/Makefile
 		 src/sacct/Makefile
 		 src/sackd/Makefile
@@ -577,6 +594,7 @@ AC_CONFIG_FILES([Makefile
 		 testsuite/testsuite.conf.sample
 		 testsuite/expect/Makefile
 		 testsuite/slurm_unit/Makefile
+		 testsuite/slurm_unit/backfill/Makefile
 		 testsuite/slurm_unit/common/Makefile
 		 testsuite/slurm_unit/common/bitstring/Makefile
 		 testsuite/slurm_unit/common/hostlist/Makefile
@@ -584,6 +602,7 @@ AC_CONFIG_FILES([Makefile
 		 testsuite/slurm_unit/common/slurm_protocol_pack/Makefile
 		 testsuite/slurm_unit/common/slurmdb_defs/Makefile
 		 testsuite/slurm_unit/common/slurmdb_pack/Makefile
+		 testsuite/slurm_unit/topology/Makefile
 		 ]
 )
 

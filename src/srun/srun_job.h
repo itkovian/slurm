@@ -84,6 +84,7 @@ typedef struct srun_job {
 	uint32_t het_job_nnodes; /* total node count for entire hetjob */
 	uint32_t het_job_ntasks; /* total task count for entire hetjob */
 	uint32_t het_job_offset; /* Hetjob offset or NO_VAL */
+	uint32_t *het_job_step_task_cnts; /* ntasks on each comp. of hetjob */
 	uint32_t het_job_task_offset; /* Hetjob task offset or NO_VAL */
 	uint16_t *het_job_task_cnts; /* tasks invoked on each node of hetjob */
 	uint32_t **het_job_tids;	/* Task IDs on each node of hetjob */
@@ -106,7 +107,6 @@ typedef struct srun_job {
 
 	int  rc;                /* srun return code                       */
 
-	char *alias_list;	/* node name/address/hostname aliases */
 	char **env;		/* hetjob specific environment */
 	char *nodelist;		/* nodelist in string form */
 	char *partition;	/* name of partition running job */
@@ -115,7 +115,8 @@ typedef struct srun_job {
 	fname_t *ofname;
 	fname_t *efname;
 
-	/* Pseudo terminial support */
+	/* Pseudo terminal support */
+	int input_fd;
 	int pty_fd;		/* file to communicate window size changes */
 	uint16_t pty_port;	/* used to communicate window size changes */
 	uint16_t ws_col;	/* window size, columns */

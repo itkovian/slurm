@@ -41,6 +41,7 @@
 
 #include "config.h"
 
+#include <stdint.h>
 #include <unistd.h>		/* load ssize_t definition */
 
 /* Since users can specify a numeric range in the prefix, we need to prevent
@@ -51,12 +52,6 @@
 
 /* max host range: anything larger will be assumed to be an error */
 #define MAX_RANGE MAX_SLURM_NODES /* 64K Hosts */
-
-#if (SYSTEM_DIMENSIONS > 1)
-#define HOSTLIST_BASE 36
-#else
-#define HOSTLIST_BASE 10
-#endif
 
 /* largest configured system dimensions */
 #ifndef HIGHEST_DIMENSIONS
@@ -148,6 +143,7 @@ int set_grid(int start, int end, int count);
  */
 hostlist_t *hostlist_create_dims(const char *hostlist, int dims);
 hostlist_t *hostlist_create(const char *hostlist);
+extern hostlist_t *hostlist_create_client(const char *hostlist);
 
 /* hostlist_copy():
  *
@@ -303,6 +299,10 @@ void hostlist_uniq(hostlist_t *hl);
 /* given a int will parse it into sizes in each dimension */
 void hostlist_parse_int_to_array(int in, int *out, int dims, int hostlist_base);
 
+/* Split a hostlist into a fanout tree */
+extern int hostlist_split_treewidth(hostlist_t *hl, hostlist_t ***sp_hl,
+				    int *count, uint16_t tree_width);
+
 /* ----[ hostlist print functions ]---- */
 
 /* hostlist_ranged_string_dims():
@@ -452,7 +452,7 @@ int hostset_intersects(hostset_t *set, const char *hosts);
 
 /* hostset_within():
  * Return 1 if all hosts specified by "hosts" are within the hostset "set"
- * Retrun 0 if every host in "hosts" is not in the hostset "set"
+ * Return 0 if every host in "hosts" is not in the hostset "set"
  */
 int hostset_within(hostset_t *set, const char *hosts);
 

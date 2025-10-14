@@ -67,7 +67,7 @@
 
 /*
  * Helper macro to log_flag(NET, ...) against a given connection
- * IN fd - file descriptor relavent for logging
+ * IN fd - file descriptor relevant for logging
  * IN con_name - human friendly name for fd or NULL (to auto resolve)
  * IN fmt - log message format
  */
@@ -301,28 +301,32 @@ extern int wait_fd_readable(int fd, int time_limit)
 {
 	struct pollfd ufd;
 	time_t start;
-	int rc, time_left;
 
 	start = time(NULL);
-	time_left = time_limit;
 	ufd.fd = fd;
 	ufd.events = POLLIN;
 	ufd.revents = 0;
 	while (1) {
+		int rc = -1;
+		const double elapsed = difftime(time(NULL), start);
+		const double time_left = time_limit - elapsed;
+
+		if (time_left < 0)
+			goto on_timeout;
+
 		rc = poll(&ufd, 1, time_left * 1000);
 		if (rc > 0) {	/* activity on this fd */
-			if (ufd.revents & POLLIN)
+			if (ufd.revents & (POLLIN | POLLHUP))
 				return 0;
 			else	/* Exception */
 				return -1;
 		} else if (rc == 0) {
+on_timeout:
 			error("Timeout waiting for socket");
 			return -1;
 		} else if (errno != EINTR) {
 			error("poll(): %m");
 			return -1;
-		} else {
-			time_left = time_limit - (time(NULL) - start);
 		}
 	}
 }
@@ -430,7 +434,7 @@ extern char *fd_resolve_path(int fd)
 	if (bytes < 0)
 		debug("%s: readlink(%s) failed: %m", __func__,  path);
 	else if (bytes >= PATH_MAX)
-		debug("%s: rejecting readlink(%s) for possble truncation",
+		debug("%s: rejecting readlink(%s) for possible truncation",
 		      __func__, path);
 	else
 		resolved = xstrdup(ret);
