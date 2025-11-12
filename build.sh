@@ -34,6 +34,13 @@ if grep "release 8.8" /etc/redhat-release; then
     NVDRV_NVML_PKG="libnvidia-ml${NVIDIA_DRIVER:+-$NVIDIA_DRIVER}"
     CUDA_VERSION=${CUDA_VERSION:-12.8}
     CUDA_NVML_PKG="cuda-nvml-devel-${CUDA_VERSION//./-}"
+elif grep "release 8.10" /etc/redhat-release; then
+    NVIDIA_MAJOR_VERSION=570
+    NVIDIA_MINOR_VERSION=133.20
+    NVIDIA_DRIVER=${NVIDIA_DRIVER-${NVIDIA_MAJOR_VERSION}.${NVIDIA_MINOR_VERSION}}
+    NVDRV_NVML_PKG="libnvidia-ml${NVIDIA_DRIVER:+-$NVIDIA_DRIVER}"
+    CUDA_VERSION=${CUDA_VERSION:-12.8}
+    CUDA_NVML_PKG="cuda-nvml-devel-${CUDA_VERSION//./-}"
 elif grep "release 9.4" /etc/redhat-release; then
     NVIDIA_MAJOR_VERSION=570
     NVIDIA_MINOR_VERSION=133.20
@@ -87,6 +94,10 @@ sudo dnf -y builddep slurm.spec
 
 if grep "release 8.8" /etc/redhat-release; then
     UCX_VERSION="1.13.1-2.el8.x86_64"
+    PMIX_VERSION=">= 4.2.6"
+    HWLOC_VERSION=">= 2.2.0-3"
+elif grep "release 8.10" /etc/redhat-release; then
+    UCX_VERSION="1.15.0-2.el8.x86_64"
     PMIX_VERSION=">= 4.2.6"
     HWLOC_VERSION=">= 2.2.0-3"
 elif grep "release 9.2" /etc/redhat-release; then
