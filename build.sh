@@ -123,7 +123,12 @@ sudo dnf -y install lua-devel mariadb-devel lz4-devel
 # - features: authentication (MUNGE: yes, JWT: yes, PAM: yes)
 sudo dnf -y install munge-devel libjwt-devel pam-devel
 # - features: slurmrestd
-sudo dnf -y install http-parser-devel json-c-devel libyaml-devel
+# not possible on rhel 8.10 for now
+if grep "release 8.10" /etc/redhat-release; then
+    sudo dnf -y install json-c-devel
+else
+    sudo dnf -y install http-parser-devel json-c-devel libyaml-devel
+fi
 # - features: Nvidia NVML
 sudo dnf -y autoremove cuda-nvml-* nvidia-driver-NVML-* nvidia-driver* libnvidia-ml*
 
@@ -144,7 +149,12 @@ sudo dnf -y install hdf5-devel
 RPM_DEFINES=( --define "gittag ${GITTAG}" --define "_topdir $ORIGIN/rpmbuild" )
 
 # Build options
-SLURM_BUILDOPTS=( --with slurmrestd --without debug )
+# no slurmrestd on rhel 8.10
+if grep "release 8.10" /etc/redhat-release; then
+    SLURM_BUILDOPTS=( --without debug )
+else
+    SLURM_BUILDOPTS=( --with slurmrestd --without debug )
+fi
 # basic features
 SLURM_BUILDOPTS+=( --with lua --with mysql --with x11 )
 # plugins
