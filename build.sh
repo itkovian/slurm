@@ -106,8 +106,8 @@ elif grep "release 9.2" /etc/redhat-release; then
     HWLOC_VERSION=">= 2.4.1-5"
 elif grep "release 9.4" /etc/redhat-release; then
     UCX_VERSION="1.15.0-2.el9.x86_64"
-    PMIX_VERSION=">= 4.2.7"
-    HWLOC_VERSION=">= 2.4.1-5"
+    PMIX_VERSION="== 4.2.7"
+    HWLOC_VERSION="== 2.4.1-5"
 elif grep "release 9.6" /etc/redhat-release; then
     UCX_VERSION="1.17.0-2.el9.x86_64"
     PMIX_VERSION=">= 5.0.7"
