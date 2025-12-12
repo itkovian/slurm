@@ -121,6 +121,8 @@
 #define MAX_CPU_CNT 1024
 #define MAX_NUMA_CNT 128
 
+#define MAX_ENV_FAIL_TIMEOUT 600
+
 typedef struct {
 	uint32_t uid;
 	uint32_t job_id;
@@ -2125,8 +2127,8 @@ static int _get_user_env(batch_job_launch_msg_t *req, char *user_name)
 
 	verbose("%s: get env for user %s here", __func__, user_name);
 
-	/* Permit up to 120 second delay before using cache file */
-	new_env = env_array_user_default(user_name, 120, 0, no_env_cache);
+	/* Permit up to MAX_ENV_FAIL_TIMEOUT second delay before using cache file */
+	new_env = env_array_user_default(user_name, MAX_ENV_FAIL_TIMEOUT, 0, no_env_cache);
 	if (! new_env) {
 		error("%s: Unable to get user's local environment%s",
 		      __func__, no_env_cache ?
