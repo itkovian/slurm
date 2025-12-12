@@ -12,6 +12,8 @@ nodes = list(atf.get_nodes(live=False).keys())
 
 @pytest.fixture(scope="module", autouse=True)
 def setup():
+    atf.require_config_parameter("SelectType", "select/cons_tres")
+    atf.require_config_parameter("SelectTypeParameters", "CR_CPU")
     atf.require_config_parameter("TopologyPlugin", "topology/tree")
     atf.require_config_parameter(
         "SwitchName", f"{switch_name} Nodes={nodes[0]}", source="topology"
@@ -21,7 +23,7 @@ def setup():
 
 
 def test_show_topo():
-    if atf.get_version() >= (25, 5, 0):
+    if atf.get_version("bin/scontrol") >= (25, 5, 0):
         opt = f"switch={switch_name}"
     else:
         opt = f"{switch_name}"
