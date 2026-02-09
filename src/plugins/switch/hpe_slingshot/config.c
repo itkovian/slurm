@@ -792,6 +792,33 @@ err:
 	return false;
 }
 
+extern bool slingshot_stepd_init(const char *switch_params)
+{
+	char *params = NULL, *token, *arg, *save_ptr = NULL;
+	const char destroy_retries[] = "destroy_retries";
+	const size_t size_destroy_retries = sizeof(destroy_retries) - 1;
+
+	slingshot_config.destroy_retries = SLINGSHOT_CXI_DESTROY_RETRIES;
+
+	params = xstrdup(switch_params);
+	for (token = strtok_r(params, ",", &save_ptr); token;
+	     token = strtok_r(NULL, ",", &save_ptr)) {
+		if ((arg = strchr(token, '=')))
+			arg++; /* points to argument after = if any */
+		if (!xstrncasecmp(token, destroy_retries,
+				  size_destroy_retries)) {
+			if (_config_destroy_retries(token, arg))
+				goto err;
+		}
+	}
+
+	xfree(params);
+	return true;
+err:
+	xfree(params);
+	return false;
+}
+
 /*
  * Set up passed-in slingshot_config_t based on values in 'SwitchParameters'
  * slurm.conf setting.  Return true on success, false on bad parameters

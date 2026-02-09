@@ -209,6 +209,8 @@ extern int slurm_step_launch(slurm_step_ctx_t *ctx,
 		return SLURM_ERROR;
 	}
 
+	io_key = slurm_cred_get_signature(ctx->step_resp->cred);
+
 	/* Initialize the callback pointers */
 	if (callbacks != NULL) {
 		/* copy the user specified callback pointers */
@@ -456,6 +458,8 @@ extern int slurm_step_launch_add(slurm_step_ctx_t *ctx,
 		errno = EINVAL;
 		return SLURM_ERROR;
 	}
+
+	io_key = slurm_cred_get_signature(ctx->step_resp->cred);
 
 	mpi_plugin_id = mpi_g_client_init((char **)&params->mpi_plugin_name);
 	if (!mpi_plugin_id) {

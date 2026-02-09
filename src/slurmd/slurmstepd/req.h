@@ -50,4 +50,6 @@ extern void set_msg_node_id(void);
 
 extern void join_extern_threads();
 
+extern void join_extern_threads();
+
 #endif /* _STEP_REQ_H */

@@ -1130,7 +1130,10 @@ static void _slurm_rpc_allocate_het_job(slurm_msg_t *msg)
 
 	if (error_code) {
 		/* Cancel remaining job records */
-		(void) list_for_each(submit_job_list, _het_job_cancel, NULL);
+		iter = list_iterator_create(submit_job_list);
+		while ((job_ptr = list_next(iter)))
+			(void) _het_job_cancel(job_ptr, NULL);
+		list_iterator_destroy(iter);
 		if (!first_job_ptr)
 			FREE_NULL_LIST(submit_job_list);
 	} else {
@@ -2620,6 +2623,26 @@ static int _find_avail_future_node(slurm_msg_t *msg)
 				}
 			}
 
+			/*
+			 * As we don't validate the node specs until the
+			 * 2nd registration RPC, and slurmd only sends
+			 * instance-like attributes in the 1st
+			 * registration RPC of its lifetime, we need to
+			 * store these values here.
+			 */
+			if (reg_msg->instance_id) {
+				xfree(node_ptr->instance_id);
+				if (reg_msg->instance_id[0])
+					node_ptr->instance_id =
+						xstrdup(reg_msg->instance_id);
+			}
+			if (reg_msg->instance_type) {
+				xfree(node_ptr->instance_type);
+				if (reg_msg->instance_type[0])
+					node_ptr->instance_type =
+						xstrdup(reg_msg->instance_type);
+			}
+
 			bit_clear(future_node_bitmap, node_ptr->index);
 			xfree(comm_name);
 
@@ -3952,7 +3975,10 @@ static void _slurm_rpc_submit_batch_het_job(slurm_msg_t *msg)
 	xfree(het_job_id_set);
 
 	if (reject_job && submit_job_list) {
-		(void) list_for_each(submit_job_list, _het_job_cancel, NULL);
+		iter = list_iterator_create(submit_job_list);
+		while ((job_ptr = list_next(iter)))
+			(void) _het_job_cancel(job_ptr, NULL);
+		list_iterator_destroy(iter);
 		if (!first_job_ptr)
 			FREE_NULL_LIST(submit_job_list);
 	}

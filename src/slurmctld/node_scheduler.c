@@ -421,6 +421,8 @@ extern void deallocate_nodes(job_record_t *job_ptr, bool timeout,
 
 	resv_replace_update(job_ptr);
 
+	resv_replace_update(job_ptr);
+
 	if (!hostlist || !hostlist_count(hostlist)) {
 		hostlist_destroy(hostlist);
 		return;

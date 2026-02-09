@@ -204,6 +204,11 @@ static void _on_sigalrm(conmgr_callback_args_t conmgr_args, void *arg)
 	debug5("Caught SIGALRM. Ignoring");
 }
 
+static void _on_sigalrm(conmgr_callback_args_t conmgr_args, void *arg)
+{
+	debug5("Caught SIGALRM. Ignoring");
+}
+
 static void _register_signal_handlers(void)
 {
 	conmgr_add_work_signal(SIGINT, _on_sigint, NULL);

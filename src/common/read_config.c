@@ -5923,6 +5923,11 @@ extern char * reconfig_flags2str(uint16_t reconfig_flags)
 			xstrcat(rc, ",");
 		xstrcat(rc, "KeepPowerSaveSettings");
 	}
+	if (reconfig_flags & RECONFIG_KEEP_NODE_STATE_FUTURE) {
+		if (rc)
+			xstrcat(rc, ",");
+		xstrcat(rc, "KeepNodeStateFuture");
+	}
 
 	return rc;
 }
@@ -5949,6 +5954,8 @@ extern uint16_t reconfig_str2flags(char *reconfig_flags)
 			rc |= RECONFIG_KEEP_PART_STAT;
 		else if (xstrcasecmp(tok, "KeepPowerSaveSettings") == 0)
 			rc |= RECONFIG_KEEP_POWER_SAVE_SETTINGS;
+		else if (xstrcasecmp(tok, "KeepNodeStateFuture") == 0)
+			rc |= RECONFIG_KEEP_NODE_STATE_FUTURE;
 		else {
 			error("Invalid ReconfigFlag: %s", tok);
 			rc = NO_VAL16;

@@ -700,6 +700,9 @@ extern void get_part_list(char *name, list_t **part_ptr_list,
 	if (first_valid)
 		*first_valid = true;
 
+	*part_ptr_list = NULL;
+	*prim_part_ptr = NULL;
+
 	if (name == NULL)
 		return;
 

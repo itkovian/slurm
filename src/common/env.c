@@ -1259,6 +1259,7 @@ env_array_for_batch_job(char ***dest, const batch_job_launch_msg_t *batch,
 	slurm_step_layout_req_t step_layout_req;
 	uint16_t cpus_per_task_array[1];
 	uint32_t cpus_task_reps[1];
+	char *tres_per_task = NULL;
 
 	if (!batch)
 		return SLURM_ERROR;

@@ -7106,6 +7106,7 @@ extern int job_limits_check(job_record_t **job_pptr, bool check_min_time)
 		job_desc.pn_min_cpus = detail_ptr->orig_pn_min_cpus;
 		job_desc.step_id = STEP_ID_FROM_JOB_RECORD(job_ptr);
 		job_desc.bitflags = job_ptr->bit_flags;
+		job_desc.tres_per_task = xstrdup(job_ptr->tres_per_task);
 		if (!_valid_pn_min_mem(&job_desc, part_ptr)) {
 			/* debug2 message already logged inside the function. */
 			fail_reason = WAIT_PN_MEM_LIMIT;
