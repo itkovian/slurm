@@ -315,8 +315,9 @@ extern void set_job_features_use(job_details_t *details_ptr)
  * IN suspended - true if job was already suspended (node's run_job_cnt
  *	already decremented);
  * IN preempted - true if job is being preempted
+ * RET true if job is COMPLETED (batch_requeue_fini called), otherwise false
  */
-extern void deallocate_nodes(job_record_t *job_ptr, bool timeout,
+extern bool deallocate_nodes(job_record_t *job_ptr, bool timeout,
 			     bool suspended, bool preempted)
 {
 	kill_job_msg_t *kill_job = NULL;
@@ -387,6 +388,7 @@ extern void deallocate_nodes(job_record_t *job_ptr, bool timeout,
 	}
 
 	if (job_ptr->details->prolog_running) {
+		bool rc = false;
 		/*
 		 * Job was configuring when it was cancelled and epilog wasn't
 		 * run on the nodes, so cleanup the nodes now. Final cleanup
@@ -408,11 +410,12 @@ extern void deallocate_nodes(job_record_t *job_ptr, bool timeout,
 				     (node_ptr = next_node_bitmap(
 					     job_ptr->node_bitmap_cg, &i));
 			     i++) {
-				job_epilog_complete(job_ptr, node_ptr->name, 0);
+				rc |= job_epilog_complete(job_ptr,
+							  node_ptr->name, 0);
 			}
 		}
 
-		return;
+		return rc;
 	}
 
 	/* Can not wait for epilog complete to release licenses and
@@ -425,7 +428,7 @@ extern void deallocate_nodes(job_record_t *job_ptr, bool timeout,
 
 	if (!hostlist || !hostlist_count(hostlist)) {
 		hostlist_destroy(hostlist);
-		return;
+		return false;
 	}
 
 	if (job_ptr->bit_flags & EXTERNAL_JOB) {
@@ -437,7 +440,7 @@ extern void deallocate_nodes(job_record_t *job_ptr, bool timeout,
 			make_node_idle(node_ptr, job_ptr);
 		}
 		hostlist_destroy(hostlist);
-		return;
+		return false;
 	}
 
 	agent_args = xmalloc(sizeof(agent_arg_t));
@@ -460,6 +463,8 @@ extern void deallocate_nodes(job_record_t *job_ptr, bool timeout,
 	agent_args->msg_args = kill_job;
 	set_agent_arg_r_uid(agent_args, SLURM_AUTH_UID_ANY);
 	agent_queue_request(agent_args);
+
+	return false;
 }
 
 static void _log_feature_nodes(job_feature_t  *job_feat_ptr)
@@ -1700,7 +1705,11 @@ static int _pick_best_nodes(struct node_set *node_set_ptr, int node_set_size,
 	 * Accumulate resources for this job based upon its required
 	 * features (possibly with node counts).
 	 */
+	job_ptr->bit_flags |= NEED_MORE_FEATURES;
 	for (j = min_feature; j <= max_feature; j++) {
+		if (j >= max_feature) {
+			job_ptr->bit_flags &= ~NEED_MORE_FEATURES;
+		}
 		if (job_ptr->details->req_node_bitmap) {
 			bool missing_required_nodes = false;
 			bool feature_found = false;

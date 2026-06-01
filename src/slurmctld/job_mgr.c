@@ -3014,7 +3014,8 @@ static int _foreach_kill_running_job_by_node(void *x, void *arg)
 			   ((job_ptr->details &&
 			     job_ptr->details->requeue) ||
 			    (foreach_kill_job_by->requeue_on_resume_failure &&
-			     IS_NODE_POWERED_DOWN(node_ptr) &&
+			     (IS_NODE_POWERED_DOWN(node_ptr) ||
+			      IS_NODE_POWERING_UP(node_ptr)) &&
 			     IS_JOB_CONFIGURING(job_ptr)))) {
 			srun_node_fail(job_ptr, node_ptr->name);
 			info("requeue job %pJ due to failure of node %s",
@@ -3094,6 +3095,8 @@ extern int kill_running_job_by_node_ptr(node_record_t *node_ptr)
 {
 	static time_t sched_update = 0;
 	static bool requeue_on_resume_failure = false;
+	list_itr_t *iter;
+	job_record_t *job_ptr = NULL;
 	foreach_kill_job_by_t foreach_kill_job_by = {
 		.node_ptr = node_ptr,
 		.now = time(NULL),
@@ -3114,9 +3117,17 @@ extern int kill_running_job_by_node_ptr(node_record_t *node_ptr)
 
 	foreach_kill_job_by.requeue_on_resume_failure =
 		requeue_on_resume_failure;
-
-	list_for_each(job_list, _foreach_kill_running_job_by_node,
-		      &foreach_kill_job_by);
+	/*
+	 * This needs to be an iterator since
+	 * _foreach_kill_running_job_by_node() may eventually call
+	 * _pick_node_cnt() which will deadlock the job_list lock.
+	 */
+	iter = list_iterator_create(job_list);
+	while ((job_ptr = list_next(iter))) {
+		_foreach_kill_running_job_by_node(job_ptr,
+						  &foreach_kill_job_by);
+	}
+	list_iterator_destroy(iter);
 
 	if (foreach_kill_job_by.kill_job_cnt)
 		last_job_update = foreach_kill_job_by.now;
@@ -11734,11 +11745,18 @@ void handle_invalid_dependency(job_record_t *job_ptr)
 void purge_old_job(void)
 {
 	int i, purge_job_count;
+	/*
+	 * purge_old_job modifies jobs and reads conf info. It can also
+	 * call re_kill_job(), which can modify nodes and reads fed info.
+	 */
+	slurmctld_lock_t purge_job_locks = {
+		.conf = READ_LOCK,
+		.job = WRITE_LOCK,
+		.node = WRITE_LOCK,
+		.fed = READ_LOCK,
+	};
 
-	xassert(verify_lock(CONF_LOCK, READ_LOCK));
-	xassert(verify_lock(JOB_LOCK, WRITE_LOCK));
-	xassert(verify_lock(NODE_LOCK, WRITE_LOCK));
-	xassert(verify_lock(FED_LOCK, READ_LOCK));
+	lock_slurmctld(purge_job_locks);
 
 	if ((purge_job_count = list_count(purge_files_list)))
 		debug("%s: job file deletion is falling behind, "
@@ -11752,6 +11770,11 @@ void purge_old_job(void)
 	if (i) {
 		debug2("purge_old_job: purged %d old job records", i);
 		last_job_update = time(NULL);
+	}
+
+	unlock_slurmctld(purge_job_locks);
+
+	if (i) {
 		slurm_mutex_lock(&purge_thread_lock);
 		slurm_cond_signal(&purge_thread_cond);
 		slurm_mutex_unlock(&purge_thread_lock);
@@ -13628,15 +13651,6 @@ static int _update_job(job_record_t *job_ptr, job_desc_msg_t *job_desc,
 			xfree(job_ptr->state_desc);
 		}
 
-		/*
-		 * The update did not explicit a time limit, but did
-		 * explicit a new QoS. Now that we have changed the QoS, we are
-		 * sure that we can use whatever is set in its QoS limits to set
-		 * the final job's time limit later.
-		 */
-		if (job_desc->time_limit == NO_VAL)
-			job_desc->time_limit = new_qos_ptr->max_wall_pj;
-
 		info("%s: setting QOS to %s for %pJ",
 		     __func__, detail_ptr->qos_req, job_ptr);
 	}
@@ -13680,6 +13694,7 @@ static int _update_job(job_record_t *job_ptr, job_desc_msg_t *job_desc,
 	if (new_qos_ptr || new_assoc_ptr || new_part_ptr) {
 		update_accounting = true;
 		acct_policy_add_job_submit(job_ptr, false);
+		acct_policy_update_pending_job(job_ptr, false);
 	}
 
 	if (new_resv_ptr) {
@@ -16683,6 +16698,46 @@ static int _requeue_delay(void)
 	return delay;
 }
 
+/*
+ * Reparse job licenses after batch requeue. batch_requeue_fini() clears
+ * license_list; rebuild from job_ptr->licenses so allocate_nodes() ->
+ * license_job_get() can run on the next launch. Validate against configured
+ * licenses and hold the job if the request is no longer valid.
+ *
+ * Mirrors read_config.c _restore_job_licenses() request path.
+ */
+static void _batch_requeue_rebuild_license_list(job_record_t *job_ptr)
+{
+	list_t *license_list;
+	bool valid = true;
+
+	if (!job_ptr->licenses || !job_ptr->licenses[0])
+		return;
+
+	license_list = license_validate(job_ptr->licenses, true, true, false,
+					job_ptr->tres_req_cnt, &valid);
+	if (valid) {
+		job_ptr->license_list = license_list;
+		xfree(job_ptr->licenses);
+		job_ptr->licenses =
+			license_list_to_string(job_ptr->license_list);
+		hres_create_select(job_ptr);
+	} else if (IS_JOB_PENDING(job_ptr) && job_ptr->priority) {
+		char *msg = xstrdup_printf(
+			"License request '%s' is no longer valid, holding job",
+			job_ptr->licenses);
+
+		info("%pJ %s", job_ptr, msg);
+		job_ptr->priority = 0;
+		job_ptr->state_reason = WAIT_HELD;
+		xfree(job_ptr->state_desc);
+		job_ptr->state_desc = msg;
+		FREE_NULL_LIST(license_list);
+	} else {
+		FREE_NULL_LIST(license_list);
+	}
+}
+
 /* Complete a batch job requeue logic after all steps complete so that
  * subsequent jobs appear in a separate accounting record. */
 void batch_requeue_fini(job_record_t *job_ptr)
@@ -16756,6 +16811,12 @@ void batch_requeue_fini(job_record_t *job_ptr)
 	FREE_NULL_BITMAP(job_ptr->node_bitmap);
 	FREE_NULL_BITMAP(job_ptr->node_bitmap_cg);
 	FREE_NULL_LIST(job_ptr->gres_list_alloc);
+
+	/*
+	 * We need to rebuild the license_list to what was requested
+	 * instead of what was given exclusively.
+	 */
+	_batch_requeue_rebuild_license_list(job_ptr);
 
 	job_resv_clear_magnetic_flag(job_ptr);
 	job_ptr->epilog_failed = false;
@@ -17775,6 +17836,7 @@ static int _job_requeue_op(uid_t uid, job_record_t *job_ptr, bool preempt,
 	static bool requeue_nohold_prolog = true;
 	bool is_running = false, is_suspended = false, is_completed = false;
 	bool is_completing = false;
+	bool requeue_fini_called = false;
 	bool force_requeue = false;
 	time_t now = time(NULL);
 	uint32_t completing_flags = 0;
@@ -17929,7 +17991,8 @@ static int _job_requeue_op(uid_t uid, job_record_t *job_ptr, bool preempt,
 	 */
 	if (is_running) {
 		job_state_set_flag(job_ptr, JOB_COMPLETING);
-		deallocate_nodes(job_ptr, false, is_suspended, preempt);
+		requeue_fini_called =
+			deallocate_nodes(job_ptr, false, is_suspended, preempt);
 		if (!IS_JOB_COMPLETING(job_ptr) && !job_ptr->fed_details)
 			is_completed = true;
 		else
@@ -17976,7 +18039,7 @@ reply:
 	 */
 	acct_policy_add_job_submit(job_ptr, false);
 
-	acct_policy_update_pending_job(job_ptr);
+	acct_policy_update_pending_job(job_ptr, true);
 
 	if (flags & JOB_SPECIAL_EXIT) {
 		job_state_set_flag(job_ptr, JOB_SPECIAL_EXIT);
@@ -18026,7 +18089,7 @@ reply:
 	 * Call batch_requeue_fini after setting priority to 0 for requeue_hold
 	 * and special_exit so federation doesn't submit siblings for held job.
 	 */
-	if (is_completed)
+	if (is_completed && !requeue_fini_called)
 		batch_requeue_fini(job_ptr);
 
 	debug("%s: %pJ state 0x%x reason %u priority %d",

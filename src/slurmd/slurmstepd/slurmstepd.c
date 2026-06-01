@@ -470,6 +470,8 @@ extern int main(int argc, char **argv)
 		fatal("%s: Unable to reliably execute %s",
 		      __func__, conf->stepd_loc);
 
+	forward_init();
+
 	/*
 	 * Create the stepd_step_rec_t, mostly from info in a
 	 * launch_tasks_request_msg_t or a batch_job_launch_msg_t, and validate
@@ -528,6 +530,8 @@ extern int main(int argc, char **argv)
 	only_mem = false;
 ending:
 	stepd_cleanup(msg, cli, rc, only_mem);
+
+	forward_fini();
 
 	conmgr_fini();
 	return rc;
@@ -1121,6 +1125,7 @@ _init_from_slurmd(int sock, char **argv, slurm_addr_t **_cli,
 			job_step_ptr = task_msg->job_ptr;
 			job_step_ptr->part_ptr = task_msg->part_ptr;
 			job_node_array = task_msg->job_node_array;
+			slurm_daemon |= IS_STEPMGR;
 
 			/*
 			 * job_record doesn't pack its node_addrs array, so get

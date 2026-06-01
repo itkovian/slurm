@@ -1306,7 +1306,8 @@ static int _build_tasks_per_node_sock(struct job_resources *job_res,
 		}
 		tasks_per_node_socket[i] =
 			xcalloc(sock_cnt + 1, sizeof(uint32_t));
-		if (tres_mc_ptr->ntasks_per_node) {
+		if (tres_mc_ptr->ntasks_per_node && job_res->tasks_per_node &&
+		    job_res->tasks_per_node[job_node_inx]) {
 			task_per_node_limit = tres_mc_ptr->ntasks_per_node;
 			cpus_per_task = MAX(1, job_res->cpus[job_node_inx] /
 						       job_res->tasks_per_node
@@ -1761,7 +1762,9 @@ static int _select_and_set_node(void *x, void *arg)
 	gres_js->gres_cnt_node_select[node_inx] = 0;
 
 	if (gres_js->res_gpu_cores && gres_js->res_gpu_cores[node_inx] &&
-	    !gres_id_shared(sock_gres->gres_state_job->config_flags)) {
+	    !gres_id_shared(sock_gres->gres_state_job->config_flags) &&
+	    !(job_ptr->details &&
+	      (job_ptr->details->whole_node & WHOLE_NODE_REQUIRED))) {
 		*rc = _set_res_core_bits(&res_gres_per_sock, &total_res_gres,
 					 &sock_with_res_cnt, args, sock_gres);
 		if (*rc != SLURM_SUCCESS)

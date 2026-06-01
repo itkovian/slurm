@@ -499,10 +499,10 @@ If not set, the default key file is jwt_hs256.key in \fIStateSaveLocation\fR.
 
 .TP
 \fBuserclaimfield\fR=
-Use an alternative claim field for the Slurm UserName \fBsun\fR field. This
+Use an alternative claim field for the Slurm UserName (\fBsun\fR) field. This
 option is designed to allow compatibility with tokens generated outside of
 Slurm. (This field may also be known as a grant.)
-.NR
+
 Default: (disabled)
 .RE
 .IP
@@ -561,7 +561,9 @@ components.
 All Slurm daemons and commands must be terminated prior to changing
 the value of \fBAuthType\fR and later restarted.
 Changes to this value will interrupt outstanding job steps and prevent them
-from completing.
+from completing, so no jobs should be running when this is changed.
+See <https://slurm.schedmd.com/authentication.html> for more information.
+
 Acceptable values at present:
 .RS
 .TP
@@ -1463,10 +1465,10 @@ partition limits are altered. This is the default.
 
 .TP
 \fBEpilog\fR
-Pathname of a script to execute as user root on every node when a user's job
-completes (e.g. "/usr/local/slurm/epilog"). If it is not an absolute path name
-(i.e. it does not start with a slash), it will be searched for in the same
-directory as the slurm.conf file. A glob pattern (See \fBglob\fR (7)) may also
+Pathname of a program to execute as user root on every node when a user's job
+completes (e.g. "/usr/local/slurm/epilog"). If it is not an absolute pathname
+(i.e. it does not start with a slash), it must be relative to the directory
+containing the slurm.conf file. A glob pattern (See \fBglob\fR (7)) may also
 be used to run more than one epilog script (e.g. "/etc/slurm/epilog.d/*").
 When more than one epilog script is configured, they are executed in reverse
 alphabetical order (z-a -> Z-A -> 9-0). The Epilog script(s) may be used
@@ -1481,13 +1483,15 @@ this option on multiple lines.\fR
 .TP
 \fBEpilogMsgTime\fR
 The number of microseconds that the slurmctld daemon requires to process
-an epilog completion message from the slurmd daemons. This parameter can
-be used to prevent a burst of epilog completion messages from being sent
-at the same time which should help prevent lost messages and improve
-throughput for large jobs.
+an epilog completion message from the slurmd daemons.
+For jobs spanning more than 64 nodes, each host delays its message
+based on its index in the job's node list and this value, preventing
+a burst of simultaneous RPCs that could result in lost messages.
 The default value is 2000 microseconds.
-For a 1000 node job, this spreads the epilog completion messages out over
-two seconds.
+The maximum value is 1000000 (1 second). Values exceeding the maximum
+will be reset to the default.
+For a 1000 node job, the default value will spread the epilog completion
+messages out over two seconds.
 .IP
 
 .TP
@@ -3532,8 +3536,8 @@ Uses Process Group IDs.
 .TP
 \fBProlog\fR
 Pathname of a program for the slurmd to execute whenever it is asked to run a
-job step from a new job allocation. If it is not an absolute path name (i.e. it
-does not start with a slash), it will be searched for in the same directory as
+job step from a new job allocation. If it is not an absolute pathname (i.e. it
+does not start with a slash), it must be relative to the directory containing
 the slurm.conf file. A glob pattern (See \fBglob\fR (7)) may also be used to
 specify more than one program to run (e.g. "/etc/slurm/prolog.d/*"). When more
 than one prolog script is configured, they are executed in reverse alphabetical
@@ -5480,8 +5484,7 @@ The port number that the Slurm controller, \fBslurmctld\fR, listens
 to for work. The default value is SLURMCTLD_PORT as established at system
 build time. If none is explicitly specified, it will be set to 6817.
 \fBSlurmctldPort\fR may also be configured to support a range of port
-numbers in order to accept larger bursts of incoming messages by specifying
-two numbers separated by a dash (e.g. \fBSlurmctldPort=6817\-6818\fR).
+numbers for existing legacy configurations.
 \fBNOTE\fR: Either \fBslurmctld\fR and \fBslurmd\fR daemons must not
 execute on the same nodes or the values of \fBSlurmctldPort\fR and
 \fBSlurmdPort\fR must be different.
@@ -5689,7 +5692,7 @@ Specify the maximum number of connections to be processed at any given time.
 This does not influence the maximum number of pending connections as that is
 controlled by the kernel. Increasing this value will increase \fBslurmd\fR's
 memory footprint. Sites are advised to monitor memory consumption when
-increasing this value. Defaults to 150.
+increasing this value. Defaults to 50.
 .IP
 
 .TP
@@ -5743,6 +5746,13 @@ where the socket level is too coarse, and the l3cache may provide better
 task distribution. (E.g., along CCX boundaries instead of socket boundaries.)
 Mutually exclusive with numa_node_as_socket.
 Requires hwloc v2.
+
+\fBNOTE\fR: When this parameter is set, the node definitions in slurm.conf
+(\fBSockets\fR or \fBSocketsPerBoard\fR, \fBCoresPerSocket\fR, and
+\fBThreadsPerCore\fR) must be updated to reflect the resulting topology as
+reported by \fBslurmd \-C \-\-parameters=l3cache_as_socket\fR, not the
+physical hardware layout. Failing to update these values will cause a
+mismatch between what slurmd detects and what the controller expects.
 .TP
 \fBnuma_node_as_socket\fR
 Use the hwloc NUMA Node to determine main hierarchy object to be used as socket.
@@ -5751,6 +5761,13 @@ as socket. This option may be useful for architectures likes AMD Epyc, where
 number of nodes per socket may be configured.
 Mutually exclusive with l3cache_as_socket.
 Requires hwloc v2.
+
+\fBNOTE\fR: When this parameter is set, the node definitions in slurm.conf
+(\fBSockets\fR or \fBSocketsPerBoard\fR, \fBCoresPerSocket\fR, and
+\fBThreadsPerCore\fR) must be updated to reflect the resulting topology as
+reported by \fBslurmd \-C \-\-parameters=numa_node_as_socket\fR, not the
+physical hardware layout. Failing to update these values will cause a
+mismatch between what slurmd detects and what the controller expects.
 .IP
 
 .TP
@@ -5760,9 +5777,9 @@ If set, the Slurmd will shut itself down when a reboot request is received.
 
 .TP
 \fBcontain_spank\fR
-If set and a job_container plugin is specified, the spank_user(),
-spank_task_post_fork() and spank_task_exit() calls will be run inside the job
-container.
+If set and a namespace plugin is specified, the spank_user(),
+spank_task_post_fork() and spank_task_exit() calls will be run inside the job's
+namespace.
 .RE
 .IP
 
@@ -5929,7 +5946,7 @@ The default value is "root".
 
 .TP
 \fBSrunEpilog\fR
-Fully qualified pathname of an executable to be run by srun following
+Fully qualified pathname of a program for srun to execute following
 the completion of a job step. The command line arguments for the
 executable will be the command and arguments of the job step. This
 configuration parameter may be overridden by srun's \fB\-\-epilog\fR
@@ -5970,7 +5987,7 @@ srun \-N 200      will use 12 listening ports.
 
 .TP
 \fBSrunProlog\fR
-Fully qualified pathname of an executable to be run by srun prior to
+Fully qualified pathname of a program for srun to execute prior to
 the launch of a job step. The command line arguments for the
 executable will be the command and arguments of the job step. This
 configuration parameter may be overridden by srun's \fB\-\-prolog\fR
@@ -6339,10 +6356,11 @@ For allocating unique channels within an NVIDIA IMEX domain.
 
 .TP
 \fBTaskEpilog\fR
-Fully qualified pathname of a program to be executed as the slurm job's user
-after termination of each task. Will run inside of the job's container if
-configured. Should not be used for policy enforcement.
-See \fBTaskProlog\fR for execution order details.
+Pathname of a program to be executed as the job's user after termination of each
+task. If it is not an absolute pathname (i.e. it does not start with a slash),
+it must be relative to the directory containing the slurm.conf file.
+Will run inside of the job's container if configured. Should not be used for
+policy enforcement. See \fBTaskProlog\fR for execution order details.
 .IP
 
 .TP
@@ -6455,11 +6473,12 @@ Set to Threads, Cores or Sockets (E.g. TaskPluginParam=autobind=threads).
 
 .TP
 \fBTaskProlog\fR
-Fully qualified pathname of a program to be executed as the slurm job's user
-prior to initiation of each task. Will run inside of the job's container if
-configured. Should not be used for policy enforcement.
-Besides the normal environment variables, this has SLURM_TASK_PID
-available to identify the process ID of the task being started.
+Pathname of a program to be executed as the job's user prior to initiation of
+each task. If it is not an absolute pathname (i.e. it does not start with a
+slash), it must be relative to the directory containing the slurm.conf file.
+Will run inside of the job's container if configured. Should not be used for
+policy enforcement. Besides the normal environment variables, this has
+SLURM_TASK_PID available to identify the process ID of the task being started.
 Standard output from this program can be used to control the environment
 variables and output for the user program.
 .IP
@@ -7233,12 +7252,18 @@ gres allocation.
 Number of physical processor sockets/chips on the node (e.g. "2").
 If Sockets is omitted, it will be inferred from
 \fBCPUs\fR, \fBCoresPerSocket\fR, and \fBThreadsPerCore\fR.
-\fBNOTE\fR: If you have multi\-core processors, you will likely
-need to specify these parameters.
-Sockets and SocketsPerBoard are mutually exclusive.
-If Sockets is specified when Boards is also used,
-Sockets is interpreted as SocketsPerBoard rather than total sockets.
+If you have multi\-core processors, you will likely need to specify these
+parameters. \fBSockets\fR and \fBSocketsPerBoard\fR are mutually exclusive.
+If \fBSockets\fR is specified when \fBBoards\fR is also used,
+\fBSockets\fR is interpreted as \fBSocketsPerBoard\fR rather than total sockets.
 The default value is 1.
+
+\fBNOTE\fR: If \fBSlurmdParameters=numa_node_as_socket\fR or
+\fBSlurmdParameters=l3cache_as_socket\fR is configured, the values for
+\fBSockets\fR, \fBCoresPerSocket\fR, and \fBThreadsPerCore\fR must match
+the virtual topology reported by \fBslurmd \-C\fR under that
+configuration, not the physical hardware layout. See the
+\fBSlurmdParameters\fR documentation for details.
 .IP
 
 .TP
@@ -7568,8 +7593,10 @@ The default value is "NO".
 
 .TP
 \fBDefaultTime\fR
-Run time limit used for jobs that don't specify a value. If not set
-then MaxTime will be used.
+Run time limit used for jobs that don't specify a value. If not set, the
+default will be set to an applicable time limit, which may be from the
+partition (MaxTime) or from a QOS or association (MaxWall or GrpWall).
+Regardless, MaxTime will still be enforced.
 Format is the same as for MaxTime.
 .IP
 
@@ -7934,22 +7961,15 @@ Also see \fBSuspendTime\fR.
 
 .TP
 \fBPreemptMode\fR
-Mechanism used to preempt jobs or enable gang scheduling for this
-partition when \fBPreemptType=preempt/partition_prio\fR is configured.
+Mechanism used to preempt jobs running in this partition when
+\fBPreemptType=preempt/partition_prio\fR is configured.
 This partition\-specific \fBPreemptMode\fR configuration parameter will
-override the cluster\-wide \fBPreemptMode\fR for this partition.
-It can be set to OFF to disable preemption and gang scheduling for this
-partition.
+override the cluster\-wide \fBPreemptMode\fR for jobs in this partition.
+It can be set to OFF to prevent jobs in this partition from being preempted.
 See also \fBPriorityTier\fR and the above description of the cluster\-wide
 \fBPreemptMode\fR parameter for further details.
 .br
-The \fBGANG\fR option is used to enable gang scheduling independent of
-whether preemption is enabled (i.e. independent of the \fBPreemptType\fR
-setting). It can be specified in addition to a \fBPreemptMode\fR setting with
-the two options comma separated (e.g. \fBPreemptMode=SUSPEND,GANG\fR).
-.br
-See <https://slurm.schedmd.com/preempt.html> and
-<https://slurm.schedmd.com/gang_scheduling.html> for more details.
+See <https://slurm.schedmd.com/preempt.html> for more details.
 
 \fBNOTE\fR:
 For performance reasons, the backfill scheduler reserves whole nodes for jobs,
@@ -7972,32 +7992,12 @@ Heterogeneous jobs are excluded from GANG scheduling operations.
 .RS
 .TP 12
 \fBOFF\fR
-Disables job preemption and gang scheduling.
+Disables job preemption.
 .IP
 
 .TP
 \fBCANCEL\fR
 The preempted job will be cancelled.
-.IP
-
-.TP
-\fBGANG\fR
-Enables gang scheduling (time slicing) of jobs in the same partition, and
-allows the resuming of suspended jobs.
-
-\fBNOTE\fR:
-Gang scheduling is performed independently for each partition, so
-if you only want time\-slicing by \fBOverSubscribe\fR, without any preemption,
-then configuring partitions with overlapping nodes is not recommended.
-On the other hand, if you want to use \fBPreemptType=preempt/partition_prio\fR
-to allow jobs from higher PriorityTier partitions to Suspend jobs from lower
-PriorityTier partitions you will need overlapping partitions, and
-\fBPreemptMode=SUSPEND,GANG\fR to use the Gang scheduler to resume the suspended
-jobs(s).
-In any case, time\-slicing won't happen between jobs on different partitions.
-.br
-\fBNOTE\fR:
-Heterogeneous jobs are excluded from GANG scheduling operations.
 .IP
 
 .TP
@@ -8026,6 +8026,12 @@ will the suspended jobs will be resumed by the Gang scheduler.
 .br
 \fBNOTE\fR: Suspended jobs will not release GRES. Higher priority jobs will not
 be able to preempt to gain access to GRES.
+.IP
+
+.TP
+\fBPRIORITY\fR
+Allow preemption only if the preemptor's job priority is higher than the
+preemptee's job priority.
 .RE
 .IP
 
@@ -8365,8 +8371,8 @@ PartitionName=long Nodes=dev[9\-17] MaxTime=120 AllowGroups=admin
 The "include" key word can be used with modifiers within the specified
 pathname. These modifiers would be replaced with cluster name or other
 information depending on which modifier is specified. If the included file
-is not an absolute path name (i.e. it does not start with a slash), it will
-searched for in the same directory as the slurm.conf file.
+is not an absolute pathname (i.e. it does not start with a slash), it must be
+relative to the directory containing the slurm.conf file.
 
 .TP
 \fB%c\fR

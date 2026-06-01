@@ -1557,7 +1557,8 @@ extern void handle_invalid_dependency(job_record_t *job_ptr);
  *	The jobs must have completed at least MIN_JOB_AGE minutes ago.
  *	Test job dependencies, handle after_ok, after_not_ok before
  *	purging any jobs.
- * NOTE: READ lock slurmctld config and WRITE lock jobs before entry
+ * NOTE: slurmctld config and fed READ locks and job and node WRITE locks are
+ *       acquired by this function.
  */
 void purge_old_job(void);
 
@@ -2311,6 +2312,11 @@ extern bool listeners_quiesced(void);
 
 /* True if slurmctld process running as primary controller */
 extern bool is_primary(void);
+
+/*
+ * True when the controller is in run_backup() standby
+ */
+extern bool slurmctld_listeners_in_standby(void);
 
 /* Set/update a node's topology */
 extern int node_mgr_set_node_topology(node_record_t *node_ptr,

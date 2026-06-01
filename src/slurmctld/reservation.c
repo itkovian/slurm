@@ -124,7 +124,6 @@ static const char *select_node_bitmap_tags[] = {
 	"SELECT_ONL_RSVD", "SELECT_ALL_RSVD", NULL
 };
 
-uint32_t validate_resv_cnt = 0;
 time_t    last_resv_update = (time_t) 0;
 list_t *resv_list = NULL;
 static list_t *magnetic_resv_list = NULL;
@@ -209,11 +208,10 @@ static bool _resv_time_overlap(resv_desc_msg_t *resv_desc_ptr,
 			       slurmctld_resv_t *resv_ptr);
 static void _run_script(char *script, slurmctld_resv_t *resv_ptr,
 			bool is_resv_epilog);
-static int  _select_nodes(resv_desc_msg_t *resv_desc_ptr,
-			  part_record_t **part_ptr,
-			  resv_select_t *resv_select_ret,
-			  bitstr_t *preserve_bitmap,
-			  bool include_maint_nodes);
+static int _select_nodes(resv_desc_msg_t *resv_desc_ptr,
+			 part_record_t **part_ptr,
+			 resv_select_t *resv_select_ret,
+			 bitstr_t *preserve_bitmap);
 static int  _set_assoc_list(slurmctld_resv_t *resv_ptr);
 static void _set_tres_cnt(slurmctld_resv_t *resv_ptr,
 			  slurmctld_resv_t *old_resv_ptr);
@@ -433,6 +431,38 @@ static bitstr_t *_resv_select(resv_desc_msg_t *resv_desc_ptr,
 	resv_exc.gres_list_exc = resv_select->gres_list_exc;
 
 	job_ptr = resv_desc_ptr->job_ptr;
+
+	/*
+	 * Simple whole-node IGNORE_JOBS: resv_select->node_bitmap already
+	 * reflects partition, features, and other filters. Any min_nodes
+	 * of those bits is sufficient.
+	 *
+	 * Skip select_g_job_test(WILL_RUN). The code below
+	 * rejects when job_ptr->start_time is after reservation start/now;
+	 * WILL_RUN sets that when nodes are busy, but IGNORE_JOBS explicitly
+	 * allows overlapping running work. Core- or GRES-based reservations
+	 * must keep WILL_RUN for correct plugin accounting.
+	 *
+	 * Guards: RESERVE_FLAG_IGN_JOBS, whole-node (core_cnt unset), not a
+	 * GRES reservation request, no per-select core bitmap (core resvs use
+	 * the normal path with add_job_to_cores below).
+	 */
+	if ((resv_desc_ptr->flags & RESERVE_FLAG_IGN_JOBS) &&
+	    (resv_desc_ptr->core_cnt == NO_VAL) &&
+	    !(resv_desc_ptr->flags & RESERVE_FLAG_GRES_REQ) &&
+	    !resv_select->core_bitmap) {
+		/* Same count as NodeCnt / synthetic job min_nodes. */
+		uint32_t need = job_ptr->details->min_nodes;
+
+		/* Usual path frees this after job_test; not entered here. */
+		free_core_array(&resv_exc.exc_cores);
+		if (bit_set_count(resv_select->node_bitmap) < need)
+			return NULL;
+		/* No job_test; do not leave stale job_resrcs on synthetic job. */
+		free_job_resources(&job_ptr->job_resrcs);
+		/* New bitmap: first need set bits, ascending node index. */
+		return bit_pick_cnt(resv_select->node_bitmap, need);
+	}
 
 	/*
 	 * request the maximum nodes, require the minimum
@@ -3164,6 +3194,24 @@ static bool _resv_time_overlap(resv_desc_msg_t *resv_desc_ptr,
 	 *      will overlap.
 	 */
 	if (slot[0]->flags & RESERVE_REOCCURRING) {
+		if ((slot[1]->flags & RESERVE_FLAG_MAINT) &&
+		    !(slot[1]->flags & RESERVE_REOCCURRING)) {
+			/*
+			 * Evaluate against reoccurring resv start, or now() if
+			 * resv already started.
+			 */
+			time_t eval_time = MAX(now, slot[0]->start);
+			/*
+			 * Do not check overlaps against maintenance
+			 * reservations starting more than 7 days after the
+			 * reservation being evaluated.
+			 */
+			if ((slot[1]->start - eval_time) > (7 * DAY_SECONDS)) {
+				log_flag(RESERVATION, "%s: Not filtering out nodes from maintenance reservation %s starting more than 7 days later",
+					 __func__, resv_ptr->name);
+				return false;
+			}
+		}
 		/*
 		 * 1) Advance earlier slot to the last reoccurring period
 		 *    before the later slot ends.
@@ -3866,7 +3914,7 @@ extern int create_resv(resv_desc_msg_t *resv_desc_ptr, char **err_msg)
 				job_mgr_copy_resv_desc_to_job_record(
 					resv_desc_ptr);
 			rc = _select_nodes(resv_desc_ptr, &part_ptr,
-					   &resv_select, NULL, true);
+					   &resv_select, NULL);
 			if (rc != SLURM_SUCCESS)
 				goto bad_parse;
 		}
@@ -3883,7 +3931,7 @@ extern int create_resv(resv_desc_msg_t *resv_desc_ptr, char **err_msg)
 				job_mgr_copy_resv_desc_to_job_record(
 					resv_desc_ptr);
 			rc = _select_nodes(resv_desc_ptr, &part_ptr,
-					   &resv_select, NULL, true);
+					   &resv_select, NULL);
 		}
 		if (rc != SLURM_SUCCESS) {
 			goto bad_parse;
@@ -5205,22 +5253,23 @@ static bool _validate_one_reservation(slurmctld_resv_t *resv_ptr)
 extern void validate_all_reservations(bool run_now, bool run_locked)
 {
 	static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+	static uint32_t requests = 0;
 	bool run;
 
 	if (!run_now) {
 		slurm_mutex_lock(&mutex);
-		validate_resv_cnt++;
+		requests++;
 		log_flag(RESERVATION, "%s: requests %u",
-			 __func__, validate_resv_cnt);
-		xassert(validate_resv_cnt != UINT32_MAX);
+			 __func__, requests);
+		xassert(requests != UINT32_MAX);
 		slurm_mutex_unlock(&mutex);
 		return;
 	}
 
 	slurm_mutex_lock(&mutex);
-	run = (validate_resv_cnt > 0);
+	run = (requests > 0);
 	/* reset requests counter */
-	validate_resv_cnt = 0;
+	requests = 0;
 	slurm_mutex_unlock(&mutex);
 
 	if (run) {
@@ -5301,7 +5350,12 @@ static void _validate_all_reservations(void)
 	}
 	list_iterator_destroy(iter);
 
-	/* Validate all job reservation pointers */
+	/*
+	 * Validate all job reservation pointers.
+	 * This needs to be an iterator since _validate_job_resv() may
+	 * eventually call _pick_node_cnt() which will deadlock the
+	 * job_list lock.
+	 */
 	iter = list_iterator_create(job_list);
 	while ((job_ptr = list_next(iter)))
 		_validate_job_resv(job_ptr, NULL);
@@ -5377,7 +5431,7 @@ static void _resv_node_replace(slurmctld_resv_t *resv_ptr)
 		bit_and_not(resv_select.node_bitmap, resv_ptr->node_bitmap);
 
 		i = _select_nodes(&resv_desc, &resv_ptr->part_ptr, &resv_select,
-				  preserve_bitmap, false);
+				  preserve_bitmap);
 		xfree(resv_desc.node_list);
 		xfree(resv_desc.partition);
 		if (i == SLURM_SUCCESS) {
@@ -5519,7 +5573,7 @@ static void _validate_node_choice(slurmctld_resv_t *resv_ptr)
 	}
 
 	i = _select_nodes(&resv_desc, &resv_ptr->part_ptr,
-			  &resv_select, NULL, false);
+			  &resv_select, NULL);
 	xfree(resv_desc.node_list);
 	xfree(resv_desc.partition);
 	if (i == SLURM_SUCCESS) {
@@ -5891,8 +5945,7 @@ static int  _resize_resv(slurmctld_resv_t *resv_ptr, uint32_t node_cnt)
 		bit_and_not(resv_select.node_bitmap, resv_ptr->node_bitmap);
 	}
 
-	rc = _select_nodes(&resv_desc, &resv_ptr->part_ptr,
-			   &resv_select, NULL, true);
+	rc = _select_nodes(&resv_desc, &resv_ptr->part_ptr, &resv_select, NULL);
 	xfree(resv_desc.node_list);
 	xfree(resv_desc.partition);
 	if (rc == SLURM_SUCCESS) {
@@ -6032,8 +6085,8 @@ static void _addto_gres_list_exc(list_t **total_list, list_t *sub_list)
  * reservations.
  */
 static void _filter_resv(resv_desc_msg_t *resv_desc_ptr,
-			 slurmctld_resv_t *resv_ptr,
-			 resv_select_t *resv_select, bool filter_overlap, bool filter_maint)
+			 slurmctld_resv_t *resv_ptr, resv_select_t *resv_select,
+			 bool filter_overlap)
 {
 	if (!filter_overlap &&
 	    ((resv_ptr->flags & RESERVE_FLAG_OVERLAP))) {
@@ -6042,13 +6095,7 @@ static void _filter_resv(resv_desc_msg_t *resv_desc_ptr,
 			 __func__, resv_ptr->name, resv_desc_ptr->name);
 		return;
 	}
-	if (!filter_maint &&
-	    ((resv_ptr->flags & RESERVE_FLAG_MAINT))) {
-		log_flag(RESERVATION,
-			 "%s: skipping reservation %s filter for reservation %s",
-			 __func__, resv_ptr->name, resv_desc_ptr->name);
-		return;
-	}
+
 	if (resv_ptr->node_bitmap == NULL) {
 		log_flag(RESERVATION,
 			 "%s: reservation %s has no nodes to filter for reservation %s",
@@ -6119,8 +6166,7 @@ static void _filter_resv(resv_desc_msg_t *resv_desc_ptr,
 static int _select_nodes(resv_desc_msg_t *resv_desc_ptr,
 			 part_record_t **part_ptr,
 			 resv_select_t *resv_select_ret,
-			 bitstr_t *preserve_bitmap,
-			 bool include_maint_nodes)
+			 bitstr_t *preserve_bitmap)
 {
 	slurmctld_resv_t *resv_ptr;
 	resv_select_t resv_select[MAX_BITMAPS] = {{0}};
@@ -6198,12 +6244,10 @@ static int _select_nodes(resv_desc_msg_t *resv_desc_ptr,
 			(void)_advance_resv_time(resv_ptr);
 
 		_filter_resv(resv_desc_ptr, resv_ptr,
-			     &resv_select[SELECT_NOT_RSVD],
-			     true, !include_maint_nodes);
+			     &resv_select[SELECT_NOT_RSVD], true);
 
 		_filter_resv(resv_desc_ptr, resv_ptr,
-			     &resv_select[SELECT_OVR_RSVD],
-			     false, !include_maint_nodes);
+			     &resv_select[SELECT_OVR_RSVD], false);
 	}
 	list_iterator_destroy(itr);
 
@@ -7658,6 +7702,23 @@ static void _get_rel_start_end(slurmctld_resv_t *resv_ptr, time_t now,
 	}
 }
 
+static void _addto_resv_exc(bitstr_t *core_bitmap, resv_exc_t *resv_exc_ptr)
+{
+	bitstr_t **tmp_bitstr;
+
+	if (!resv_exc_ptr || !core_bitmap)
+		return;
+
+	tmp_bitstr = core_bitmap_to_array(core_bitmap);
+
+	if (!resv_exc_ptr->exc_cores) {
+		resv_exc_ptr->exc_cores = tmp_bitstr;
+	} else {
+		core_array_or(resv_exc_ptr->exc_cores, tmp_bitstr);
+		free_core_array(&tmp_bitstr);
+	}
+}
+
 extern int job_test_resv(job_record_t *job_ptr, time_t *when,
 			 bool move_time, bitstr_t **node_bitmap,
 			 resv_exc_t *resv_exc_ptr, bool *resv_overlap,
@@ -7783,9 +7844,25 @@ extern int job_test_resv(job_record_t *job_ptr, time_t *when,
 			    (res2_ptr == resv_ptr) ||
 			    (res2_ptr->node_bitmap == NULL) ||
 			    (start_relative >= job_end_time_use) ||
-			    (end_relative   <= job_start_time) ||
-			    (!(res2_ptr->ctld_flags & RESV_CTLD_FULL_NODE)))
+			    (end_relative <= job_start_time)) {
 				continue;
+			}
+
+			if (!(res2_ptr->ctld_flags & RESV_CTLD_FULL_NODE)) {
+				/*
+				 * Flex reservations steal other reservations
+				 * resources if they are not on the full node.
+				 * This removes any cores that belong to other
+				 * reservations.
+				 */
+				if (resv_ptr->flags & RESERVE_FLAG_FLEX) {
+					_addto_resv_exc(res2_ptr->core_bitmap,
+							resv_exc_ptr);
+				}
+
+				continue;
+			}
+
 			if (bit_overlap_any(*node_bitmap,
 					    res2_ptr->node_bitmap)) {
 				log_flag(RESERVATION, "%s: reservation %s overlaps %s with %u nodes",

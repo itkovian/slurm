@@ -56,6 +56,7 @@
 
 #include "src/common/daemonize.h"
 #include "src/common/fd.h"
+#include "src/common/forward.h"
 #include "src/common/log.h"
 #include "src/common/proc_args.h"
 #include "src/common/read_config.h"
@@ -293,6 +294,8 @@ int main(int argc, char **argv)
 
 	registered_clusters = list_create(NULL);
 
+	forward_init();
+
 	slurm_thread_create(&commit_handler_thread, _commit_handler, NULL);
 
 	memset(&assoc_init_arg, 0, sizeof(assoc_init_args_t));
@@ -385,8 +388,11 @@ int main(int argc, char **argv)
 	/* Daemon termination handled here */
 
 end_it:
+	conmgr_request_shutdown();
 
 	slurm_thread_join(commit_handler_thread);
+
+	forward_fini();
 
 	acct_storage_g_commit(db_conn, 1);
 	acct_storage_g_close_connection(&db_conn);
@@ -406,6 +412,7 @@ end_it:
 		_restart_self(argc, argv);
 	}
 
+	conmgr_fini();
 	assoc_mgr_fini(0);
 	acct_storage_g_fini();
 	auth_g_fini();
@@ -417,7 +424,6 @@ end_it:
 	rpc_stats = NULL;
 	slurm_mutex_unlock(&rpc_mutex);
 
-	conmgr_fini();
 	log_fini();
 	return SLURM_SUCCESS;
 }

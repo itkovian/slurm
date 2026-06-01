@@ -64,6 +64,7 @@
 #include "src/common/daemonize.h"
 #include "src/common/extra_constraints.h"
 #include "src/common/fd.h"
+#include "src/common/forward.h"
 #include "src/common/group_cache.h"
 #include "src/common/hostlist.h"
 #include "src/common/http_switch.h"
@@ -600,6 +601,20 @@ static void _retry_init_db_conn(assoc_init_args_t *args)
 	}
 }
 
+/* Close the slurmctld -> slurmdbd persistent connection. */
+static void _close_acct_storage_conn(void)
+{
+	if (acct_db_conn)
+		acct_storage_g_close_connection(&acct_db_conn);
+}
+
+/* Unload the accounting_storage plugin. */
+static void _fini_acct_storage(void)
+{
+	acct_storage_g_fini();
+	slurm_persist_conn_recv_server_fini();
+}
+
 /* main - slurmctld main function, start various threads and process RPCs */
 int main(int argc, char **argv)
 {
@@ -732,8 +747,6 @@ int main(int argc, char **argv)
 
 	conmgr_add_work_fifo(_register_signal_handlers, NULL);
 
-	conmgr_run(false);
-
 	if (auth_g_init() != SLURM_SUCCESS)
 		fatal("failed to initialize auth plugin");
 	if (hash_g_init() != SLURM_SUCCESS)
@@ -744,6 +757,10 @@ int main(int argc, char **argv)
 		fatal("Failed to initialize certmgr plugin");
 	if (serializer_g_init() != SLURM_SUCCESS)
 		fatal("Failed to initialize serialization plugins.");
+
+	forward_init();
+
+	conmgr_run(false);
 
 	if (original && !under_systemd) {
 		/*
@@ -1082,6 +1099,9 @@ int main(int argc, char **argv)
 		controller_fini_scheduling(); /* Stop all scheduling */
 		rpc_queue_shutdown();
 		agent_fini();
+		/* kill all scripts running by the slurmctld */
+		track_script_flush();
+		slurmscriptd_flush();
 
 		/* termination of controller */
 		switch_g_save();
@@ -1097,9 +1117,6 @@ int main(int argc, char **argv)
 		slurm_mutex_unlock(&slurmctld_config.acct_update_lock);
 		slurm_thread_join(slurmctld_config.thread_id_acct_update);
 
-		/* kill all scripts running by the slurmctld */
-		track_script_flush();
-		slurmscriptd_flush();
 		run_command_shutdown();
 
 		bb_g_fini();
@@ -1109,10 +1126,8 @@ int main(int argc, char **argv)
 		ctld_assoc_mgr_fini();
 
 		/* Save any pending state save RPCs */
-		acct_storage_g_close_connection(&acct_db_conn);
-		acct_storage_g_fini();
-
-		slurm_persist_conn_recv_server_fini();
+		_close_acct_storage_conn();
+		_fini_acct_storage();
 		power_save_fini();
 
 		/* attempt reconfig here */
@@ -1168,6 +1183,11 @@ int main(int argc, char **argv)
 			slurm_conf.slurmctld_pidfile);
 	}
 
+	conmgr_request_shutdown();
+	forward_fini();
+	http_fini();
+	http_switch_fini();
+	conmgr_fini();
 
 #ifdef MEMORY_LEAK_DEBUG
 {
@@ -1226,11 +1246,6 @@ int main(int argc, char **argv)
 	bit_cache_fini();
 }
 #endif
-
-	conmgr_request_shutdown();
-	conmgr_fini();
-	http_fini();
-	http_switch_fini();
 
 	rate_limit_shutdown();
 	log_fini();
@@ -1381,6 +1396,13 @@ static int _try_to_reconfig(void)
 	int to_parent[2] = {-1, -1};
 	int *skip_close = NULL, skip_index = 0, auth_fd = -1;
 
+	/*
+	 * Call before env_array_copy() so that any environment variables set
+	 * by the auth plugin (e.g. SACK_RECONFIG_FD) are included in the
+	 * child's environment.
+	 */
+	auth_fd = auth_g_get_reconfig_fd(AUTH_PLUGIN_SLURM);
+
 	child_env = env_array_copy((const char **) environ);
 	setenvf(&child_env, "SLURMCTLD_RECONF", "1");
 	if (pidfd != -1) {
@@ -1413,7 +1435,7 @@ static int _try_to_reconfig(void)
 		xfree(ports);
 	}
 	slurm_mutex_unlock(&listeners.mutex);
-	if ((auth_fd = auth_g_get_reconfig_fd(AUTH_PLUGIN_SLURM)) >= 0)
+	if (auth_fd >= 0)
 		skip_close[skip_index++] = auth_fd;
 	for (int i = 0; i < 3; i++)
 		fd_set_noclose_on_exec(i);
@@ -1800,6 +1822,22 @@ extern bool listeners_quiesced(void)
 	return quiesced;
 }
 
+/*
+ * Return true when listeners.standby_mode is set (in run_backup() standby),
+ * false when the main loop is on the primary controller path
+ * (slurmctld_primary || backup_has_control) in normal steady state.
+ */
+extern bool slurmctld_listeners_in_standby(void)
+{
+	bool standby;
+
+	slurm_mutex_lock(&listeners.mutex);
+	standby = listeners.standby_mode;
+	slurm_mutex_unlock(&listeners.mutex);
+
+	return standby;
+}
+
 extern bool is_primary(void)
 {
 	bool primary;
@@ -2133,7 +2171,7 @@ static int _update_assoc_for_each(void *x, void *arg) {
 	job_record_t *job_ptr = x;
 
 	if ((rec == job_ptr->assoc_ptr) && (IS_JOB_PENDING(job_ptr)))
-		acct_policy_update_pending_job(job_ptr);
+		acct_policy_update_pending_job(job_ptr, true);
 
 	return 0;
 }
@@ -2183,7 +2221,7 @@ static int _update_qos_for_each(void *x, void *arg) {
 	job_record_t *job_ptr = x;
 
 	if ((rec == job_ptr->qos_ptr) && (IS_JOB_PENDING(job_ptr)))
-		acct_policy_update_pending_job(job_ptr);
+		acct_policy_update_pending_job(job_ptr, true);
 
 	return 0;
 }
@@ -2582,16 +2620,6 @@ static void *_slurmctld_background(void *no_data)
 	/* Locks: Read job and node */
 	slurmctld_lock_t job_node_read_lock = {
 		NO_LOCK, READ_LOCK, READ_LOCK, NO_LOCK, NO_LOCK };
-	/*
-	 * purge_old_job modifies jobs and reads conf info. It can also
-	 * call re_kill_job(), which can modify nodes and reads fed info.
-	 */
-	slurmctld_lock_t purge_job_locks = {
-		.conf = READ_LOCK,
-		.job = WRITE_LOCK,
-		.node = WRITE_LOCK,
-		.fed = READ_LOCK,
-	};
 
 	/* Let the dust settle before doing work */
 	now = time(NULL);
@@ -2660,7 +2688,60 @@ static void *_slurmctld_background(void *no_data)
 		}
 
 		if (slurmctld_config.shutdown_time) {
-			/* Always stop listening when shutdown requested */
+			/*
+			 * Wait for backfill to release locks. Release the
+			 * lock once bf_active is 0: the backfill thread has
+			 * exited its main loop (it checks shutdown_time and
+			 * won't re-enter) and holding this past here would
+			 * deadlock conmgr_quiesce() against any in-flight
+			 * RPC handler that wants check_bf_running_lock.
+			 */
+			slurm_mutex_lock(&check_bf_running_lock);
+			while (slurmctld_diag_stats.bf_active) {
+				slurm_cond_wait(&check_bf_running_cond,
+						&check_bf_running_lock);
+			}
+			slurm_mutex_unlock(&check_bf_running_lock);
+
+			/*
+			 * Wait for main sched to release locks. Same as
+			 * above: release sched_mutex once sched_alive is 0,
+			 * or an in-flight RPC handler that ends up in
+			 * schedule() (e.g. _slurm_rpc_epilog_complete) will
+			 * deadlock conmgr_quiesce() below.
+			 */
+			slurm_mutex_lock(&sched_mutex);
+			while (sched_alive) {
+				/*
+				 * Wake up _sched_agent() if it is sleeping
+				 * before waiting for it to change state
+				 */
+				slurm_cond_broadcast(&sched_cond);
+				slurm_cond_wait(&sched_cond, &sched_mutex);
+			}
+			slurm_mutex_unlock(&sched_mutex);
+
+			/* kill all scripts running by the slurmctld */
+			track_script_flush();
+			slurmscriptd_flush();
+
+			/*
+			 * Persistent connection to slurmdbd must be closed
+			 * before conmgr quiesce to avoid possible deadlocks
+			 * where slurmdbd is waiting on slurmctld but
+			 * slurmctld will wait until quiesce to finish before
+			 * responding. The plugin itself is unloaded later, in
+			 * main().
+			 *
+			 * Listeners can't be quiesced yet in case are still
+			 * processing RPCs from the DBD.
+			 */
+			_close_acct_storage_conn();
+
+			/*
+			 * Now that the ctld -> dbd conn is gone it is safe to
+			 * stop listening new connections.
+			 */
 			listeners_quiesce();
 
 			/*
@@ -2679,23 +2760,11 @@ static void *_slurmctld_background(void *no_data)
 			 */
 			_flush_rpcs();
 
-			/* Wait for backfill to release locks */
-			slurm_mutex_lock(&check_bf_running_lock);
-			while (slurmctld_diag_stats.bf_active) {
-				slurm_cond_wait(&check_bf_running_cond,
-						&check_bf_running_lock);
-			}
-
-			/* Wait for main sched to release locks */
-			slurm_mutex_lock(&sched_mutex);
-			while (sched_alive) {
-				/*
-				 * Wake up _sched_agent() if it is sleeping
-				 * before waiting for it to change state
-				 */
-				slurm_cond_broadcast(&sched_cond);
-				slurm_cond_wait(&sched_cond, &sched_mutex);
-			}
+			/*
+			 * Catch persistent connection to slurmdbd still
+			 * existing at this point
+			 */
+			xassert(!acct_db_conn);
 
 			if (!report_locks_set()) {
 				info("Saving all slurm state");
@@ -2703,11 +2772,6 @@ static void *_slurmctld_background(void *no_data)
 			} else {
 				error("Semaphores still set after flushing RPCs, and finish scheduling. Can not save state");
 			}
-
-			/* Unblock main sched thread, so that it can shutdown */
-			slurm_mutex_unlock(&sched_mutex);
-			/* Unblock backfill thread, so that it can shutdown */
-			slurm_mutex_unlock(&check_bf_running_lock);
 
 			/*
 			 * Allow other connections to start processing again as
@@ -2833,12 +2897,15 @@ static void *_slurmctld_background(void *no_data)
 			 */
 			slurm_mutex_lock(&check_bf_running_lock);
 			if (!slurmctld_diag_stats.bf_active) {
-				lock_slurmctld(purge_job_locks);
+				/*
+				 * purge_old_job acquires its own locks
+				 * conf = READ_LOCK, job = WRITE_LOCK,
+				 * node = WRITE_LOCK, fed = READ_LOCK
+				 */
 				now = time(NULL);
 				last_purge_job_time = now;
 				debug2("Performing purge of old job records");
 				purge_old_job();
-				unlock_slurmctld(purge_job_locks);
 			}
 			slurm_mutex_unlock(&check_bf_running_lock);
 			free_old_jobs();

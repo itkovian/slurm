@@ -1777,8 +1777,8 @@ static int _parse_slurmctld_host(void **dest, slurm_parser_enum_t type,
 	tbl = s_p_hashtbl_create(_slurmctld_host_options);
 	s_p_parse_line(tbl, *leftover, leftover);
 
-	open_paren = strchr(value, '(');
-	close_paren = strchr(value, ')');
+	open_paren = xstrchr(value, '(');
+	close_paren = xstrchr(value, ')');
 	if ((open_paren && !close_paren) ||
 	    (!open_paren && close_paren) ||
 	    (close_paren && (close_paren[1] != '\0')) ||
@@ -1790,11 +1790,11 @@ static int _parse_slurmctld_host(void **dest, slurm_parser_enum_t type,
 	p = xmalloc(sizeof(slurm_conf_server_t));
 	if (open_paren && close_paren) {
 		p->hostname = xstrdup(value);
-		open_paren = strchr(p->hostname, '(');
+		open_paren = xstrchr(p->hostname, '(');
 		if (open_paren)
 			open_paren[0] = '\0';
 		p->addr = xstrdup(open_paren + 1);
-		close_paren = strchr(p->addr, ')');
+		close_paren = xstrchr(p->addr, ')');
 		if (close_paren)
 			close_paren[0] = '\0';
 	} else {
@@ -3948,6 +3948,11 @@ static int _validate_and_set_defaults(slurm_conf_t *conf,
 
 	if (!s_p_get_uint32(&conf->epilog_msg_time, "EpilogMsgTime", hashtbl))
 		conf->epilog_msg_time = DEFAULT_EPILOG_MSG_TIME;
+	else if (conf->epilog_msg_time > EPILOG_MSG_TIME_MAX) {
+		error("EpilogMsgTime can not exceed %d, resetting value",
+		      EPILOG_MSG_TIME_MAX);
+		conf->epilog_msg_time = DEFAULT_EPILOG_MSG_TIME;
+	}
 
 	_load_script(&conf->epilog_slurmctld, &conf->epilog_slurmctld_cnt,
 		     "EpilogSlurmctld");

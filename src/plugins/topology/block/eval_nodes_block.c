@@ -183,7 +183,7 @@ static void _jobinfo_init(
 	 * --network=unique-channel-per-segment option. If that option is not
 	 *  specified, no segment data needs to be collected here.
 	 */
-	if (!xstrstr("unique-channel-per-segment", job_ptr->network)) {
+	if (!xstrstr(job_ptr->network, "unique-channel-per-segment")) {
 		log_flag(SELECT_TYPE, "Not recording segment information for %pJ",
 			 job_ptr);
 		return;
@@ -669,11 +669,7 @@ next_segment:
 	if (block_inx == -1) {
 		log_flag(SELECT_TYPE, "%pJ unable to find block",
 			 job_ptr);
-		if (alloc_node_map && !block_per_asblock) {
-			bit_or(topo_eval->node_map, alloc_node_map);
-			rc = ESLURM_RETRY_EVAL_HINT;
-		} else
-			rc = ESLURM_BREAK_EVAL;
+		rc = ESLURM_BREAK_EVAL;
 		goto fini;
 	}
 

@@ -1110,6 +1110,13 @@ static void _adjust_limit_usage(int type, job_record_t *job_ptr,
 			}
 			break;
 		case ACCT_POLICY_JOB_FINI:
+			/*
+			 * If tres_alloc_cnt doesn't exist means
+			 * ACCT_POLICY_JOB_BEGIN was never called so no need to
+			 * clean up that which was never set up.
+			 */
+			if (!job_ptr->tres_alloc_cnt)
+				break;
 			if (assoc_ptr->usage->used_jobs)
 				assoc_ptr->usage->used_jobs--;
 			else
@@ -4519,7 +4526,7 @@ extern uint32_t acct_policy_get_max_nodes(job_record_t *job_ptr,
  *	the association/qos limits prevent the job from running (lowered
  *	limits since job submission), then reset its reason field.
  */
-extern int acct_policy_update_pending_job(job_record_t *job_ptr)
+extern int acct_policy_update_pending_job(job_record_t *job_ptr, bool update_db)
 {
 	job_desc_msg_t job_desc;
 	acct_policy_limit_set_t acct_policy_limit_set;
@@ -4594,7 +4601,8 @@ extern int acct_policy_update_pending_job(job_record_t *job_ptr)
 		last_job_update = time(NULL);
 		debug("limits changed for %pJ: updating accounting", job_ptr);
 		/* Update job record in accounting to reflect changes */
-		jobacct_storage_g_job_start(acct_db_conn, job_ptr);
+		if (update_db)
+			jobacct_storage_g_job_start(acct_db_conn, job_ptr);
 	}
 
 	return rc;

@@ -215,6 +215,9 @@ extern void close_all_connections(void)
 	/* close all connections */
 	list_for_each(mgr.connections, _close_con_for_each, NULL);
 	list_for_each(mgr.listen_conns, _close_con_for_each, NULL);
+
+	/* Wake up poll() as all the connections should be closed */
+	pollctl_interrupt(__func__);
 }
 
 extern void work_close_con(conmgr_callback_args_t conmgr_args, void *arg)
@@ -2097,6 +2100,9 @@ extern void fd_free_ref(conmgr_fd_ref_t **ref_ptr)
 
 	ref->magic = ~MAGIC_CON_MGR_FD_REF;
 	xfree((*ref_ptr));
+
+	if (!con->refs)
+		EVENT_SIGNAL(&mgr.watch_sleep);
 }
 
 extern void conmgr_fd_free_ref(conmgr_fd_ref_t **ref_ptr)

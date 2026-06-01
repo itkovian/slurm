@@ -5630,6 +5630,7 @@ static int _archive_purge_table(purge_type_t purge_type, uint32_t usage_info,
 					    purge_attr, sql_table, usage_info);
 			if (rc == SLURM_ERROR)
 				goto end_it;
+			cnt += rc;
 
 			if (purge_type == PURGE_JOB) {
 				/* Archive associated data from hash tables */
@@ -5654,8 +5655,6 @@ static int _archive_purge_table(purge_type_t purge_type, uint32_t usage_info,
 					goto end_it;
 				cnt += rc;
 			}
-
-			cnt += rc;
 
 			if (!cnt) { /* no records archived */
 				error("%s: No records archived for %s before %ld but we found some records",
@@ -5935,6 +5934,7 @@ static int _process_archive_data(char **data_in, uint32_t data_size,
 			break;
 		case DBD_GOT_ASSOC_USAGE:
 		case DBD_GOT_WCKEY_USAGE:
+		case DBD_GOT_QOS_USAGE:
 			if (pass_cnt == 0)
 				safe_unpack16(&period, buffer);
 			data = _load_usage(ver, buffer, cluster_name, type,
