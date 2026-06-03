@@ -1,6 +1,7 @@
 Name:		slurm
 Version:	25.11.7
 %define rel	1
+%global rhel_minor_version %(rpm -q --qf "%{VERSION}" redhat-release | cut -d. -f2)
 Release:        %{rel}.%{gittag}%{?dist}.%{rhel_minor_version}%{?gpu}.ug
 %if %{defined patch} && %{undefined extraver}
 %define extraver .patched
