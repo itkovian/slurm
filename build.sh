@@ -139,8 +139,10 @@ sudo dnf -y install "hwloc-devel ${HWLOC_VERSION}" numactl-devel
 # - plugins: acct_gather_profile/hdf5
 sudo dnf -y install hdf5-devel
 
+RHEL_MINOR_VERSION=$(rpm -q --qf "%{VERSION}" redhat-release | cut -d. -f2)
+
 # Build defines
-RPM_DEFINES=( --define "gittag ${GITTAG}" --define "_topdir $ORIGIN/rpmbuild" )
+RPM_DEFINES=( --define "gittag ${GITTAG}" --define "rhel_minor_version" ${RHEL_MINOR_VERSION} --define "_topdir $ORIGIN/rpmbuild" )
 
 # Build options
 SLURM_BUILDOPTS=( --with slurmrestd --without debug )
