@@ -162,7 +162,7 @@ rpmbuild -ba "${RPM_DEFINES[@]}" "${SLURM_BUILDOPTS[@]}" --without nvml \
 
 echo "Doing rpm rebuild (without nvml)"
 for rpm in $ORIGIN/rpmbuild/RPMS/x86_64/slurm-*$SUFFIX*.rpm ; do
-    rpmrebuild --release=${OUR_RELEASE}.${GITTAG}$(rpm -E '%dist').${MINOR}.nogpu.ug -d $ORIGIN/dist -p $rpm
+    rpmrebuild --release=${OUR_RELEASE}.${GITTAG}$(rpm -E '%dist').${RHEL_MINOR_VERSION}.nogpu.ug -d $ORIGIN/dist -p $rpm
 done 2>&1 | tee rpmrebuild-without-nvml.out
 
 
@@ -173,13 +173,12 @@ rpmbuild -ba "${RPM_DEFINES[@]}" "${SLURM_BUILDOPTS[@]}" --with nvml \
 
 echo "Doing rpm rebuild (with nvml)"
 for rpm in $ORIGIN/rpmbuild/RPMS/x86_64/slurm-*$SUFFIX*.rpm ; do
-    rpmrebuild --release=${OUR_RELEASE}.${GITTAG}$(rpm -E '%dist').${MINOR}.ug -d $ORIGIN/dist -p $rpm
+    rpmrebuild --release=${OUR_RELEASE}.${GITTAG}$(rpm -E '%dist').${RHEL_MINOR_VERSION}.ug -d $ORIGIN/dist -p $rpm
 done 2>&1 | tee rpmrebuild-with-nvml.out
 
-MINOR=$(rpm -q --qf "%{VERSION}" redhat-release | cut -d. -f2)
 # strip out torque binaries/wrapper from slurm-torque
-rpmrebuild -d $ORIGIN/dist --change-spec-files="sed '/\(pbsnodes\|mpiexec\|bin\/q.\+\)/d'" -p $ORIGIN/dist/x86_64/slurm-torque-*-${OUR_RELEASE}.${GITTAG}$(rpm -E '%dist').${MINOR}.nogpu.ug*.rpm
-rpmrebuild -d $ORIGIN/dist --change-spec-files="sed '/\(pbsnodes\|mpiexec\|bin\/q.\+\)/d'" -p $ORIGIN/dist/x86_64/slurm-torque-*-${OUR_RELEASE}.${GITTAG}$(rpm -E '%dist').${MINOR}.ug.*.rpm
+rpmrebuild -d $ORIGIN/dist --change-spec-files="sed '/\(pbsnodes\|mpiexec\|bin\/q.\+\)/d'" -p $ORIGIN/dist/x86_64/slurm-torque-*-${OUR_RELEASE}.${GITTAG}$(rpm -E '%dist').${RHEL_MINOR_VERSION}.nogpu.ug*.rpm
+rpmrebuild -d $ORIGIN/dist --change-spec-files="sed '/\(pbsnodes\|mpiexec\|bin\/q.\+\)/d'" -p $ORIGIN/dist/x86_64/slurm-torque-*-${OUR_RELEASE}.${GITTAG}$(rpm -E '%dist').${RHEL_MINOR_VERSION}.ug.*.rpm
 
 # get the RPMs out of the subdirectories
 find rpmbuild -type f -name "*.rpm" -exec rm {} ";"
