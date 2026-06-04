@@ -141,8 +141,10 @@ sudo dnf -y install hdf5-devel
 
 RHEL_MINOR_VERSION=$(rpm -q --qf "%{VERSION}" redhat-release | cut -d. -f2)
 
+echo "Building for Minor version ${RHEL_MINOR_VERSION}"
+
 # Build defines
-RPM_DEFINES=( --define "gittag ${GITTAG}" --define "rhel_minor_version" ${RHEL_MINOR_VERSION} --define "_topdir $ORIGIN/rpmbuild" )
+RPM_DEFINES=( --define "gittag ${GITTAG}" --define "rhel_minor_version ${RHEL_MINOR_VERSION}" --define "_topdir $ORIGIN/rpmbuild" )
 
 # Build options
 SLURM_BUILDOPTS=( --with slurmrestd --without debug )
