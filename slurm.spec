@@ -1,5 +1,5 @@
 Name:		slurm
-Version:	25.11.7
+Version:	25.11.3
 %define rel	1
 Release:        %{rel}.%{gittag}%{?dist}.%{rhel_minor_version}%{?gpu}.ug
 %if %{defined patch} && %{undefined extraver}
