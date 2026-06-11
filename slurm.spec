@@ -1,7 +1,10 @@
 Name:		slurm
-Version:	25.11.3
+Version:	25.11.7
 %define rel	1
-Release:        %{rel}.%{gittag}%{?dist}%{?gpu}.ug
+Release:        %{rel}.%{gittag}%{?dist}.%{rhel_minor_version}%{?gpu}.ug
+%if %{defined patch} && %{undefined extraver}
+%define extraver .patched
+%endif
 Summary:	Slurm Workload Manager
 
 Group:		System Environment/Base
