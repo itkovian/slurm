@@ -1,10 +1,10 @@
 Name:		slurm
 Version:	26.05.4
-%define rel	0pre1
+%define rel	1
+Release:        %{rel}.%{gittag}%{?dist}.%{rhel_minor_version}%{?gpu}.ug
 %if %{defined patch} && %{undefined extraver}
 %define extraver .patched
 %endif
-Release:	%{rel}%{?extraver}%{?dist}
 Summary:	Slurm Workload Manager
 
 Group:		System Environment/Base
@@ -18,7 +18,7 @@ URL:		https://slurm.schedmd.com/
 %global slurm_source_dir %{name}-%{version}-%{rel}
 %endif
 
-Source:		%{slurm_source_dir}.tar.bz2
+Source:		%{slurm_source_dir}.tar.gz
 %{lua: local patchnum=0
   for pfile in string.gmatch(rpm.expand("%{?patch}"), "%S+") do
     print('Patch'..patchnum..':\t'..pfile..'\n')
