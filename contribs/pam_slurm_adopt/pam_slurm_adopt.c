@@ -814,7 +814,7 @@ cleanup:
 PAM_EXTERN int pam_sm_open_session(pam_handle_t *pamh, int flags
                                 __attribute__((unused)), int argc, const char **argv)
 {
-        return _adopt_and_or_check(pamh, flags, argc, argv);
+        return pam_sm_acct_mgmt(pamh, flags, argc, argv);
 }
 
 /* Close the session. Always succeeds, we do not need to do anything here.
